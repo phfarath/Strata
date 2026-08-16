@@ -1,0 +1,18 @@
+[package]
+name = "strata-evals"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+license.workspace = true
+
+[dependencies]
+strata-core = { workspace = true }
+strata-memory = { workspace = true }
+strata-tools = { workspace = true }
+strata-reasoning = { workspace = true }
+tokio = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+uuid = { workspace = true }
+chrono = { workspace = true }
+anyhow = { workspace = true }

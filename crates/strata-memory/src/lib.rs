@@ -1,0 +1,186 @@
+pub mod consolidation;
+pub mod embedding;
+pub mod retrieval;
+pub mod store;
+
+#[cfg(test)]
+mod tests;
+
+use std::path::Path;
+use std::sync::Arc;
+use async_trait::async_trait;
+use uuid::Uuid;
+
+use strata_core::errors::StrataError;
+use strata_core::events::{Event, EventId};
+use strata_core::state::{DigestOutput, FailurePattern, MemoryHandle, MemoryRecord, Scope};
+use strata_core::traits::{EventStore, MemoryEngine};
+
+pub use consolidation::Consolidator;
+pub use embedding::{
+    bytes_to_embedding, cosine_similarity, embedding_to_bytes, EmbeddingProvider,
+    FastEmbedProvider, MockEmbeddingProvider,
+};
+pub use retrieval::{HybridRanker, HybridRankerConfig};
+pub use store::SqliteStore;
+
+/// SQLite-backed persistent memory engine implementing `MemoryEngine` and `EventStore`.
+pub struct SqliteMemoryEngine {
+    store: Arc<SqliteStore>,
+    embedding_provider: Arc<dyn EmbeddingProvider>,
+    ranker: HybridRanker,
+    consolidator: Consolidator,
+}
+
+impl SqliteMemoryEngine {
+    /// Create a new `SqliteMemoryEngine` with an SQLite database file.
+    pub fn open<P: AsRef<Path>>(
+        path: P,
+        embedding_provider: Option<Arc<dyn EmbeddingProvider>>,
+    ) -> Result<Self, StrataError> {
+        let store = Arc::new(SqliteStore::open(path)?);
+        let embedder: Arc<dyn EmbeddingProvider> = embedding_provider
+            .unwrap_or_else(|| Arc::new(MockEmbeddingProvider::default()));
+
+        Ok(Self {
+            store,
+            embedding_provider: embedder,
+            ranker: HybridRanker::with_default_config(),
+            consolidator: Consolidator::new(),
+        })
+    }
+
+    /// Create an in-memory `SqliteMemoryEngine` for testing or temporary execution.
+    pub fn open_in_memory(
+        embedding_provider: Option<Arc<dyn EmbeddingProvider>>,
+    ) -> Result<Self, StrataError> {
+        let store = Arc::new(SqliteStore::open_in_memory()?);
+        let embedder: Arc<dyn EmbeddingProvider> = embedding_provider
+            .unwrap_or_else(|| Arc::new(MockEmbeddingProvider::default()));
+
+        Ok(Self {
+            store,
+            embedding_provider: embedder,
+            ranker: HybridRanker::with_default_config(),
+            consolidator: Consolidator::new(),
+        })
+    }
+
+    /// Get a reference to the underlying `SqliteStore`.
+    pub fn store(&self) -> &SqliteStore {
+        &self.store
+    }
+
+    /// Record a tool failure and consolidate into known failure patterns.
+    pub async fn record_tool_failure(
+        &self,
+        tool_name: &str,
+        error_msg: &str,
+        context: &str,
+        scope: Option<&Scope>,
+    ) -> Result<FailurePattern, StrataError> {
+        self.consolidator
+            .record_tool_failure(&self.store, tool_name, error_msg, context, scope)
+    }
+}
+
+#[async_trait]
+impl MemoryEngine for SqliteMemoryEngine {
+    async fn search(
+        &self,
+        query: &str,
+        scope: Option<&Scope>,
+        limit: usize,
+    ) -> Result<Vec<MemoryRecord>, StrataError> {
+        let mut results = self
+            .ranker
+            .retrieve(
+                &self.store,
+                Some(self.embedding_provider.as_ref()),
+                query,
+                scope,
+                None,
+                limit,
+            )
+            .await?;
+
+        // Update access metrics
+        for memory in &mut results {
+            memory.mark_accessed();
+            let _ = self.store.insert_or_update_memory(memory);
+        }
+
+        Ok(results)
+    }
+
+    async fn get(&self, id: &Uuid) -> Result<Option<MemoryRecord>, StrataError> {
+        let mem = self.store.get_memory(id)?;
+        if let Some(mut memory) = mem {
+            memory.mark_accessed();
+            let _ = self.store.insert_or_update_memory(&memory);
+            Ok(Some(memory))
+        } else {
+            Ok(None)
+        }
+    }
+
+    async fn write(&self, record: &MemoryRecord) -> Result<MemoryHandle, StrataError> {
+        let mut to_write = record.clone();
+
+        // If embedding is missing, generate it automatically
+        if to_write.embedding.is_none() && !to_write.content.trim().is_empty() {
+            if let Ok(emb) = self.embedding_provider.embed_text(&to_write.content).await {
+                to_write.embedding = Some(emb);
+            }
+        }
+
+        self.store.insert_or_update_memory(&to_write)?;
+        Ok(to_write.to_handle(Some(to_write.importance)))
+    }
+
+    async fn digest(
+        &self,
+        session_id: &str,
+        max_tokens: Option<usize>,
+    ) -> Result<DigestOutput, StrataError> {
+        self.consolidator
+            .generate_digest(&self.store, session_id, max_tokens)
+    }
+
+    async fn record_failure(&self, failure: &FailurePattern) -> Result<(), StrataError> {
+        self.store.upsert_failure_pattern(failure)
+    }
+
+    async fn get_known_failures(
+        &self,
+        query: Option<&str>,
+        scope: Option<&Scope>,
+        limit: usize,
+    ) -> Result<Vec<FailurePattern>, StrataError> {
+        self.consolidator
+            .get_known_failures(&self.store, query, scope, limit)
+    }
+}
+
+#[async_trait]
+impl EventStore for SqliteMemoryEngine {
+    async fn append(&self, event: &Event) -> Result<EventId, StrataError> {
+        let event_id = self.store.insert_event(event)?;
+
+        // Automatically consolidate derived memory if applicable
+        if let Some(extracted_mem) = self.consolidator.extract_from_event(event) {
+            let _ = self.write(&extracted_mem).await;
+        }
+
+        Ok(event_id)
+    }
+
+    async fn read_stream(
+        &self,
+        session_id: &str,
+        from_seq: Option<u64>,
+        limit: Option<usize>,
+    ) -> Result<Vec<Event>, StrataError> {
+        self.store.get_events(session_id, from_seq, limit)
+    }
+}
