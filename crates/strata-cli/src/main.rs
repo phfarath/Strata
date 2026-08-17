@@ -13,9 +13,11 @@ use strata_memory::SqliteMemoryEngine;
 
 use strata_cli::{
     commands::{
+        consolidate::{run_consolidate, ConsolidateOptions},
         doctor::run_doctor,
         hook::{handle_hook, HookCommand},
         init::{run_init, InitOptions},
+        prune::{run_prune, PruneOptions},
         search::{run_search, SearchOptions},
     },
     mcp::server::McpServer,
@@ -117,6 +119,33 @@ enum Commands {
         tokens: usize,
 
         #[arg(long, help = "Output as raw JSON")]
+        json: bool,
+    },
+
+    /// Consolidate episodic event stream into semantic facts, procedural skills, and negative patterns
+    Consolidate {
+        #[arg(long, help = "Specific session ID to consolidate")]
+        session: Option<String>,
+
+        #[arg(long, help = "Consolidate all unconsolidated sessions")]
+        all: bool,
+
+        #[arg(long, help = "LLM model slug for reasoning distillation (default: OpenRouter free tier)")]
+        model: Option<String>,
+
+        #[arg(long, help = "Output report as raw JSON")]
+        json: bool,
+    },
+
+    /// Run mathematical ACT-R decay engine to prune expired low-importance memories
+    Prune {
+        #[arg(long, default_value_t = 0.2, help = "Activation threshold below which memories are pruned")]
+        threshold: f32,
+
+        #[arg(long, help = "Optional scope filter")]
+        scope: Option<String>,
+
+        #[arg(long, help = "Output report as raw JSON")]
         json: bool,
     },
 }
@@ -257,6 +286,16 @@ async fn main() -> Result<()> {
                 }
                 println!("\nEstimated tokens: ~{}", digest.estimated_tokens);
             }
+        }
+
+        Commands::Consolidate { session, all, model, json } => {
+            let store = engine.store_arc();
+            run_consolidate(ConsolidateOptions { session, all, model, json }, store).await?;
+        }
+
+        Commands::Prune { threshold, scope, json } => {
+            let store = engine.store_arc();
+            run_prune(PruneOptions { threshold, scope, json }, store).await?;
         }
     }
 

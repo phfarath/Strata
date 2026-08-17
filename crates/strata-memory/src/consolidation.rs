@@ -323,3 +323,421 @@ fn estimate_digest_tokens(digest: &DigestOutput) -> usize {
     }
     (total_chars + 3) / 4
 }
+
+// ============================================================================
+// ACT-R Mathematical Decay & Pruning Engine
+// ============================================================================
+
+/// Calculate ACT-R base-level activation score (0.0 to 1.0) for a memory record.
+/// Takes into account:
+/// - Base importance (0.0 to 1.0)
+/// - Recency elapsed since last access (or creation) with power-law decay (exponent 0.5)
+/// - Access frequency boost: ln(1 + access_count)
+pub fn calculate_act_r_activation(record: &MemoryRecord, eval_time: chrono::DateTime<chrono::Utc>) -> f32 {
+    let status = record
+        .metadata
+        .get("status")
+        .and_then(|v| v.as_str())
+        .unwrap_or("Active");
+
+    if status.eq_ignore_ascii_case("deprecated") || status.eq_ignore_ascii_case("archived") {
+        return 0.0;
+    }
+
+    let effective_time = record.last_accessed_at.unwrap_or(record.created_at);
+    let seconds_diff = (eval_time - effective_time).num_seconds().max(0) as f32;
+    let days_diff = seconds_diff / 86400.0;
+
+    // Decay rate inversely proportional to importance (high importance decays much slower)
+    let decay_rate = (1.0 - record.importance).clamp(0.02, 1.0);
+    let power_law_factor = 1.0 / (1.0 + days_diff * decay_rate).powf(0.5);
+
+    // Frequency boost from access count (ACT-R frequency component)
+    let access_boost = ((1.0 + record.access_count as f32).ln() * 0.15).min(0.4);
+
+    let activation = (record.importance * power_law_factor + access_boost).clamp(0.0, 1.0);
+    activation
+}
+
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize, PartialEq)]
+pub struct PruneReport {
+    pub evaluated: usize,
+    pub retained: usize,
+    pub pruned: usize,
+    pub threshold: f32,
+}
+
+pub fn prune_decayed_memories(
+    store: &SqliteStore,
+    threshold: f32,
+    scope: Option<&Scope>,
+    eval_time: chrono::DateTime<chrono::Utc>,
+) -> Result<PruneReport, StrataError> {
+    let all_memories = store.get_all_memories(scope, None, 100_000)?;
+    let mut evaluated = 0;
+    let mut retained = 0;
+    let mut pruned = 0;
+
+    for memory in all_memories {
+        evaluated += 1;
+        let act = calculate_act_r_activation(&memory, eval_time);
+        if act < threshold {
+            store.delete_memory(&memory.id)?;
+            pruned += 1;
+        } else {
+            retained += 1;
+        }
+    }
+
+    Ok(PruneReport {
+        evaluated,
+        retained,
+        pruned,
+        threshold,
+    })
+}
+
+// ============================================================================
+// JTMS (Justification-based Truth Maintenance System) Engine
+// ============================================================================
+
+pub struct JtmsEngine;
+
+impl JtmsEngine {
+    pub fn new() -> Self {
+        Self
+    }
+
+    /// Ingest a semantic fact with JTMS contradiction detection and belief revision.
+    pub async fn ingest_fact(
+        &self,
+        store: &SqliteStore,
+        reasoning_engine: Option<&(dyn strata_core::traits::ReasoningEngine + Send + Sync)>,
+        new_fact: &strata_reasoning::prompts::SemanticFact,
+        scope: Scope,
+    ) -> Result<MemoryRecord, StrataError> {
+        let existing_memories = store.get_all_memories(Some(&scope), Some(&[MemoryType::Semantic]), 50)?;
+        let mut fact_to_insert = new_fact.clone();
+
+        for existing in &existing_memories {
+            let old_fact = strata_reasoning::prompts::SemanticFact::from_memory_record(existing);
+            if old_fact.status.eq_ignore_ascii_case("deprecated") {
+                continue;
+            }
+
+            // Check if there is potential contradiction / overlap
+            let is_match = Self::check_topic_overlap(&old_fact, new_fact);
+            if is_match {
+                let classification = if let Some(engine) = reasoning_engine {
+                    let prompt = strata_reasoning::prompts::build_jtms_arbitration_prompt(&old_fact, new_fact);
+                    if let Ok(res_str) = engine.prompt(None, &prompt, None).await {
+                        strata_reasoning::prompts::parse_jtms_arbitration(&res_str)
+                            .map(|r| r.classification)
+                            .unwrap_or_else(|_| Self::heuristic_classify(&old_fact, new_fact))
+                    } else {
+                        Self::heuristic_classify(&old_fact, new_fact)
+                    }
+                } else {
+                    Self::heuristic_classify(&old_fact, new_fact)
+                };
+
+                match classification {
+                    strata_reasoning::prompts::JtmsClassification::Update => {
+                        let new_id = fact_to_insert.id.unwrap_or_else(uuid::Uuid::new_v4);
+                        fact_to_insert.id = Some(new_id);
+                        fact_to_insert.version = old_fact.version + 1;
+
+                        // Deprecate existing fact
+                        let mut deprecated_old = existing.clone();
+                        let mut meta = deprecated_old.metadata.clone();
+                        if !meta.is_object() {
+                            meta = serde_json::json!({});
+                        }
+                        meta["status"] = serde_json::json!("Deprecated");
+                        meta["replaced_by"] = serde_json::json!(new_id.to_string());
+                        deprecated_old.metadata = meta;
+                        store.insert_or_update_memory(&deprecated_old)?;
+
+                        // Set supersedes on new fact
+                        let mut new_meta = fact_to_insert.metadata.clone();
+                        if !new_meta.is_object() {
+                            new_meta = serde_json::json!({});
+                        }
+                        new_meta["supersedes"] = serde_json::json!(old_fact.id.map(|u| u.to_string()));
+                        fact_to_insert.metadata = new_meta;
+                        break;
+                    }
+                    strata_reasoning::prompts::JtmsClassification::Duplicate => {
+                        let mut reinforced = existing.clone();
+                        reinforced.access_count += 1;
+                        reinforced.confidence = (reinforced.confidence + 0.1).min(1.0);
+                        store.insert_or_update_memory(&reinforced)?;
+                        return Ok(reinforced);
+                    }
+                    _ => {}
+                }
+            }
+        }
+
+        let record = fact_to_insert.to_memory_record(scope);
+        store.insert_or_update_memory(&record)?;
+        Ok(record)
+    }
+
+    fn check_topic_overlap(
+        old_fact: &strata_reasoning::prompts::SemanticFact,
+        new_fact: &strata_reasoning::prompts::SemanticFact,
+    ) -> bool {
+        let old_lower = old_fact.statement.to_lowercase();
+        let new_lower = new_fact.statement.to_lowercase();
+
+        let keywords = [
+            "architecture", "database", "storage", "protocol", "api", "framework",
+            "auth", "cache", "network", "transport", "engine", "system", "format",
+            "rest", "grpc", "sqlite", "postgres", "json", "protobuf"
+        ];
+
+        let mut matches = 0;
+        for kw in &keywords {
+            if old_lower.contains(kw) && new_lower.contains(kw) {
+                matches += 1;
+            }
+        }
+
+        matches >= 1 || (!old_fact.tags.is_empty() && old_fact.tags.iter().any(|t| new_fact.tags.contains(t)))
+    }
+
+    fn heuristic_classify(
+        old_fact: &strata_reasoning::prompts::SemanticFact,
+        new_fact: &strata_reasoning::prompts::SemanticFact,
+    ) -> strata_reasoning::prompts::JtmsClassification {
+        let old_lower = old_fact.statement.to_lowercase();
+        let new_lower = new_fact.statement.to_lowercase();
+
+        if old_lower == new_lower {
+            return strata_reasoning::prompts::JtmsClassification::Duplicate;
+        }
+
+        let update_indicators = [
+            "migrated to", "switched to", "replaced by", "upgraded to", "deprecated",
+            "transitioned to", "instead of", "changed to", "uses grpc", "uses protobuf",
+            "moved to", "adopt", "refactored to"
+        ];
+
+        for ind in &update_indicators {
+            if new_lower.contains(ind) {
+                return strata_reasoning::prompts::JtmsClassification::Update;
+            }
+        }
+
+        if (old_lower.contains("rest") && new_lower.contains("grpc"))
+            || (old_lower.contains("json") && new_lower.contains("protobuf"))
+            || (old_lower.contains("sqlite") && new_lower.contains("postgres"))
+        {
+            return strata_reasoning::prompts::JtmsClassification::Update;
+        }
+
+        strata_reasoning::prompts::JtmsClassification::Update
+    }
+}
+
+// ============================================================================
+// Consolidation Pipeline
+// ============================================================================
+
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize, PartialEq, Default)]
+pub struct ConsolidationReport {
+    pub session_id: Option<String>,
+    pub episodic_created: usize,
+    pub semantic_created: usize,
+    pub procedural_created: usize,
+    pub negative_created: usize,
+    pub deprecated_facts: usize,
+    pub total_consolidated: usize,
+}
+
+pub struct ConsolidationPipeline {
+    store: std::sync::Arc<SqliteStore>,
+    reasoning_engine: std::sync::Arc<dyn strata_core::traits::ReasoningEngine>,
+    jtms: JtmsEngine,
+}
+
+impl ConsolidationPipeline {
+    pub fn new(
+        store: std::sync::Arc<SqliteStore>,
+        reasoning_engine: std::sync::Arc<dyn strata_core::traits::ReasoningEngine>,
+    ) -> Self {
+        Self {
+            store,
+            reasoning_engine,
+            jtms: JtmsEngine::new(),
+        }
+    }
+
+    pub async fn consolidate_session(&self, session_id: &str) -> Result<ConsolidationReport, StrataError> {
+        let events = self.store.get_events(session_id, None, None)?;
+        if events.is_empty() {
+            return Ok(ConsolidationReport {
+                session_id: Some(session_id.to_string()),
+                ..Default::default()
+            });
+        }
+
+        let prompt = strata_reasoning::prompts::build_distillation_prompt(&events);
+        let response = self
+            .reasoning_engine
+            .prompt(
+                Some("You are the cognitive memory consolidation engine for Strata. Extract durable knowledge conforming strictly to JSON schema."),
+                &prompt,
+                None,
+            )
+            .await?;
+
+        let distillation = strata_reasoning::prompts::parse_distillation_output(&response)
+            .unwrap_or_else(|_| fallback_extract_distillation(&events));
+
+        let mut report = ConsolidationReport {
+            session_id: Some(session_id.to_string()),
+            ..Default::default()
+        };
+
+        let session_scope = Scope::Session(session_id.to_string());
+
+        // 1. Episodic Memories
+        for ep in distillation.episodic_memories {
+            let record = MemoryRecord::new(MemoryType::Episodic, ep.content, session_scope.clone())
+                .with_summary(ep.summary)
+                .with_importance(ep.importance)
+                .with_tags(ep.tags);
+            self.store.insert_or_update_memory(&record)?;
+            report.episodic_created += 1;
+        }
+
+        // 2. Semantic Facts with JTMS Belief Revision
+        for fact in distillation.semantic_facts {
+            let before_deprecated = count_deprecated_memories(&self.store, &session_scope)?;
+            self.jtms.ingest_fact(&self.store, Some(self.reasoning_engine.as_ref()), &fact, session_scope.clone()).await?;
+            let after_deprecated = count_deprecated_memories(&self.store, &session_scope)?;
+            if after_deprecated > before_deprecated {
+                report.deprecated_facts += after_deprecated - before_deprecated;
+            }
+            report.semantic_created += 1;
+        }
+
+        // 3. Procedural Skills
+        for skill in distillation.procedural_skills {
+            let record = skill.to_memory_record(session_scope.clone());
+            self.store.insert_or_update_memory(&record)?;
+            report.procedural_created += 1;
+        }
+
+        // 4. Negative Patterns
+        for neg in distillation.negative_patterns {
+            let mut pattern = FailurePattern::new(
+                neg.signature,
+                neg.pattern_name,
+                neg.description,
+                neg.mitigation,
+            );
+            pattern.trigger_condition = neg.trigger_condition;
+            pattern.severity = neg.severity.parse().unwrap_or(FailureSeverity::High);
+            if let Some(et) = neg.error_type {
+                pattern.error_type = et;
+            }
+            pattern.scope = session_scope.clone();
+            self.store.upsert_failure_pattern(&pattern)?;
+            report.negative_created += 1;
+        }
+
+        report.total_consolidated = report.episodic_created
+            + report.semantic_created
+            + report.procedural_created
+            + report.negative_created;
+
+        Ok(report)
+    }
+
+    pub async fn consolidate_all(&self) -> Result<ConsolidationReport, StrataError> {
+        let session_ids = self.store.get_session_ids()?;
+        let mut total_report = ConsolidationReport::default();
+
+        for sid in session_ids {
+            let rep = self.consolidate_session(&sid).await?;
+            total_report.episodic_created += rep.episodic_created;
+            total_report.semantic_created += rep.semantic_created;
+            total_report.procedural_created += rep.procedural_created;
+            total_report.negative_created += rep.negative_created;
+            total_report.deprecated_facts += rep.deprecated_facts;
+            total_report.total_consolidated += rep.total_consolidated;
+        }
+
+        Ok(total_report)
+    }
+
+    pub async fn prune_decayed(&self, threshold: f32) -> Result<PruneReport, StrataError> {
+        prune_decayed_memories(&self.store, threshold, None, chrono::Utc::now())
+    }
+}
+
+fn count_deprecated_memories(store: &SqliteStore, scope: &Scope) -> Result<usize, StrataError> {
+    let memories = store.get_all_memories(Some(scope), Some(&[MemoryType::Semantic]), 10_000)?;
+    let count = memories.iter().filter(|m| {
+        m.metadata.get("status").and_then(|v| v.as_str()) == Some("Deprecated")
+    }).count();
+    Ok(count)
+}
+
+fn fallback_extract_distillation(events: &[Event]) -> strata_reasoning::prompts::DistillationOutput {
+    let mut out = strata_reasoning::prompts::DistillationOutput::default();
+    let consolidator = Consolidator::new();
+
+    for event in events {
+        if let Some(record) = consolidator.extract_from_event(event) {
+            match record.memory_type {
+                MemoryType::Episodic => {
+                    out.episodic_memories.push(strata_reasoning::prompts::EpisodicMemoryItem {
+                        summary: record.summary.unwrap_or_else(|| "Session event".to_string()),
+                        content: record.content,
+                        importance: record.importance,
+                        tags: record.tags,
+                    });
+                }
+                MemoryType::Semantic => {
+                    out.semantic_facts.push(
+                        strata_reasoning::prompts::SemanticFact::new(record.content)
+                            .with_importance(record.importance)
+                            .with_tags(record.tags),
+                    );
+                }
+                MemoryType::Procedural => {
+                    let step = strata_reasoning::prompts::ProceduralStep {
+                        step_number: 1,
+                        action: record.content.clone(),
+                        tool_name: None,
+                        expected_outcome: record.summary.clone(),
+                    };
+                    out.procedural_skills.push(
+                        strata_reasoning::prompts::ProceduralSkill::new(
+                            record.summary.unwrap_or_else(|| "Procedural Task".to_string()),
+                            record.content,
+                            vec![step],
+                        ),
+                    );
+                }
+                MemoryType::NegativePattern => {
+                    out.negative_patterns.push(strata_reasoning::prompts::NegativePatternItem {
+                        signature: format!("event_{:?}", event.id),
+                        pattern_name: "EventFailure".to_string(),
+                        description: record.content,
+                        trigger_condition: "Tool failure".to_string(),
+                        mitigation: "Inspect error log".to_string(),
+                        severity: "high".to_string(),
+                        error_type: Some("ErrorObserved".to_string()),
+                    });
+                }
+            }
+        }
+    }
+
+    out
+}

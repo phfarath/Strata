@@ -38,6 +38,18 @@ impl OpenAiAdapter {
         self.client = client;
         self
     }
+
+    pub fn new_openrouter(api_key: impl Into<String>, model_slug: impl Into<String>) -> Self {
+        Self::new(api_key, model_slug).with_base_url("https://openrouter.ai/api/v1")
+    }
+
+    pub fn model(&self) -> &str {
+        &self.model
+    }
+
+    pub fn base_url(&self) -> &str {
+        &self.base_url
+    }
 }
 
 #[async_trait]
@@ -197,6 +209,242 @@ impl ReasoningEngine for OpenAiAdapter {
 
 #[async_trait]
 impl strata_core::traits::ReasoningEngine for OpenAiAdapter {
+    async fn prompt(
+        &self,
+        system: Option<&str>,
+        user: &str,
+        context: Option<serde_json::Value>,
+    ) -> Result<String, StrataError> {
+        let mut ctx = PromptContext::new().with_message(ChatMessage::user(user));
+        if let Some(sys) = system {
+            ctx = ctx.with_system(sys);
+        }
+        if let Some(meta) = context {
+            ctx.metadata = meta;
+        }
+        let output = self.complete(&ctx).await?;
+        Ok(output.content.unwrap_or_default())
+    }
+}
+
+// ============================================================================
+// OpenRouter Adapter
+// ============================================================================
+
+pub const DEFAULT_OPENROUTER_MODEL: &str = "meta-llama/llama-3.3-70b-instruct:free";
+
+pub struct OpenRouterAdapter {
+    api_key: String,
+    model: String,
+    base_url: String,
+    client: reqwest::Client,
+}
+
+impl OpenRouterAdapter {
+    pub fn new(api_key: impl Into<String>, model: impl Into<String>) -> Self {
+        Self {
+            api_key: api_key.into(),
+            model: model.into(),
+            base_url: "https://openrouter.ai/api/v1".to_string(),
+            client: reqwest::Client::new(),
+        }
+    }
+
+    pub fn from_env(model_slug: Option<String>) -> Result<Self, StrataError> {
+        let api_key = std::env::var("OPENROUTER_API_KEY")
+            .or_else(|_| std::env::var("STRATA_OPENROUTER_API_KEY"))
+            .map_err(|_| {
+                StrataError::Configuration(
+                    "OpenRouter API key not found in OPENROUTER_API_KEY or STRATA_OPENROUTER_API_KEY environment variables".to_string(),
+                )
+            })?;
+
+        let model = model_slug.unwrap_or_else(|| DEFAULT_OPENROUTER_MODEL.to_string());
+        Ok(Self::new(api_key, model))
+    }
+
+    pub fn with_base_url(mut self, base_url: impl Into<String>) -> Self {
+        self.base_url = base_url.into();
+        self
+    }
+
+    pub fn with_client(mut self, client: reqwest::Client) -> Self {
+        self.client = client;
+        self
+    }
+
+    pub fn api_key(&self) -> &str {
+        &self.api_key
+    }
+
+    pub fn model(&self) -> &str {
+        &self.model
+    }
+
+    pub fn base_url(&self) -> &str {
+        &self.base_url
+    }
+}
+
+#[async_trait]
+impl ReasoningEngine for OpenRouterAdapter {
+    async fn complete(&self, context: &PromptContext) -> Result<ReasoningOutput, StrataError> {
+        let mut messages = Vec::new();
+
+        if let Some(ref sys) = context.system_prompt {
+            messages.push(json!({
+                "role": "system",
+                "content": sys,
+            }));
+        }
+
+        for msg in &context.messages {
+            match msg.role {
+                Role::System => {
+                    messages.push(json!({
+                        "role": "system",
+                        "content": msg.content,
+                    }));
+                }
+                Role::User => {
+                    messages.push(json!({
+                        "role": "user",
+                        "content": msg.content,
+                    }));
+                }
+                Role::Assistant => {
+                    let mut obj = json!({
+                        "role": "assistant",
+                        "content": if msg.content.is_empty() { serde_json::Value::Null } else { json!(msg.content) }
+                    });
+                    if let Some(ref tools) = msg.tool_calls {
+                        let calls: Vec<_> = tools
+                            .iter()
+                            .map(|t| {
+                                json!({
+                                    "id": t.id,
+                                    "type": "function",
+                                    "function": {
+                                        "name": t.name,
+                                        "arguments": serde_json::to_string(&t.arguments).unwrap_or_default()
+                                    }
+                                })
+                            })
+                            .collect();
+                        obj["tool_calls"] = json!(calls);
+                    }
+                    messages.push(obj);
+                }
+                Role::Tool => {
+                    if let Some(ref results) = msg.tool_results {
+                        for res in results {
+                            messages.push(json!({
+                                "role": "tool",
+                                "tool_call_id": res.call_id,
+                                "content": serde_json::to_string(&res.result).unwrap_or_default(),
+                            }));
+                        }
+                    }
+                }
+            }
+        }
+
+        let mut body = json!({
+            "model": self.model,
+            "messages": messages,
+        });
+
+        if let Some(temp) = context.temperature {
+            body["temperature"] = json!(temp);
+        }
+        if let Some(max_t) = context.max_tokens {
+            body["max_tokens"] = json!(max_t);
+        }
+
+        if !context.tools.is_empty() {
+            let tools: Vec<_> = context
+                .tools
+                .iter()
+                .map(|t| {
+                    json!({
+                        "type": "function",
+                        "function": {
+                            "name": t.name,
+                            "description": t.description,
+                            "parameters": t.parameters,
+                        }
+                    })
+                })
+                .collect();
+            body["tools"] = json!(tools);
+        }
+
+        let url = format!("{}/chat/completions", self.base_url.trim_end_matches('/'));
+        let response = self
+            .client
+            .post(&url)
+            .header(AUTHORIZATION, format!("Bearer {}", self.api_key))
+            .header("HTTP-Referer", "https://github.com/strata-cognitive/strata")
+            .header("X-Title", "Strata Cognitive Runtime")
+            .header(CONTENT_TYPE, "application/json")
+            .json(&body)
+            .send()
+            .await
+            .map_err(|e| StrataError::Reasoning(format!("OpenRouter HTTP request failed: {}", e)))?;
+
+        if !response.status().is_success() {
+            let status = response.status();
+            let err_body = response.text().await.unwrap_or_default();
+            return Err(StrataError::Reasoning(format!(
+                "OpenRouter API returned error status {}: {}",
+                status, err_body
+            )));
+        }
+
+        let res_json: serde_json::Value = response
+            .json()
+            .await
+            .map_err(|e| StrataError::Reasoning(format!("Failed to parse OpenRouter JSON response: {}", e)))?;
+
+        let choice = res_json["choices"]
+            .get(0)
+            .ok_or_else(|| StrataError::Reasoning("OpenRouter response had no choices".to_string()))?;
+
+        let msg = &choice["message"];
+        let content = msg["content"].as_str().map(|s| s.to_string());
+        let finish_reason = choice["finish_reason"]
+            .as_str()
+            .unwrap_or("stop")
+            .to_string();
+
+        let mut tool_calls = Vec::new();
+        if let Some(calls_val) = msg["tool_calls"].as_array() {
+            for call in calls_val {
+                let id = call["id"].as_str().unwrap_or_default().to_string();
+                let name = call["function"]["name"].as_str().unwrap_or_default().to_string();
+                let args_raw = call["function"]["arguments"].as_str().unwrap_or("{}");
+                let arguments: serde_json::Value = serde_json::from_str(args_raw).unwrap_or(json!({}));
+                tool_calls.push(ToolCall::new(id, name, arguments));
+            }
+        }
+
+        let usage = res_json.get("usage").map(|u| TokenUsage {
+            prompt_tokens: u["prompt_tokens"].as_u64().unwrap_or(0) as u32,
+            completion_tokens: u["completion_tokens"].as_u64().unwrap_or(0) as u32,
+            total_tokens: u["total_tokens"].as_u64().unwrap_or(0) as u32,
+        });
+
+        Ok(ReasoningOutput {
+            content,
+            tool_calls,
+            finish_reason,
+            usage,
+        })
+    }
+}
+
+#[async_trait]
+impl strata_core::traits::ReasoningEngine for OpenRouterAdapter {
     async fn prompt(
         &self,
         system: Option<&str>,

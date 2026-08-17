@@ -49,6 +49,24 @@ impl MockReasoningEngine {
         self.push_response(ReasoningOutput::tool_calls(calls)).await;
     }
 
+    pub async fn push_json<T: serde::Serialize>(&self, value: &T) {
+        let json_str = serde_json::to_string_pretty(value).unwrap_or_else(|_| "{}".to_string());
+        self.push_text(json_str).await;
+    }
+
+    pub async fn push_distillation_output(&self, output: &crate::prompts::DistillationOutput) {
+        self.push_json(output).await;
+    }
+
+    pub async fn push_jtms_response(&self, classification: &str, reason: &str, confidence: f32) {
+        let payload = serde_json::json!({
+            "classification": classification,
+            "reason": reason,
+            "confidence": confidence
+        });
+        self.push_text(payload.to_string()).await;
+    }
+
     pub async fn set_error(&self, error_message: impl Into<String>) {
         let mut err = self.error_on_next.lock().await;
         *err = Some(error_message.into());

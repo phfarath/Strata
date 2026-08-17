@@ -1,5 +1,8 @@
 pub mod consolidation;
+pub mod decay;
 pub mod embedding;
+pub mod jtms;
+pub mod pipeline;
 pub mod retrieval;
 pub mod store;
 
@@ -17,10 +20,13 @@ use strata_core::state::{DigestOutput, FailurePattern, MemoryHandle, MemoryRecor
 use strata_core::traits::{EventStore, MemoryEngine};
 
 pub use consolidation::Consolidator;
+pub use decay::{DecayCalculator, PruneReport};
 pub use embedding::{
     bytes_to_embedding, cosine_similarity, embedding_to_bytes, EmbeddingProvider,
     FastEmbedProvider, MockEmbeddingProvider,
 };
+pub use jtms::{ConflictMatch, ConflictResolution, TruthMaintenanceSystem};
+pub use pipeline::{ConsolidationPipeline, ConsolidationResult, PipelineConfig};
 pub use retrieval::{HybridRanker, HybridRankerConfig};
 pub use store::SqliteStore;
 
@@ -69,6 +75,16 @@ impl SqliteMemoryEngine {
     /// Get a reference to the underlying `SqliteStore`.
     pub fn store(&self) -> &SqliteStore {
         &self.store
+    }
+
+    /// Get an Arc reference to the underlying `SqliteStore`.
+    pub fn store_arc(&self) -> Arc<SqliteStore> {
+        Arc::clone(&self.store)
+    }
+
+    /// Get the active embedding provider.
+    pub fn embedding_provider(&self) -> Arc<dyn EmbeddingProvider> {
+        Arc::clone(&self.embedding_provider)
     }
 
     /// Record a tool failure and consolidate into known failure patterns.

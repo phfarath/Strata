@@ -6,6 +6,8 @@ use strata_core::{
     state::{FailurePattern, FailureSeverity, Scope},
     traits::MemoryEngine,
 };
+use strata_memory::{ConsolidationPipeline, SqliteMemoryEngine};
+use crate::commands::consolidate::resolve_reasoning_engine;
 
 #[derive(Subcommand, Debug, Clone)]
 pub enum HookCommand {
@@ -67,7 +69,7 @@ pub enum HookCommand {
     },
 }
 
-pub async fn handle_hook(command: HookCommand, engine: Arc<dyn MemoryEngine>) -> Result<()> {
+pub async fn handle_hook(command: HookCommand, engine: Arc<SqliteMemoryEngine>) -> Result<()> {
     match command {
         HookCommand::SessionStart { session_id, project, json } => {
             debug!("Running session-start hook for session '{session_id}'");
@@ -173,7 +175,21 @@ pub async fn handle_hook(command: HookCommand, engine: Arc<dyn MemoryEngine>) ->
 
         HookCommand::SessionEnd { session_id } => {
             info!("Running session-end background consolidation for session '{session_id}'");
-            // Consolidation hook completes quietly
+            let store = engine.store_arc();
+            let embedder = engine.embedding_provider();
+            let reasoning = resolve_reasoning_engine(None);
+            let pipeline = ConsolidationPipeline::with_default_config();
+            let sid = session_id.clone();
+
+            tokio::spawn(async move {
+                if let Ok(events) = store.get_events(&sid, None, None) {
+                    if let Err(e) = pipeline.run_pipeline(&store, embedder.as_ref(), &events, Some(reasoning.as_ref())).await {
+                        error!("Async consolidation failed for session '{sid}': {e}");
+                    } else {
+                        info!("Async consolidation completed successfully for session '{sid}'");
+                    }
+                }
+            });
         }
 
         HookCommand::PostTool { tool, error, params, context } => {
