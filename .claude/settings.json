@@ -1,0 +1,19 @@
+{
+  "hooks": {
+    "Compact": {
+      "command": "strata hook compact"
+    },
+    "PostToolExecution": {
+      "command": "strata hook post-tool --tool \"$TOOL_NAME\" --error \"$ERROR\""
+    },
+    "SessionEnd": {
+      "command": "strata hook session-end"
+    },
+    "SessionStart": {
+      "command": "strata hook session-start"
+    },
+    "UserPromptSubmit": {
+      "command": "strata hook user-prompt --query \"$PROMPT\""
+    }
+  }
+}

@@ -1,0 +1,3 @@
+[mcp.servers.strata]
+command = "strata"
+args = ["mcp"]
