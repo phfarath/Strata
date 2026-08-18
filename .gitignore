@@ -6,3 +6,8 @@ Cargo.lock
 *.local
 .DS_Store
 Thumbs.db
+*.jsonl
+*.db
+*.db-shm
+*.db-wal
+
