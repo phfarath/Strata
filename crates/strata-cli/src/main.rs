@@ -16,11 +16,14 @@ use strata_cli::{
         consolidate::{run_consolidate, ConsolidateOptions},
         daemon::{run_daemon, DaemonArgs},
         doctor::run_doctor,
+        export::{run_export, ExportArgs},
+        feedback::{run_feedback, FeedbackArgs},
         hook::{handle_hook, HookCommand},
         init::{run_init, InitOptions},
         prune::{run_prune, PruneOptions},
         search::{run_search, SearchOptions},
         sync::{run_sync, SyncArgs},
+        sync_hosts::{run_sync_hosts, SyncHostsArgs},
     },
     mcp::server::McpServer,
 };
@@ -157,6 +160,16 @@ enum Commands {
 
     /// Run background synchronization daemon loop (< 10MB RAM)
     Daemon(DaemonArgs),
+
+    /// Export mined cognitive preference pairs (DPO), alignment signals (KTO), procedural skills (SFT), and markdown
+    Export(ExportArgs),
+
+    /// Compile and synchronize persistent memory & alignment rules across host instruction files within token budget
+    #[command(alias = "sync-hosts")]
+    SyncHosts(SyncHostsArgs),
+
+    /// Provide explicit reinforcement feedback on a persistent memory record
+    Feedback(FeedbackArgs),
 }
 
 
@@ -316,6 +329,21 @@ async fn main() -> Result<()> {
         Commands::Daemon(args) => {
             let store = engine.store_arc();
             run_daemon(args, store).await?;
+        }
+
+        Commands::Export(args) => {
+            let store = engine.store_arc();
+            run_export(args, store).await?;
+        }
+
+        Commands::SyncHosts(args) => {
+            let store = engine.store_arc();
+            run_sync_hosts(args, store).await?;
+        }
+
+        Commands::Feedback(args) => {
+            let store = engine.store_arc();
+            run_feedback(args, store).await?;
         }
     }
 

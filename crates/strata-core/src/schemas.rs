@@ -742,3 +742,425 @@ pub struct SyncReport {
     pub last_seq: u64,
     pub errors: Vec<String>,
 }
+
+/// Categorization of implicit behavioural signals observed during execution.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum SignalKind {
+    ToolLoop,
+    GitRevert,
+    CommandFix,
+    TestRerunFail,
+    TestRerunSuccess,
+    LongDwell,
+    ExplicitRating,
+    ExplicitComment,
+}
+
+impl fmt::Display for SignalKind {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            SignalKind::ToolLoop => write!(f, "tool_loop"),
+            SignalKind::GitRevert => write!(f, "git_revert"),
+            SignalKind::CommandFix => write!(f, "command_fix"),
+            SignalKind::TestRerunFail => write!(f, "test_rerun_fail"),
+            SignalKind::TestRerunSuccess => write!(f, "test_rerun_success"),
+            SignalKind::LongDwell => write!(f, "long_dwell"),
+            SignalKind::ExplicitRating => write!(f, "explicit_rating"),
+            SignalKind::ExplicitComment => write!(f, "explicit_comment"),
+        }
+    }
+}
+
+impl FromStr for SignalKind {
+    type Err = String;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        match s.to_lowercase().as_str() {
+            "tool_loop" | "toolloop" => Ok(SignalKind::ToolLoop),
+            "git_revert" | "gitrevert" => Ok(SignalKind::GitRevert),
+            "command_fix" | "commandfix" => Ok(SignalKind::CommandFix),
+            "test_rerun_fail" | "testrerunfail" => Ok(SignalKind::TestRerunFail),
+            "test_rerun_success" | "testrerunsuccess" => Ok(SignalKind::TestRerunSuccess),
+            "long_dwell" | "longdwell" => Ok(SignalKind::LongDwell),
+            "explicit_rating" | "explicitrating" => Ok(SignalKind::ExplicitRating),
+            "explicit_comment" | "explicitcomment" => Ok(SignalKind::ExplicitComment),
+            _ => Err(format!("Unknown SignalKind: {s}")),
+        }
+    }
+}
+
+/// Implicit behavioural signal captured during agent run.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct ImplicitSignal {
+    pub id: Uuid,
+    pub kind: SignalKind,
+    pub timestamp: DateTime<Utc>,
+    pub session_id: String,
+    pub agent_id: String,
+    #[serde(default)]
+    pub tool_name: Option<String>,
+    #[serde(default)]
+    pub file_path: Option<String>,
+    #[serde(default)]
+    pub extra: Option<String>,
+}
+
+impl ImplicitSignal {
+    pub fn new(
+        kind: SignalKind,
+        session_id: impl Into<String>,
+        agent_id: impl Into<String>,
+    ) -> Self {
+        Self {
+            id: Uuid::new_v4(),
+            kind,
+            timestamp: Utc::now(),
+            session_id: session_id.into(),
+            agent_id: agent_id.into(),
+            tool_name: None,
+            file_path: None,
+            extra: None,
+        }
+    }
+
+    pub fn with_id(mut self, id: Uuid) -> Self {
+        self.id = id;
+        self
+    }
+
+    pub fn with_timestamp(mut self, timestamp: DateTime<Utc>) -> Self {
+        self.timestamp = timestamp;
+        self
+    }
+
+    pub fn with_tool_name(mut self, tool_name: impl Into<String>) -> Self {
+        self.tool_name = Some(tool_name.into());
+        self
+    }
+
+    pub fn with_file_path(mut self, file_path: impl Into<String>) -> Self {
+        self.file_path = Some(file_path.into());
+        self
+    }
+
+    pub fn with_extra(mut self, extra: impl Into<String>) -> Self {
+        self.extra = Some(extra.into());
+        self
+    }
+}
+
+/// Qualitative rating for feedback.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum FeedbackRating {
+    Positive,
+    Negative,
+}
+
+impl fmt::Display for FeedbackRating {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            FeedbackRating::Positive => write!(f, "positive"),
+            FeedbackRating::Negative => write!(f, "negative"),
+        }
+    }
+}
+
+impl FromStr for FeedbackRating {
+    type Err = String;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        match s.to_lowercase().as_str() {
+            "positive" | "pos" | "+" | "1" => Ok(FeedbackRating::Positive),
+            "negative" | "neg" | "-" | "0" | "-1" => Ok(FeedbackRating::Negative),
+            _ => Err(format!("Unknown FeedbackRating: {s}")),
+        }
+    }
+}
+
+/// Fine-grained feedback event recorded against a memory or behavioural signal.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct FeedbackEvent {
+    pub id: Uuid,
+    #[serde(default)]
+    pub memory_id: Option<Uuid>,
+    #[serde(default)]
+    pub signal_id: Option<Uuid>,
+    pub rating: FeedbackRating,
+    #[serde(default)]
+    pub comment: Option<String>,
+    pub timestamp: DateTime<Utc>,
+    pub source: String,
+}
+
+impl FeedbackEvent {
+    pub fn new(rating: FeedbackRating, source: impl Into<String>) -> Self {
+        Self {
+            id: Uuid::new_v4(),
+            memory_id: None,
+            signal_id: None,
+            rating,
+            comment: None,
+            timestamp: Utc::now(),
+            source: source.into(),
+        }
+    }
+
+    pub fn with_id(mut self, id: Uuid) -> Self {
+        self.id = id;
+        self
+    }
+
+    pub fn with_memory_id(mut self, memory_id: Uuid) -> Self {
+        self.memory_id = Some(memory_id);
+        self
+    }
+
+    pub fn with_signal_id(mut self, signal_id: Uuid) -> Self {
+        self.signal_id = Some(signal_id);
+        self
+    }
+
+    pub fn with_comment(mut self, comment: impl Into<String>) -> Self {
+        self.comment = Some(comment.into());
+        self
+    }
+
+    pub fn with_timestamp(mut self, timestamp: DateTime<Utc>) -> Self {
+        self.timestamp = timestamp;
+        self
+    }
+}
+
+/// DPO preference pair for alignment tuning.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct PreferencePair {
+    pub id: Uuid,
+    pub prompt: String,
+    pub chosen: String,
+    pub rejected: String,
+    pub source_session_id: String,
+    pub created_at: DateTime<Utc>,
+}
+
+impl PreferencePair {
+    pub fn new(
+        prompt: impl Into<String>,
+        chosen: impl Into<String>,
+        rejected: impl Into<String>,
+        source_session_id: impl Into<String>,
+    ) -> Self {
+        Self {
+            id: Uuid::new_v4(),
+            prompt: prompt.into(),
+            chosen: chosen.into(),
+            rejected: rejected.into(),
+            source_session_id: source_session_id.into(),
+            created_at: Utc::now(),
+        }
+    }
+
+    pub fn with_id(mut self, id: Uuid) -> Self {
+        self.id = id;
+        self
+    }
+
+    pub fn with_created_at(mut self, created_at: DateTime<Utc>) -> Self {
+        self.created_at = created_at;
+        self
+    }
+}
+
+/// KTO (Kahneman-Tversky Optimization) sample with binary outcome label.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct KtoSample {
+    pub id: Uuid,
+    pub prompt: String,
+    pub completion: String,
+    pub label: bool,
+    pub source_session_id: String,
+    pub created_at: DateTime<Utc>,
+}
+
+impl KtoSample {
+    pub fn new(
+        prompt: impl Into<String>,
+        completion: impl Into<String>,
+        label: bool,
+        source_session_id: impl Into<String>,
+    ) -> Self {
+        Self {
+            id: Uuid::new_v4(),
+            prompt: prompt.into(),
+            completion: completion.into(),
+            label,
+            source_session_id: source_session_id.into(),
+            created_at: Utc::now(),
+        }
+    }
+
+    pub fn with_id(mut self, id: Uuid) -> Self {
+        self.id = id;
+        self
+    }
+
+    pub fn with_created_at(mut self, created_at: DateTime<Utc>) -> Self {
+        self.created_at = created_at;
+        self
+    }
+}
+
+/// Supervised Fine-Tuning (SFT) sample formatted as instruction-input-output triple.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct SftSample {
+    pub id: Uuid,
+    pub instruction: String,
+    pub input: String,
+    pub output: String,
+    pub source_session_id: String,
+    pub created_at: DateTime<Utc>,
+}
+
+impl SftSample {
+    pub fn new(
+        instruction: impl Into<String>,
+        input: impl Into<String>,
+        output: impl Into<String>,
+        source_session_id: impl Into<String>,
+    ) -> Self {
+        Self {
+            id: Uuid::new_v4(),
+            instruction: instruction.into(),
+            input: input.into(),
+            output: output.into(),
+            source_session_id: source_session_id.into(),
+            created_at: Utc::now(),
+        }
+    }
+
+    pub fn with_id(mut self, id: Uuid) -> Self {
+        self.id = id;
+        self
+    }
+
+    pub fn with_created_at(mut self, created_at: DateTime<Utc>) -> Self {
+        self.created_at = created_at;
+        self
+    }
+}
+
+/// Supported export formats for alignment datasets.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ExportFormat {
+    Dpo,
+    Kto,
+    Sft,
+    Markdown,
+    Jsonl,
+}
+
+impl fmt::Display for ExportFormat {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            ExportFormat::Dpo => write!(f, "dpo"),
+            ExportFormat::Kto => write!(f, "kto"),
+            ExportFormat::Sft => write!(f, "sft"),
+            ExportFormat::Markdown => write!(f, "markdown"),
+            ExportFormat::Jsonl => write!(f, "jsonl"),
+        }
+    }
+}
+
+impl FromStr for ExportFormat {
+    type Err = String;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        match s.to_lowercase().as_str() {
+            "dpo" => Ok(ExportFormat::Dpo),
+            "kto" => Ok(ExportFormat::Kto),
+            "sft" => Ok(ExportFormat::Sft),
+            "markdown" | "md" => Ok(ExportFormat::Markdown),
+            "jsonl" | "json_lines" => Ok(ExportFormat::Jsonl),
+            _ => Err(format!("Unknown ExportFormat: {s}")),
+        }
+    }
+}
+
+/// Budget and content configuration for context compilation.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct ContextBudgetConfig {
+    pub max_tokens: usize,
+    pub top_k_memories: usize,
+    pub include_failure_patterns: bool,
+    pub include_success_trajectories: bool,
+}
+
+impl Default for ContextBudgetConfig {
+    fn default() -> Self {
+        Self {
+            max_tokens: 2048,
+            top_k_memories: 10,
+            include_failure_patterns: true,
+            include_success_trajectories: true,
+        }
+    }
+}
+
+impl ContextBudgetConfig {
+    pub fn new(max_tokens: usize, top_k_memories: usize) -> Self {
+        Self {
+            max_tokens,
+            top_k_memories,
+            include_failure_patterns: true,
+            include_success_trajectories: true,
+        }
+    }
+
+    pub fn with_failure_patterns(mut self, include: bool) -> Self {
+        self.include_failure_patterns = include;
+        self
+    }
+
+    pub fn with_success_trajectories(mut self, include: bool) -> Self {
+        self.include_success_trajectories = include;
+        self
+    }
+}
+
+/// Host target configuration for multi-IDE context distribution.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct HostTargetConfig {
+    pub cursor: bool,
+    pub claude: bool,
+    pub codex: bool,
+    pub gemini: bool,
+}
+
+impl Default for HostTargetConfig {
+    fn default() -> Self {
+        Self {
+            cursor: true,
+            claude: true,
+            codex: true,
+            gemini: true,
+        }
+    }
+}
+
+impl HostTargetConfig {
+    pub fn all() -> Self {
+        Self::default()
+    }
+
+    pub fn none() -> Self {
+        Self {
+            cursor: false,
+            claude: false,
+            codex: false,
+            gemini: false,
+        }
+    }
+}
+

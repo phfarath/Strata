@@ -9,8 +9,9 @@ use strata_core::events::{
     DataClassification, Event, EventId, EventPayload, Provenance, RetentionPolicy,
 };
 use strata_core::schemas::{
-    EpisodicMemory, EvidenceRef, FactStatus, MemoryFeedback, ParameterDef, ProceduralExample,
-    ProceduralSkill, ProceduralStep, SemanticFact, SignalScores, SyncDelta,
+    EpisodicMemory, EvidenceRef, FactStatus, FeedbackEvent, FeedbackRating, ImplicitSignal,
+    MemoryFeedback, ParameterDef, PreferencePair, ProceduralExample,
+    ProceduralSkill, ProceduralStep, SemanticFact, SignalKind, SignalScores, SyncDelta,
 };
 
 use strata_core::state::{
@@ -359,6 +360,48 @@ impl SqliteStore {
                 key TEXT PRIMARY KEY,
                 value TEXT NOT NULL
             );
+
+            -- Track 3 Tables: Implicit Signals, Feedback Events, Preference Pairs
+            CREATE TABLE IF NOT EXISTS implicit_signals (
+                id TEXT PRIMARY KEY,
+                kind TEXT NOT NULL,
+                session_id TEXT NOT NULL,
+                agent_id TEXT NOT NULL,
+                tool_name TEXT,
+                file_path TEXT,
+                extra TEXT,
+                created_at TEXT NOT NULL
+            );
+
+            CREATE INDEX IF NOT EXISTS idx_signals_session ON implicit_signals(session_id);
+            CREATE INDEX IF NOT EXISTS idx_signals_kind ON implicit_signals(kind);
+            CREATE INDEX IF NOT EXISTS idx_signals_created ON implicit_signals(created_at);
+
+            CREATE TABLE IF NOT EXISTS feedback_events (
+                id TEXT PRIMARY KEY,
+                memory_id TEXT,
+                signal_id TEXT,
+                rating TEXT NOT NULL,
+                comment TEXT,
+                created_at TEXT NOT NULL,
+                source TEXT NOT NULL
+            );
+
+            CREATE INDEX IF NOT EXISTS idx_feedback_memory ON feedback_events(memory_id);
+            CREATE INDEX IF NOT EXISTS idx_feedback_signal ON feedback_events(signal_id);
+            CREATE INDEX IF NOT EXISTS idx_feedback_created ON feedback_events(created_at);
+
+            CREATE TABLE IF NOT EXISTS preference_pairs (
+                id TEXT PRIMARY KEY,
+                prompt TEXT NOT NULL,
+                chosen TEXT NOT NULL,
+                rejected TEXT NOT NULL,
+                source_session_id TEXT NOT NULL,
+                created_at TEXT NOT NULL
+            );
+
+            CREATE INDEX IF NOT EXISTS idx_pref_pairs_session ON preference_pairs(source_session_id);
+            CREATE INDEX IF NOT EXISTS idx_pref_pairs_created ON preference_pairs(created_at);
             ",
         )
         .map_err(|e| StrataError::Database(format!("Failed to execute schema migration: {e}")))?;
@@ -2288,6 +2331,27 @@ impl SqliteStore {
         )
         .map_err(|e| StrataError::Database(format!("Failed to update procedural skill feedback: {e}")))?;
 
+        // 6. Record FeedbackEvent in feedback_events table
+        let rating_enum = match feedback.rating.as_str() {
+            "positive" => FeedbackRating::Positive,
+            _ => FeedbackRating::Negative,
+        };
+        let sig_id_str: Option<String> = None;
+        let _ = conn.execute(
+            "INSERT INTO feedback_events (
+                id, memory_id, signal_id, rating, comment, created_at, source
+            ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
+            params![
+                Uuid::new_v4().to_string(),
+                mem_id_str,
+                sig_id_str,
+                rating_enum.to_string(),
+                feedback.comment,
+                now_str,
+                "memory_feedback",
+            ],
+        );
+
         Ok(())
     }
 
@@ -2323,6 +2387,390 @@ impl SqliteStore {
         .map_err(|e| StrataError::Database(format!("Failed to set sync metadata: {e}")))?;
 
         Ok(())
+    }
+
+    // ==========================================
+    // Track 3: Feedback, Signals & Preference Pairs
+    // ==========================================
+
+    /// Record an implicit behavioural signal.
+    pub fn record_implicit_signal(&self, signal: &ImplicitSignal) -> Result<(), StrataError> {
+        let conn = self.conn.lock().map_err(|_| {
+            StrataError::Database("Lock poisoned on SQLite connection".to_string())
+        })?;
+
+        let id_str = signal.id.to_string();
+        let kind_str = signal.kind.to_string();
+        let ts_str = signal.timestamp.to_rfc3339();
+
+        conn.execute(
+            "INSERT INTO implicit_signals (
+                id, kind, session_id, agent_id, tool_name, file_path, extra, created_at
+            ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)",
+            params![
+                id_str,
+                kind_str,
+                signal.session_id,
+                signal.agent_id,
+                signal.tool_name,
+                signal.file_path,
+                signal.extra,
+                ts_str,
+            ],
+        )
+        .map_err(|e| StrataError::Database(format!("Failed to insert implicit signal: {e}")))?;
+
+        Ok(())
+    }
+
+    /// Retrieve implicit signals, optionally filtered by session ID.
+    pub fn get_implicit_signals(
+        &self,
+        session_id: Option<&str>,
+    ) -> Result<Vec<ImplicitSignal>, StrataError> {
+        let conn = self.conn.lock().map_err(|_| {
+            StrataError::Database("Lock poisoned on SQLite connection".to_string())
+        })?;
+
+        let mut sql = "
+            SELECT id, kind, session_id, agent_id, tool_name, file_path, extra, created_at
+            FROM implicit_signals
+        ".to_string();
+
+        if session_id.is_some() {
+            sql.push_str(" WHERE session_id = ?1 ORDER BY created_at ASC");
+        } else {
+            sql.push_str(" ORDER BY created_at ASC");
+        }
+
+        let mut stmt = conn
+            .prepare(&sql)
+            .map_err(|e| StrataError::Database(e.to_string()))?;
+
+        let map_row = |row: &rusqlite::Row| -> Result<ImplicitSignal, rusqlite::Error> {
+            let id_str: String = row.get(0)?;
+            let id = Uuid::parse_str(&id_str).map_err(|e| {
+                rusqlite::Error::FromSqlConversionFailure(
+                    0,
+                    rusqlite::types::Type::Text,
+                    Box::new(e),
+                )
+            })?;
+            let kind_str: String = row.get(1)?;
+            let kind = kind_str
+                .parse::<SignalKind>()
+                .unwrap_or(SignalKind::ToolLoop);
+            let session_id: String = row.get(2)?;
+            let agent_id: String = row.get(3)?;
+            let tool_name: Option<String> = row.get(4)?;
+            let file_path: Option<String> = row.get(5)?;
+            let extra: Option<String> = row.get(6)?;
+            let created_at_str: String = row.get(7)?;
+            let timestamp = DateTime::parse_from_rfc3339(&created_at_str)
+                .map(|dt| dt.with_timezone(&Utc))
+                .unwrap_or_else(|_| Utc::now());
+
+            Ok(ImplicitSignal {
+                id,
+                kind,
+                timestamp,
+                session_id,
+                agent_id,
+                tool_name,
+                file_path,
+                extra,
+            })
+        };
+
+        let rows = if let Some(sid) = session_id {
+            stmt.query_map(params![sid], map_row)
+        } else {
+            stmt.query_map([], map_row)
+        }
+        .map_err(|e| StrataError::Database(e.to_string()))?;
+
+        let mut results = Vec::new();
+        for r in rows {
+            results.push(r.map_err(|e| StrataError::Database(e.to_string()))?);
+        }
+        Ok(results)
+    }
+
+    /// Record a feedback event and adjust associated memory weights if applicable.
+    pub fn record_feedback_event(&self, feedback: &FeedbackEvent) -> Result<(), StrataError> {
+        let conn = self.conn.lock().map_err(|_| {
+            StrataError::Database("Lock poisoned on SQLite connection".to_string())
+        })?;
+
+        let id_str = feedback.id.to_string();
+        let mem_id_str = feedback.memory_id.map(|u| u.to_string());
+        let sig_id_str = feedback.signal_id.map(|u| u.to_string());
+        let rating_str = feedback.rating.to_string();
+        let ts_str = feedback.timestamp.to_rfc3339();
+
+        conn.execute(
+            "INSERT INTO feedback_events (
+                id, memory_id, signal_id, rating, comment, created_at, source
+            ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
+            params![
+                id_str,
+                mem_id_str,
+                sig_id_str,
+                rating_str,
+                feedback.comment,
+                ts_str,
+                feedback.source,
+            ],
+        )
+        .map_err(|e| StrataError::Database(format!("Failed to insert feedback event: {e}")))?;
+
+        // If feedback is attached to a memory, adjust memory importance/confidence and log access
+        if let Some(mem_id) = feedback.memory_id {
+            let adj_delta = match feedback.rating {
+                FeedbackRating::Positive => 0.1,
+                FeedbackRating::Negative => -0.1,
+            };
+
+            let mem_str = mem_id.to_string();
+            let _ = conn.execute(
+                "UPDATE memories
+                 SET importance = MAX(0.0, MIN(1.0, importance + ?1)),
+                     confidence = MAX(0.0, MIN(1.0, confidence + ?1)),
+                     access_count = access_count + 1,
+                     last_accessed_at = ?2,
+                     updated_at = ?2
+                 WHERE id = ?3",
+                params![adj_delta, ts_str, mem_str],
+            );
+            let _ = conn.execute(
+                "UPDATE semantic_facts
+                 SET importance = MAX(0.0, MIN(1.0, importance + ?1)),
+                     confidence = MAX(0.0, MIN(1.0, confidence + ?1)),
+                     last_updated_at = ?2
+                 WHERE id = ?3",
+                params![adj_delta, ts_str, mem_str],
+            );
+            let _ = conn.execute(
+                "UPDATE procedural_skills
+                 SET importance = MAX(0.0, MIN(1.0, importance + ?1)),
+                     last_used_at = ?2
+                 WHERE id = ?3",
+                params![adj_delta, ts_str, mem_str],
+            );
+        }
+
+        Ok(())
+    }
+
+    /// Retrieve feedback events recorded for a specific memory.
+    pub fn get_feedback_events_for_memory(
+        &self,
+        memory_id: &Uuid,
+    ) -> Result<Vec<FeedbackEvent>, StrataError> {
+        let conn = self.conn.lock().map_err(|_| {
+            StrataError::Database("Lock poisoned on SQLite connection".to_string())
+        })?;
+
+        let mut stmt = conn
+            .prepare(
+                "SELECT id, memory_id, signal_id, rating, comment, created_at, source
+                 FROM feedback_events
+                 WHERE memory_id = ?1
+                 ORDER BY created_at DESC",
+            )
+            .map_err(|e| StrataError::Database(e.to_string()))?;
+
+        let mem_str = memory_id.to_string();
+        let rows = stmt
+            .query_map(params![mem_str], |row| Self::row_to_feedback_event(row))
+            .map_err(|e| StrataError::Database(e.to_string()))?;
+
+        let mut results = Vec::new();
+        for r in rows {
+            results.push(r.map_err(|e| StrataError::Database(e.to_string()))?);
+        }
+        Ok(results)
+    }
+
+    /// Retrieve feedback events, optionally filtered by session ID.
+    pub fn get_feedback_events(
+        &self,
+        session_id: Option<&str>,
+    ) -> Result<Vec<FeedbackEvent>, StrataError> {
+        let conn = self.conn.lock().map_err(|_| {
+            StrataError::Database("Lock poisoned on SQLite connection".to_string())
+        })?;
+
+        let mut sql = "
+            SELECT f.id, f.memory_id, f.signal_id, f.rating, f.comment, f.created_at, f.source
+            FROM feedback_events f
+        ".to_string();
+
+        if let Some(sid) = session_id {
+            sql.push_str(" LEFT JOIN implicit_signals s ON f.signal_id = s.id WHERE s.session_id = ?1 ORDER BY f.created_at ASC");
+            let mut stmt = conn
+                .prepare(&sql)
+                .map_err(|e| StrataError::Database(e.to_string()))?;
+            let rows = stmt
+                .query_map(params![sid], |row| Self::row_to_feedback_event(row))
+                .map_err(|e| StrataError::Database(e.to_string()))?;
+            let mut results = Vec::new();
+            for r in rows {
+                results.push(r.map_err(|e| StrataError::Database(e.to_string()))?);
+            }
+            Ok(results)
+        } else {
+            sql.push_str(" ORDER BY f.created_at ASC");
+            let mut stmt = conn
+                .prepare(&sql)
+                .map_err(|e| StrataError::Database(e.to_string()))?;
+            let rows = stmt
+                .query_map([], |row| Self::row_to_feedback_event(row))
+                .map_err(|e| StrataError::Database(e.to_string()))?;
+            let mut results = Vec::new();
+            for r in rows {
+                results.push(r.map_err(|e| StrataError::Database(e.to_string()))?);
+            }
+            Ok(results)
+        }
+    }
+
+    fn row_to_feedback_event(row: &rusqlite::Row) -> Result<FeedbackEvent, rusqlite::Error> {
+        let id_str: String = row.get(0)?;
+        let id = Uuid::parse_str(&id_str).map_err(|e| {
+            rusqlite::Error::FromSqlConversionFailure(
+                0,
+                rusqlite::types::Type::Text,
+                Box::new(e),
+            )
+        })?;
+        let mem_id_str: Option<String> = row.get(1)?;
+        let memory_id = mem_id_str.and_then(|s| Uuid::parse_str(&s).ok());
+        let sig_id_str: Option<String> = row.get(2)?;
+        let signal_id = sig_id_str.and_then(|s| Uuid::parse_str(&s).ok());
+        let rating_str: String = row.get(3)?;
+        let rating = rating_str
+            .parse::<FeedbackRating>()
+            .unwrap_or(FeedbackRating::Positive);
+        let comment: Option<String> = row.get(4)?;
+        let created_at_str: String = row.get(5)?;
+        let timestamp = DateTime::parse_from_rfc3339(&created_at_str)
+            .map(|dt| dt.with_timezone(&Utc))
+            .unwrap_or_else(|_| Utc::now());
+        let source: String = row.get(6)?;
+
+        Ok(FeedbackEvent {
+            id,
+            memory_id,
+            signal_id,
+            rating,
+            comment,
+            timestamp,
+            source,
+        })
+    }
+
+    /// Record a DPO preference pair.
+    pub fn record_preference_pair(&self, pair: &PreferencePair) -> Result<(), StrataError> {
+        let conn = self.conn.lock().map_err(|_| {
+            StrataError::Database("Lock poisoned on SQLite connection".to_string())
+        })?;
+
+        let id_str = pair.id.to_string();
+        let ts_str = pair.created_at.to_rfc3339();
+
+        conn.execute(
+            "INSERT INTO preference_pairs (
+                id, prompt, chosen, rejected, source_session_id, created_at
+            ) VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
+            params![
+                id_str,
+                pair.prompt,
+                pair.chosen,
+                pair.rejected,
+                pair.source_session_id,
+                ts_str,
+            ],
+        )
+        .map_err(|e| StrataError::Database(format!("Failed to insert preference pair: {e}")))?;
+
+        Ok(())
+    }
+
+    /// Retrieve preference pairs, optionally filtered by session ID.
+    pub fn get_preference_pairs(
+        &self,
+        session_id: Option<&str>,
+    ) -> Result<Vec<PreferencePair>, StrataError> {
+        let conn = self.conn.lock().map_err(|_| {
+            StrataError::Database("Lock poisoned on SQLite connection".to_string())
+        })?;
+
+        let map_row = |row: &rusqlite::Row| -> Result<PreferencePair, rusqlite::Error> {
+            let id_str: String = row.get(0)?;
+            let id = Uuid::parse_str(&id_str).map_err(|e| {
+                rusqlite::Error::FromSqlConversionFailure(
+                    0,
+                    rusqlite::types::Type::Text,
+                    Box::new(e),
+                )
+            })?;
+            let prompt: String = row.get(1)?;
+            let chosen: String = row.get(2)?;
+            let rejected: String = row.get(3)?;
+            let source_session_id: String = row.get(4)?;
+            let created_at_str: String = row.get(5)?;
+            let created_at = DateTime::parse_from_rfc3339(&created_at_str)
+                .map(|dt| dt.with_timezone(&Utc))
+                .unwrap_or_else(|_| Utc::now());
+
+            Ok(PreferencePair {
+                id,
+                prompt,
+                chosen,
+                rejected,
+                source_session_id,
+                created_at,
+            })
+        };
+
+        let mut results = Vec::new();
+        if let Some(sid) = session_id {
+            let mut stmt = conn
+                .prepare(
+                    "SELECT id, prompt, chosen, rejected, source_session_id, created_at
+                     FROM preference_pairs
+                     WHERE source_session_id = ?1
+                     ORDER BY created_at DESC",
+                )
+                .map_err(|e| StrataError::Database(e.to_string()))?;
+
+            let rows = stmt
+                .query_map(params![sid], map_row)
+                .map_err(|e| StrataError::Database(e.to_string()))?;
+
+            for r in rows {
+                results.push(r.map_err(|e| StrataError::Database(e.to_string()))?);
+            }
+        } else {
+            let mut stmt = conn
+                .prepare(
+                    "SELECT id, prompt, chosen, rejected, source_session_id, created_at
+                     FROM preference_pairs
+                     ORDER BY created_at DESC",
+                )
+                .map_err(|e| StrataError::Database(e.to_string()))?;
+
+            let rows = stmt
+                .query_map([], map_row)
+                .map_err(|e| StrataError::Database(e.to_string()))?;
+
+            for r in rows {
+                results.push(r.map_err(|e| StrataError::Database(e.to_string()))?);
+            }
+        }
+
+        Ok(results)
     }
 }
 

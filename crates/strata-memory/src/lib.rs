@@ -1,3 +1,5 @@
+pub mod alignment;
+pub mod compiler;
 pub mod consolidation;
 pub mod decay;
 pub mod embedding;
@@ -20,6 +22,11 @@ use strata_core::events::{Event, EventId};
 use strata_core::state::{DigestOutput, FailurePattern, MemoryHandle, MemoryRecord, Scope};
 use strata_core::traits::{EventStore, MemoryEngine};
 
+pub use alignment::PreferenceMiner;
+pub use compiler::{
+    estimate_tokens, HostCompileResult, MultiHostCompileReport, MultiHostCompiler,
+    STRATA_MARKER_END, STRATA_MARKER_START,
+};
 pub use consolidation::Consolidator;
 pub use decay::{DecayCalculator, PruneReport};
 pub use embedding::{
@@ -31,6 +38,11 @@ pub use pipeline::{ConsolidationPipeline, ConsolidationResult, PipelineConfig};
 pub use retrieval::{HybridRanker, HybridRankerConfig};
 pub use store::SqliteStore;
 pub use sync::{calculate_exponential_backoff, compute_version_hash, SyncEngine};
+pub use strata_core::schemas::{
+    ContextBudgetConfig, ExportFormat, FeedbackEvent, FeedbackRating, HostTargetConfig,
+    ImplicitSignal, KtoSample, MemoryFeedback, PreferencePair, SftSample, SignalKind,
+};
+pub type DpoPair = PreferencePair;
 
 
 

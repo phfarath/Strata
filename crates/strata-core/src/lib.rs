@@ -12,9 +12,11 @@ pub use events::{
     SessionEnded, SessionStarted, TaskCompleted, TaskStarted, ToolInvoked, ToolResultReceived,
 };
 pub use schemas::{
-    DecayConfig, DecayMetrics, EvidenceRef, EpisodicMemory, FactStatus, MemoryFeedback,
-    ParameterDef, ProceduralExample, ProceduralSkill, ProceduralStep, SemanticFact,
-    SignalScores, SyncConfig, SyncDelta, SyncReport,
+    ContextBudgetConfig, DecayConfig, DecayMetrics, EvidenceRef, EpisodicMemory, ExportFormat,
+    FactStatus, FeedbackEvent, FeedbackRating, HostTargetConfig, ImplicitSignal, KtoSample,
+    MemoryFeedback, ParameterDef, PreferencePair, ProceduralExample, ProceduralSkill,
+    ProceduralStep, SemanticFact, SftSample, SignalKind, SignalScores, SyncConfig, SyncDelta,
+    SyncReport,
 };
 pub use state::{
     DigestOutput, FailurePattern, FailureSeverity, MemoryHandle, MemoryRecord, MemoryType,
@@ -27,6 +29,7 @@ pub use traits::{EventStore, MemoryEngine, ReasoningEngine, Tool, ToolGateway};
 mod tests {
     use super::*;
     use chrono::Utc;
+    use uuid::Uuid;
 
     #[test]
     fn test_event_creation_and_serialization() {
@@ -224,5 +227,85 @@ mod tests {
         let de_report: SyncReport = serde_json::from_str(&report_json).expect("deserialize report");
         assert_eq!(report.pushed_count, de_report.pushed_count);
         assert_eq!(report.conflicts_resolved, de_report.conflicts_resolved);
+    }
+
+    #[test]
+    fn test_track3_schemas_serialization() {
+        let signal = ImplicitSignal::new(
+            SignalKind::ToolLoop,
+            "sess-test-3",
+            "agent-beta",
+        )
+        .with_tool_name("file_search")
+        .with_file_path("src/lib.rs")
+        .with_extra("Loop detected 4 times");
+
+        let signal_json = serde_json::to_string(&signal).expect("serialize implicit signal");
+        let de_signal: ImplicitSignal = serde_json::from_str(&signal_json).expect("deserialize signal");
+        assert_eq!(signal.id, de_signal.id);
+        assert_eq!(signal.kind, SignalKind::ToolLoop);
+        assert_eq!(de_signal.tool_name.as_deref(), Some("file_search"));
+
+        let mem_id = Uuid::new_v4();
+        let fb_event = FeedbackEvent::new(FeedbackRating::Negative, "user_prompt")
+            .with_memory_id(mem_id)
+            .with_signal_id(signal.id)
+            .with_comment("Outdated rule");
+        let fb_json = serde_json::to_string(&fb_event).expect("serialize feedback event");
+        let de_fb: FeedbackEvent = serde_json::from_str(&fb_json).expect("deserialize feedback event");
+        assert_eq!(de_fb.rating, FeedbackRating::Negative);
+        assert_eq!(de_fb.memory_id, Some(mem_id));
+        assert_eq!(de_fb.signal_id, Some(signal.id));
+
+        let pref = PreferencePair::new(
+            "Write a simple function",
+            "fn hello() -> &'static str { \"hello\" }",
+            "fn hello() -> String { let s = String::new(); s + \"hello\" }",
+            "sess-test-3",
+        );
+        let pref_json = serde_json::to_string(&pref).expect("serialize pref pair");
+        let de_pref: PreferencePair = serde_json::from_str(&pref_json).expect("deserialize pref pair");
+        assert_eq!(pref.id, de_pref.id);
+        assert_eq!(pref.chosen, de_pref.chosen);
+
+        let kto = KtoSample::new(
+            "Solve the bug",
+            "Fixed using memory bounds",
+            true,
+            "sess-test-3",
+        );
+        let kto_json = serde_json::to_string(&kto).expect("serialize kto");
+        let de_kto: KtoSample = serde_json::from_str(&kto_json).expect("deserialize kto");
+        assert_eq!(kto.label, de_kto.label);
+        assert_eq!(kto.completion, de_kto.completion);
+
+        let sft = SftSample::new(
+            "Format code",
+            "code: unformatted",
+            "code: formatted",
+            "sess-test-3",
+        );
+        let sft_json = serde_json::to_string(&sft).expect("serialize sft");
+        let de_sft: SftSample = serde_json::from_str(&sft_json).expect("deserialize sft");
+        assert_eq!(sft.instruction, de_sft.instruction);
+
+        let budget_cfg = ContextBudgetConfig::new(4096, 20)
+            .with_failure_patterns(true)
+            .with_success_trajectories(false);
+        assert_eq!(budget_cfg.max_tokens, 4096);
+        assert_eq!(budget_cfg.top_k_memories, 20);
+        assert!(!budget_cfg.include_success_trajectories);
+
+        let hosts = HostTargetConfig::all();
+        assert!(hosts.cursor);
+        assert!(hosts.claude);
+        assert!(hosts.codex);
+        assert!(hosts.gemini);
+
+        let none_hosts = HostTargetConfig::none();
+        assert!(!none_hosts.cursor);
+
+        assert_eq!(ExportFormat::Dpo.to_string(), "dpo");
+        assert_eq!("kto".parse::<ExportFormat>().unwrap(), ExportFormat::Kto);
     }
 }

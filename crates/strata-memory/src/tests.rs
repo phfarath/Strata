@@ -6,9 +6,10 @@ use strata_core::events::{
     TaskStarted, ToolInvoked, ToolResultReceived,
 };
 use strata_core::schemas::{
-    DecayConfig, EpisodicMemory, FactStatus, MemoryFeedback,
-    ProceduralSkill, ProceduralStep, SemanticFact, SignalScores,
-    SyncConfig, SyncDelta,
+    ContextBudgetConfig, DecayConfig, EpisodicMemory, ExportFormat, FactStatus, FeedbackEvent,
+    FeedbackRating, HostTargetConfig, ImplicitSignal, MemoryFeedback, ParameterDef,
+    PreferencePair, ProceduralExample, ProceduralSkill, ProceduralStep, SemanticFact,
+    SignalKind, SignalScores, SyncConfig, SyncDelta,
 };
 
 use strata_core::state::{
@@ -16,6 +17,8 @@ use strata_core::state::{
 };
 use strata_core::traits::{EventStore, MemoryEngine};
 
+use crate::alignment::PreferenceMiner;
+use crate::compiler::MultiHostCompiler;
 use crate::decay::DecayCalculator;
 use crate::embedding::{
     bytes_to_embedding, cosine_similarity, embedding_to_bytes, EmbeddingProvider,
@@ -780,4 +783,243 @@ async fn test_sync_engine_jtms_conflict_resolution() {
     assert_eq!(updated_fact.version, 2);
     assert_eq!(updated_fact.statement, "Always disable debug logging in production");
 }
+
+#[tokio::test]
+async fn test_implicit_signals_and_feedback_recording() {
+    let store = Arc::new(SqliteStore::open_in_memory().expect("init store"));
+
+    // 1. Record implicit signals
+    let sig1 = ImplicitSignal::new(SignalKind::ToolLoop, "sess-track3", "agent-001")
+        .with_tool_name("file_search")
+        .with_file_path("crates/strata-memory/src/lib.rs")
+        .with_extra("Repeated call 3 times");
+    let sig2 = ImplicitSignal::new(SignalKind::TestRerunSuccess, "sess-track3", "agent-001")
+        .with_extra("All 10 tests passed");
+
+    store.record_implicit_signal(&sig1).expect("record sig1");
+    store.record_implicit_signal(&sig2).expect("record sig2");
+
+    let signals = store.get_implicit_signals(Some("sess-track3")).expect("get signals");
+    assert_eq!(signals.len(), 2);
+    assert_eq!(signals[0].kind, SignalKind::ToolLoop);
+    assert_eq!(signals[1].kind, SignalKind::TestRerunSuccess);
+
+    // 2. Memory Record and Feedback Events
+    let mem = MemoryRecord::new(
+        MemoryType::Semantic,
+        "Use WAL mode for high concurrency in SQLite",
+        Scope::Global,
+    )
+    .with_importance(0.6)
+    .with_confidence(0.8);
+    store.insert_or_update_memory(&mem).expect("insert mem");
+
+    let fb1 = FeedbackEvent::new(FeedbackRating::Positive, "user_chat")
+        .with_memory_id(mem.id)
+        .with_comment("Extremely helpful hint");
+    let fb2 = FeedbackEvent::new(FeedbackRating::Negative, "telemetry")
+        .with_signal_id(sig1.id)
+        .with_comment("Agent got stuck in loop");
+
+    store.record_feedback_event(&fb1).expect("record fb1");
+    store.record_feedback_event(&fb2).expect("record fb2");
+
+    let mem_feedback = store.get_feedback_events_for_memory(&mem.id).expect("get fb for mem");
+    assert_eq!(mem_feedback.len(), 1);
+    assert_eq!(mem_feedback[0].rating, FeedbackRating::Positive);
+
+    // Verify memory importance adjusted (+0.1)
+    let fetched_mem = store.get_memory(&mem.id).expect("get mem").expect("found");
+    assert!((fetched_mem.importance - 0.7).abs() < 1e-4);
+
+    // 3. Preference Pairs
+    let pair = PreferencePair::new(
+        "Compile crates with warnings treated as errors",
+        "cargo clippy --all-targets -- -D warnings",
+        "cargo check",
+        "sess-track3",
+    );
+    store.record_preference_pair(&pair).expect("record pair");
+
+    let pairs = store.get_preference_pairs(Some("sess-track3")).expect("get pairs");
+    assert_eq!(pairs.len(), 1);
+    assert_eq!(pairs[0].prompt, "Compile crates with warnings treated as errors");
+    assert_eq!(pairs[0].chosen, "cargo clippy --all-targets -- -D warnings");
+}
+
+#[tokio::test]
+async fn test_preference_miner_dpo_kto_sft_and_export() {
+    use strata_core::state::FailurePattern;
+
+    let store = Arc::new(SqliteStore::open_in_memory().expect("init store"));
+
+    // 1. Seed Failure Pattern
+    let failure = FailurePattern::new(
+        "sig-sql-lock",
+        "DatabaseLockContention",
+        "Concurrent writers causing SQLite busy timeout",
+        "Enable WAL mode and use exponential backoff retry",
+    );
+    store.upsert_failure_pattern(&failure).expect("upsert failure");
+
+    // 2. Seed Episodic Memory
+    let now = Utc::now();
+    let mut ep = EpisodicMemory::new(
+        "sess-miner",
+        "agent-1",
+        "Resolved SQLite deadlock issue",
+        now,
+        now,
+    );
+    ep.goals = vec!["Fix DB locks".to_string()];
+    ep.obstacles = vec!["BusyTimeout on simultaneous write transactions".to_string()];
+    ep.outcomes = vec!["Configured WAL journal mode with PRAGMA".to_string()];
+    ep.signals = SignalScores {
+        success: 0.95,
+        frustration: 0.0,
+        novelty: 0.8,
+        importance: 0.9,
+    };
+    store.insert_episodic_memory(&ep).expect("insert episode");
+
+    // 3. Seed Procedural Skill
+    let mut skill = ProceduralSkill::new("enable_wal", "Configure SQLite in WAL mode");
+    skill.preconditions = vec!["SQLite connection open".to_string()];
+    skill.parameters = vec![ParameterDef::new("busy_timeout", "u32", "Timeout in ms")];
+    skill.steps = vec![ProceduralStep::new(
+        1,
+        "sqlite",
+        "pragma",
+        serde_json::json!({"pragma": "journal_mode=WAL"}),
+    )];
+    skill.examples = vec![ProceduralExample::new("sess-miner", "WAL mode enabled successfully")];
+    store.insert_or_update_procedural_skill(&skill).expect("insert skill");
+
+    // 4. Seed Implicit Signal
+    let sig_success = ImplicitSignal::new(SignalKind::TestRerunSuccess, "sess-miner", "agent-1")
+        .with_extra("Unit tests passed after WAL enabled");
+    store.record_implicit_signal(&sig_success).expect("record signal");
+
+    // 5. Test PreferenceMiner
+    let miner = PreferenceMiner::new(Arc::clone(&store));
+
+    let dpo_pairs = miner.mine_dpo_pairs(Some("sess-miner")).expect("mine dpo");
+    assert!(!dpo_pairs.is_empty());
+    assert!(dpo_pairs.iter().any(|p| p.prompt.contains("DatabaseLockContention") || p.prompt.contains("Fix DB locks")));
+
+    let kto_samples = miner.mine_kto_samples(Some("sess-miner")).expect("mine kto");
+    assert!(!kto_samples.is_empty());
+    assert!(kto_samples.iter().any(|s| s.label));
+
+    let sft_samples = miner.mine_sft_samples().expect("mine sft");
+    assert!(!sft_samples.is_empty());
+    assert!(sft_samples.iter().any(|s| s.instruction.contains("enable_wal")));
+
+    // 6. Test Exports
+    let dpo_export = miner.export(ExportFormat::Dpo, Some("sess-miner")).expect("export dpo");
+    assert!(!dpo_export.is_empty());
+    assert!(dpo_export.contains("\"chosen\""));
+
+    let kto_export = miner.export(ExportFormat::Kto, Some("sess-miner")).expect("export kto");
+    assert!(!kto_export.is_empty());
+    assert!(kto_export.contains("\"label\":true"));
+
+    let sft_export = miner.export(ExportFormat::Sft, None).expect("export sft");
+    assert!(!sft_export.is_empty());
+    assert!(sft_export.contains("\"instruction\""));
+
+    let md_export = miner.export(ExportFormat::Markdown, Some("sess-miner")).expect("export markdown");
+    assert!(md_export.contains("# Strata Alignment & Preference Dataset"));
+    assert!(md_export.contains("## DPO Preference Pairs"));
+
+    let jsonl_export = miner.export(ExportFormat::Jsonl, Some("sess-miner")).expect("export jsonl");
+    assert!(!jsonl_export.is_empty());
+}
+
+#[tokio::test]
+async fn test_multi_host_compiler_context_and_sync() {
+    use std::fs;
+
+    let store = Arc::new(SqliteStore::open_in_memory().expect("init store"));
+
+    // 1. Seed semantic facts
+    let fact1 = SemanticFact::new("SQLite WAL ensures concurrent readers without blocking", "storage", Scope::Global)
+        .with_importance(0.9);
+    store.insert_or_update_semantic_fact(&fact1).expect("insert fact");
+
+    // 2. Seed failure pattern
+    let failure = strata_core::state::FailurePattern::new(
+        "sig-cargo-lock-conflict",
+        "CargoLockConflict",
+        "Cargo.lock merge conflicts on concurrent commits",
+        "Run cargo check --lockfile-path after rebasing",
+    );
+    store.upsert_failure_pattern(&failure).expect("upsert failure");
+
+    // 3. Seed procedural skill
+    let skill = ProceduralSkill::new("run_workspace_tests", "Execute tests across workspace")
+        .with_preconditions(vec!["Cargo installed".to_string()]);
+    store.insert_or_update_procedural_skill(&skill).expect("insert skill");
+
+    // 4. Test MultiHostCompiler compilation
+    let compiler = MultiHostCompiler::new(Arc::clone(&store));
+    let config = ContextBudgetConfig::new(2048, 10);
+    let compiled = compiler.compile_context(&config).expect("compile context");
+
+    assert!(compiled.contains("Strata Persistent Memory Protocol"));
+    assert!(compiled.contains("Verified Semantic Facts"));
+    assert!(compiled.contains("SQLite WAL ensures concurrent readers"));
+    assert!(compiled.contains("Known Failure Anti-Patterns"));
+    assert!(compiled.contains("Reusable Procedural Skills"));
+
+    // 5. Test sync_hosts across temp directory
+    let temp_workspace = std::env::temp_dir().join(format!("strata_sync_test_{}", Uuid::new_v4()));
+    fs::create_dir_all(&temp_workspace).expect("create temp dir");
+
+    // Seed existing CLAUDE.md with markers
+    let initial_claude = format!("<!-- STRATA_MEMORY_START -->\nOld Context\n<!-- STRATA_MEMORY_END -->\n\n## Custom User Rules\n- Custom rule 1\n");
+    fs::write(temp_workspace.join("CLAUDE.md"), initial_claude).expect("write claude.md");
+
+    // Seed existing .cursor/rules/strata.mdc with frontmatter
+    let cursor_rules_dir = temp_workspace.join(".cursor").join("rules");
+    fs::create_dir_all(&cursor_rules_dir).expect("create cursor rules dir");
+    let initial_cursor = "---\ndescription: Cursor Rules\nglobs: *\nalwaysApply: true\n---\nOld content without markers\n";
+    fs::write(cursor_rules_dir.join("strata.mdc"), initial_cursor).expect("write strata.mdc");
+
+    let synced = compiler
+        .sync_hosts(&temp_workspace, &config, &HostTargetConfig::all())
+        .expect("sync hosts");
+
+    assert_eq!(synced.len(), 4);
+
+    // Verify CLAUDE.md was updated and custom rules preserved
+    let updated_claude = fs::read_to_string(temp_workspace.join("CLAUDE.md")).expect("read claude");
+    assert!(updated_claude.contains("<!-- STRATA_MEMORY_START -->"));
+    assert!(updated_claude.contains("SQLite WAL ensures concurrent readers"));
+    assert!(updated_claude.contains("## Custom User Rules"));
+
+    // Verify .cursor/rules/strata.mdc has frontmatter preserved and markers inserted
+    let updated_cursor = fs::read_to_string(cursor_rules_dir.join("strata.mdc")).expect("read cursor");
+    assert!(updated_cursor.starts_with("---"));
+    assert!(updated_cursor.contains("alwaysApply: true"));
+    assert!(updated_cursor.contains("<!-- STRATA_MEMORY_START -->"));
+    assert!(updated_cursor.contains("SQLite WAL ensures concurrent readers"));
+
+    // Verify AGENTS.md and .gemini/GEMINI.md created
+    assert!(temp_workspace.join("AGENTS.md").exists());
+    assert!(temp_workspace.join(".gemini").join("GEMINI.md").exists());
+
+    // Test idempotency: sync again
+    let resynced = compiler
+        .sync_hosts(&temp_workspace, &config, &HostTargetConfig::all())
+        .expect("resync hosts");
+    assert_eq!(resynced.len(), 4);
+
+    let claude_resynced = fs::read_to_string(temp_workspace.join("CLAUDE.md")).expect("read claude resynced");
+    assert_eq!(claude_resynced.matches("<!-- STRATA_MEMORY_START -->").count(), 1);
+
+    // Cleanup
+    let _ = fs::remove_dir_all(&temp_workspace);
+}
+
 

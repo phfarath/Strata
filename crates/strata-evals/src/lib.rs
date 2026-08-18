@@ -17,9 +17,10 @@ pub async fn run_all_scenarios() -> Result<()> {
     run_procedural_skill_distillation_scenario().await?;
     run_mcp_protocol_multi_version_scenario().await?;
     run_offline_first_cdc_sync_scenario().await?;
+    run_cognitive_feedback_and_alignment_scenario().await?;
 
     println!("\n========================================================");
-    println!("🎉 ALL EVAL SCENARIOS PASSED (7/7)");
+    println!("🎉 ALL EVAL SCENARIOS PASSED (8/8)");
     println!("========================================================\n");
 
     Ok(())
@@ -76,6 +77,13 @@ mod tests {
         run_offline_first_cdc_sync_scenario()
             .await
             .expect("Offline-first CDC sync scenario failed");
+    }
+
+    #[tokio::test]
+    async fn test_eval_cognitive_feedback_and_alignment() {
+        run_cognitive_feedback_and_alignment_scenario()
+            .await
+            .expect("Cognitive feedback and alignment scenario failed");
     }
 }
 
