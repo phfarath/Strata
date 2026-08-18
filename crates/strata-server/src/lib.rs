@@ -1,17 +1,20 @@
 pub mod auth;
 pub mod handlers;
+pub mod models;
+pub mod security;
 pub mod storage;
 
 use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::Instant;
 use anyhow::{Context, Result};
-use axum::routing::{get, post};
+use axum::routing::{delete, get, post};
 use axum::Router;
 use tower_http::cors::{Any, CorsLayer};
 use tower_http::trace::TraceLayer;
 
 pub use handlers::{AppState, WsBroadcastMsg};
+pub use models::*;
 pub use storage::ServerStorage;
 
 /// Server configuration structure for standalone or embedded execution.
@@ -20,7 +23,8 @@ pub struct ServerConfig {
     pub host: String,
     pub port: u16,
     pub db_path: Option<PathBuf>,
-    pub auth_token: Option<String>,
+    pub jwt_secret: String,
+    pub legacy_secret: Option<String>,
 }
 
 impl Default for ServerConfig {
@@ -37,22 +41,27 @@ impl Default for ServerConfig {
             .ok()
             .map(PathBuf::from);
 
-        let auth_token = std::env::var("STRATA_SERVER_SECRET")
+        let legacy_secret = std::env::var("STRATA_SERVER_SECRET")
             .or_else(|_| std::env::var("STRATA_SYNC_TOKEN"))
             .or_else(|_| std::env::var("STRATA_AUTH_TOKEN"))
             .ok()
             .filter(|s| !s.trim().is_empty());
 
+        let jwt_secret = std::env::var("JWT_SECRET")
+            .or_else(|_| std::env::var("STRATA_SERVER_SECRET"))
+            .unwrap_or_else(|_| "strata-default-jwt-secret-key-change-in-prod".to_string());
+
         Self {
             host,
             port,
             db_path,
-            auth_token,
+            jwt_secret,
+            legacy_secret,
         }
     }
 }
 
-/// Create the Axum router with all sync, status, health, and WebSocket routes.
+/// Create the Axum router with all SaaS authentication, workspace, API key, and CDC sync routes.
 pub fn create_app(state: Arc<AppState>) -> Router {
     let cors = CorsLayer::new()
         .allow_origin(Any)
@@ -64,6 +73,21 @@ pub fn create_app(state: Arc<AppState>) -> Router {
         .route("/health", get(handlers::health_handler))
         .route("/api/health", get(handlers::health_handler))
         .route("/api/v1/health", get(handlers::health_handler))
+        // Self-Serve SaaS Auth endpoints
+        .route("/api/v1/auth/signup", post(handlers::signup_handler))
+        .route("/api/v1/auth/login", post(handlers::login_handler))
+        .route("/api/v1/auth/me", get(handlers::me_handler))
+        // Workspace management endpoints
+        .route(
+            "/api/v1/workspaces",
+            post(handlers::create_workspace_handler).get(handlers::list_workspaces_handler),
+        )
+        // API Key management endpoints
+        .route(
+            "/api/v1/keys",
+            post(handlers::create_key_handler).get(handlers::list_keys_handler),
+        )
+        .route("/api/v1/keys/{key_id}", delete(handlers::revoke_key_handler))
         // Push deltas endpoints
         .route("/", post(handlers::push_handler))
         .route("/sync", post(handlers::push_handler))
@@ -107,7 +131,8 @@ pub async fn run_server(config: ServerConfig) -> Result<()> {
 
     let state = Arc::new(AppState {
         storage,
-        auth_token: config.auth_token.clone(),
+        jwt_secret: config.jwt_secret.clone(),
+        legacy_secret: config.legacy_secret.clone(),
         ws_broadcast: ws_tx,
         start_time: Instant::now(),
     });
@@ -119,11 +144,10 @@ pub async fn run_server(config: ServerConfig) -> Result<()> {
         .await
         .with_context(|| format!("Failed to bind TCP listener on {}", addr))?;
 
-    tracing::info!("🚀 Strata Cloud Sync Server listening on http://{}", addr);
-    if config.auth_token.is_some() {
-        tracing::info!("🔒 Bearer authentication is ENABLED.");
-    } else {
-        tracing::info!("🔓 Authentication is DISABLED (open mode).");
+    tracing::info!("🚀 Strata Cloud SaaS Server listening on http://{}", addr);
+    tracing::info!("🔒 JWT Authentication is ENABLED.");
+    if config.legacy_secret.is_some() {
+        tracing::info!("🔑 Legacy static token authentication is ENABLED.");
     }
 
     axum::serve(listener, app)

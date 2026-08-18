@@ -26,6 +26,10 @@ struct CliArgs {
     /// Bearer authentication token for client verification
     #[arg(short, long, env = "STRATA_SERVER_SECRET")]
     auth_token: Option<String>,
+
+    /// Secret key for signing and verifying JWT session tokens
+    #[arg(long, env = "JWT_SECRET")]
+    jwt_secret: Option<String>,
 }
 
 #[tokio::main]
@@ -47,8 +51,11 @@ async fn main() -> Result<()> {
     if args.db_path.is_some() {
         config.db_path = args.db_path;
     }
+    if let Some(jwt) = args.jwt_secret {
+        config.jwt_secret = jwt;
+    }
     if args.auth_token.is_some() {
-        config.auth_token = args.auth_token;
+        config.legacy_secret = args.auth_token;
     }
 
     run_server(config).await

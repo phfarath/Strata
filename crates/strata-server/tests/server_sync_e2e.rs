@@ -12,13 +12,14 @@ use tokio_tungstenite::connect_async;
 use uuid::Uuid;
 
 /// Helper function to spawn an ephemeral in-memory Strata sync server on an ephemeral port.
-async fn spawn_test_server(auth_token: Option<String>) -> (String, tokio::task::JoinHandle<()>) {
+async fn spawn_test_server(legacy_secret: Option<String>) -> (String, tokio::task::JoinHandle<()>) {
     let storage = ServerStorage::in_memory().expect("Failed to create in-memory server storage");
     let (ws_tx, _) = tokio::sync::broadcast::channel::<WsBroadcastMsg>(64);
 
     let state = Arc::new(AppState {
         storage,
-        auth_token,
+        jwt_secret: "test-jwt-secret-key-1234567890".to_string(),
+        legacy_secret,
         ws_broadcast: ws_tx,
         start_time: std::time::Instant::now(),
     });
@@ -53,6 +54,111 @@ async fn test_health_check_endpoint() {
     let json: serde_json::Value = resp.json().await.expect("Failed to parse health response");
     assert_eq!(json["status"], "ok");
     assert!(json["uptime_secs"].is_number());
+}
+
+#[tokio::test]
+async fn test_saas_signup_login_workspace_and_api_keys_flow() {
+    let (base_url, _handle) = spawn_test_server(Some("legacy-secret".to_string())).await;
+    let client = Client::new();
+
+    // 1. Signup new user
+    let signup_payload = serde_json::json!({
+        "email": "dev@strata.ai",
+        "password": "strong-password-1234",
+        "full_name": "Pedro Dev",
+        "workspace_name": "Pedro's Team Space"
+    });
+
+    let signup_resp = client
+        .post(format!("{base_url}/api/v1/auth/signup"))
+        .json(&signup_payload)
+        .send()
+        .await
+        .unwrap();
+
+    assert_eq!(signup_resp.status(), reqwest::StatusCode::OK);
+    let signup_data: serde_json::Value = signup_resp.json().await.unwrap();
+    assert_eq!(signup_data["user"]["email"], "dev@strata.ai");
+    let jwt_token = signup_data["token"].as_str().unwrap();
+    let workspace_id = signup_data["workspaces"][0]["id"].as_str().unwrap();
+
+    // 2. Login with credentials
+    let login_payload = serde_json::json!({
+        "email": "dev@strata.ai",
+        "password": "strong-password-1234"
+    });
+    let login_resp = client
+        .post(format!("{base_url}/api/v1/auth/login"))
+        .json(&login_payload)
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(login_resp.status(), reqwest::StatusCode::OK);
+
+    // 3. Query /me endpoint with JWT
+    let me_resp = client
+        .get(format!("{base_url}/api/v1/auth/me"))
+        .bearer_auth(jwt_token)
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(me_resp.status(), reqwest::StatusCode::OK);
+
+    // 4. Create new API key for workspace
+    let key_payload = serde_json::json!({
+        "workspace_id": workspace_id,
+        "name": "Cursor MacBook Pro"
+    });
+    let create_key_resp = client
+        .post(format!("{base_url}/api/v1/keys"))
+        .bearer_auth(jwt_token)
+        .json(&key_payload)
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(create_key_resp.status(), reqwest::StatusCode::OK);
+    let key_data: serde_json::Value = create_key_resp.json().await.unwrap();
+    let api_key_secret = key_data["key"].as_str().unwrap();
+    let key_id = key_data["id"].as_str().unwrap();
+    assert!(api_key_secret.starts_with("strata_live_"));
+
+    // 5. List API keys
+    let list_keys_resp = client
+        .get(format!("{base_url}/api/v1/keys?workspace_id={workspace_id}"))
+        .bearer_auth(jwt_token)
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(list_keys_resp.status(), reqwest::StatusCode::OK);
+    let keys_list: Vec<serde_json::Value> = list_keys_resp.json().await.unwrap();
+    assert_eq!(keys_list.len(), 1);
+
+    // 6. Test sync using the newly generated API key!
+    let status_resp = client
+        .get(format!("{base_url}/sync/status?workspace_id={workspace_id}"))
+        .bearer_auth(api_key_secret)
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(status_resp.status(), reqwest::StatusCode::OK);
+
+    // 7. Revoke API key
+    let revoke_resp = client
+        .delete(format!("{base_url}/api/v1/keys/{key_id}"))
+        .bearer_auth(jwt_token)
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(revoke_resp.status(), reqwest::StatusCode::OK);
+
+    // 8. Subsequent sync with revoked API key should fail with 401
+    let revoked_sync_resp = client
+        .get(format!("{base_url}/sync/status?workspace_id={workspace_id}"))
+        .bearer_auth(api_key_secret)
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(revoked_sync_resp.status(), reqwest::StatusCode::UNAUTHORIZED);
 }
 
 #[tokio::test]
