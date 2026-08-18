@@ -231,7 +231,7 @@ impl strata_core::traits::ReasoningEngine for OpenAiAdapter {
 // OpenRouter Adapter
 // ============================================================================
 
-pub const DEFAULT_OPENROUTER_MODEL: &str = "meta-llama/llama-3.3-70b-instruct:free";
+pub const DEFAULT_OPENROUTER_MODEL: &str = "openrouter/free";
 
 pub struct OpenRouterAdapter {
     api_key: String,
