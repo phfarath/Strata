@@ -12,13 +12,15 @@ pub use events::{
     SessionEnded, SessionStarted, TaskCompleted, TaskStarted, ToolInvoked, ToolResultReceived,
 };
 pub use schemas::{
-    DecayConfig, DecayMetrics, EvidenceRef, EpisodicMemory, FactStatus, ParameterDef,
-    ProceduralExample, ProceduralSkill, ProceduralStep, SemanticFact, SignalScores,
+    DecayConfig, DecayMetrics, EvidenceRef, EpisodicMemory, FactStatus, MemoryFeedback,
+    ParameterDef, ProceduralExample, ProceduralSkill, ProceduralStep, SemanticFact,
+    SignalScores, SyncConfig, SyncDelta, SyncReport,
 };
 pub use state::{
-    DigestOutput, FailurePattern, FailureSeverity, MemoryHandle, MemoryRecord, MemoryType, Scope,
-    SessionState, SessionStatus,
+    DigestOutput, FailurePattern, FailureSeverity, MemoryHandle, MemoryRecord, MemoryType,
+    OutboxEntry, OutboxStatus, Scope, SessionState, SessionStatus,
 };
+
 pub use traits::{EventStore, MemoryEngine, ReasoningEngine, Tool, ToolGateway};
 
 #[cfg(test)]
@@ -171,5 +173,56 @@ mod tests {
         let decay_config = DecayConfig::default();
         assert_eq!(decay_config.d, 0.5);
         assert_eq!(decay_config.s0, 24.0);
+    }
+
+    #[test]
+    fn test_track2_sync_schemas() {
+        let delta = SyncDelta::new(
+            "ws-123",
+            42,
+            "fact",
+            serde_json::json!({"statement": "SQLite is durable"}),
+            "hash-abc",
+        );
+        assert_eq!(delta.workspace_id, "ws-123");
+        assert_eq!(delta.seq, 42);
+        assert_eq!(delta.kind, "fact");
+        assert!(!delta.synced);
+
+        let delta_json = serde_json::to_string(&delta).expect("serialize delta");
+        let de_delta: SyncDelta = serde_json::from_str(&delta_json).expect("deserialize delta");
+        assert_eq!(delta.id, de_delta.id);
+        assert_eq!(delta.version_hash, de_delta.version_hash);
+
+        let fb = MemoryFeedback::positive(delta.id).with_comment("Very relevant");
+        assert_eq!(fb.rating, "positive");
+        assert_eq!(fb.score, Some(1.0));
+        assert_eq!(fb.comment.as_deref(), Some("Very relevant"));
+
+        let fb_json = serde_json::to_string(&fb).expect("serialize feedback");
+        let de_fb: MemoryFeedback = serde_json::from_str(&fb_json).expect("deserialize feedback");
+        assert_eq!(fb.memory_id, de_fb.memory_id);
+
+        let config = SyncConfig::new("ws-test")
+            .with_endpoint("https://api.strata.dev/sync")
+            .with_token("secret-token")
+            .with_batch_size(50);
+        assert_eq!(config.workspace_id, "ws-test");
+        assert_eq!(config.endpoint.as_deref(), Some("https://api.strata.dev/sync"));
+        assert_eq!(config.batch_size, 50);
+        assert_eq!(config.max_retries, 5);
+        assert_eq!(config.base_backoff_ms, 500);
+
+        let report = SyncReport {
+            pushed_count: 10,
+            pulled_count: 5,
+            conflicts_resolved: 1,
+            last_seq: 42,
+            errors: vec![],
+        };
+        let report_json = serde_json::to_string(&report).expect("serialize report");
+        let de_report: SyncReport = serde_json::from_str(&report_json).expect("deserialize report");
+        assert_eq!(report.pushed_count, de_report.pushed_count);
+        assert_eq!(report.conflicts_resolved, de_report.conflicts_resolved);
     }
 }

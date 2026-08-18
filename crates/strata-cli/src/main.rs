@@ -14,14 +14,17 @@ use strata_memory::SqliteMemoryEngine;
 use strata_cli::{
     commands::{
         consolidate::{run_consolidate, ConsolidateOptions},
+        daemon::{run_daemon, DaemonArgs},
         doctor::run_doctor,
         hook::{handle_hook, HookCommand},
         init::{run_init, InitOptions},
         prune::{run_prune, PruneOptions},
         search::{run_search, SearchOptions},
+        sync::{run_sync, SyncArgs},
     },
     mcp::server::McpServer,
 };
+
 
 #[derive(Parser, Debug)]
 #[command(name = "strata", author, version, about = "Strata — Portable Persistent Memory Layer & Cognitive Runtime", long_about = None)]
@@ -148,7 +151,14 @@ enum Commands {
         #[arg(long, help = "Output report as raw JSON")]
         json: bool,
     },
+
+    /// Synchronize persistent memory spaces (push deltas, pull remote updates, view status)
+    Sync(SyncArgs),
+
+    /// Run background synchronization daemon loop (< 10MB RAM)
+    Daemon(DaemonArgs),
 }
+
 
 #[tokio::main]
 async fn main() -> Result<()> {
@@ -297,7 +307,18 @@ async fn main() -> Result<()> {
             let store = engine.store_arc();
             run_prune(PruneOptions { threshold, scope, json }, store).await?;
         }
+
+        Commands::Sync(args) => {
+            let store = engine.store_arc();
+            run_sync(args, store).await?;
+        }
+
+        Commands::Daemon(args) => {
+            let store = engine.store_arc();
+            run_daemon(args, store).await?;
+        }
     }
+
 
     Ok(())
 }

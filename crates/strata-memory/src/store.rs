@@ -9,12 +9,15 @@ use strata_core::events::{
     DataClassification, Event, EventId, EventPayload, Provenance, RetentionPolicy,
 };
 use strata_core::schemas::{
-    EpisodicMemory, EvidenceRef, FactStatus, ParameterDef, ProceduralExample, ProceduralSkill,
-    ProceduralStep, SemanticFact, SignalScores,
+    EpisodicMemory, EvidenceRef, FactStatus, MemoryFeedback, ParameterDef, ProceduralExample,
+    ProceduralSkill, ProceduralStep, SemanticFact, SignalScores, SyncDelta,
 };
+
 use strata_core::state::{
     FailurePattern, FailureSeverity, MemoryRecord, MemoryType, Scope,
 };
+
+
 
 use crate::embedding::{bytes_to_embedding, embedding_to_bytes};
 
@@ -333,6 +336,29 @@ impl SqliteStore {
             );
 
             CREATE INDEX IF NOT EXISTS idx_access_logs_memory ON memory_access_logs(memory_id, accessed_at);
+
+            -- CDC Sync Outbox table for offline-first delta synchronization
+            CREATE TABLE IF NOT EXISTS sync_outbox (
+                id TEXT PRIMARY KEY,
+                workspace_id TEXT NOT NULL,
+                seq INTEGER NOT NULL,
+                ts TEXT NOT NULL,
+                kind TEXT NOT NULL,
+                payload_json TEXT NOT NULL,
+                version_hash TEXT NOT NULL,
+                synced INTEGER NOT NULL DEFAULT 0,
+                retry_count INTEGER NOT NULL DEFAULT 0,
+                next_retry_ts TEXT
+            );
+
+            CREATE INDEX IF NOT EXISTS idx_outbox_pending ON sync_outbox(workspace_id, synced, next_retry_ts);
+            CREATE INDEX IF NOT EXISTS idx_outbox_seq ON sync_outbox(workspace_id, seq);
+
+            -- Sync Metadata table
+            CREATE TABLE IF NOT EXISTS sync_metadata (
+                key TEXT PRIMARY KEY,
+                value TEXT NOT NULL
+            );
             ",
         )
         .map_err(|e| StrataError::Database(format!("Failed to execute schema migration: {e}")))?;
@@ -659,6 +685,7 @@ impl SqliteStore {
 
         Ok(())
     }
+
 
     pub fn get_memory(&self, id: &Uuid) -> Result<Option<MemoryRecord>, StrataError> {
         let conn = self.conn.lock().map_err(|_| {
@@ -1262,6 +1289,7 @@ impl SqliteStore {
 
         Ok(())
     }
+
 
     pub fn get_semantic_fact(&self, id: &Uuid) -> Result<Option<SemanticFact>, StrataError> {
         let conn = self.conn.lock().map_err(|_| {
@@ -1997,8 +2025,304 @@ impl SqliteStore {
             created_at,
             last_used_at,
             usage_count: usage_count as u32,
-            tags,
+        tags,
         })
+    }
+
+    // ==========================================
+    // CDC Outbox & Synchronization Operations
+    // ==========================================
+
+    /// Enqueue a change data capture (CDC) delta into the sync outbox.
+    pub fn enqueue_delta(&self, delta: &SyncDelta) -> Result<(), StrataError> {
+        let conn = self.conn.lock().map_err(|_| {
+            StrataError::Database("Lock poisoned on SQLite connection".to_string())
+        })?;
+
+        let id_str = delta.id.to_string();
+        let ts_str = delta.ts.to_rfc3339();
+        let payload_json = serde_json::to_string(&delta.payload)?;
+        let synced_int = if delta.synced { 1 } else { 0 };
+
+        conn.execute(
+            "INSERT INTO sync_outbox (
+                id, workspace_id, seq, ts, kind, payload_json, version_hash, synced, retry_count, next_retry_ts
+            ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, 0, NULL)
+            ON CONFLICT(id) DO UPDATE SET
+                workspace_id = excluded.workspace_id,
+                seq = excluded.seq,
+                ts = excluded.ts,
+                kind = excluded.kind,
+                payload_json = excluded.payload_json,
+                version_hash = excluded.version_hash,
+                synced = excluded.synced",
+            params![
+                id_str,
+                delta.workspace_id,
+                delta.seq as i64,
+                ts_str,
+                delta.kind,
+                payload_json,
+                delta.version_hash,
+                synced_int,
+            ],
+        )
+        .map_err(|e| StrataError::Database(format!("Failed to enqueue sync delta: {e}")))?;
+
+        Ok(())
+    }
+
+    /// Retrieve pending (unsynced) deltas eligible for transmission.
+    pub fn get_pending_deltas(&self, workspace_id: &str, limit: usize) -> Result<Vec<SyncDelta>, StrataError> {
+        let conn = self.conn.lock().map_err(|_| {
+            StrataError::Database("Lock poisoned on SQLite connection".to_string())
+        })?;
+
+        let now_str = Utc::now().to_rfc3339();
+        let mut stmt = conn
+            .prepare(
+                "SELECT id, workspace_id, seq, ts, kind, payload_json, version_hash, synced
+                 FROM sync_outbox
+                 WHERE workspace_id = ?1 AND synced = 0 AND (next_retry_ts IS NULL OR next_retry_ts <= ?2)
+                 ORDER BY seq ASC, ts ASC
+                 LIMIT ?3",
+            )
+            .map_err(|e| StrataError::Database(format!("Failed to prepare get_pending_deltas query: {e}")))?;
+
+        let rows = stmt
+            .query_map(params![workspace_id, now_str, limit as i64], |row| {
+                let id_str: String = row.get(0)?;
+                let ws_id: String = row.get(1)?;
+                let seq: i64 = row.get(2)?;
+                let ts_str: String = row.get(3)?;
+                let kind: String = row.get(4)?;
+                let payload_json: String = row.get(5)?;
+                let version_hash: String = row.get(6)?;
+                let synced_int: i64 = row.get(7)?;
+
+                Ok((id_str, ws_id, seq, ts_str, kind, payload_json, version_hash, synced_int))
+            })
+            .map_err(|e| StrataError::Database(e.to_string()))?;
+
+        let mut deltas = Vec::new();
+        for r in rows {
+            let (id_str, ws_id, seq, ts_str, kind, payload_json, version_hash, synced_int) =
+                r.map_err(|e| StrataError::Database(e.to_string()))?;
+            let id = Uuid::parse_str(&id_str)
+                .map_err(|e| StrataError::Validation(format!("Invalid UUID in sync delta id: {e}")))?;
+            let ts = DateTime::parse_from_rfc3339(&ts_str)
+                .map(|dt| dt.with_timezone(&Utc))
+                .unwrap_or_else(|_| Utc::now());
+            let payload: serde_json::Value = serde_json::from_str(&payload_json)?;
+
+            deltas.push(SyncDelta {
+                id,
+                workspace_id: ws_id,
+                seq: seq as u64,
+                ts,
+                kind,
+                payload,
+                version_hash,
+                synced: synced_int != 0,
+            });
+        }
+
+        Ok(deltas)
+    }
+
+    /// Mark a list of deltas as successfully synchronized.
+    pub fn mark_deltas_synced(&self, delta_ids: &[Uuid]) -> Result<(), StrataError> {
+        if delta_ids.is_empty() {
+            return Ok(());
+        }
+
+        let mut conn = self.conn.lock().map_err(|_| {
+            StrataError::Database("Lock poisoned on SQLite connection".to_string())
+        })?;
+
+        let tx = conn
+            .transaction()
+            .map_err(|e| StrataError::Database(format!("Failed to begin transaction: {e}")))?;
+
+        {
+            let mut stmt = tx
+                .prepare("UPDATE sync_outbox SET synced = 1 WHERE id = ?1")
+                .map_err(|e| StrataError::Database(e.to_string()))?;
+
+            for id in delta_ids {
+                stmt.execute(params![id.to_string()])
+                    .map_err(|e| StrataError::Database(format!("Failed to mark delta synced: {e}")))?;
+            }
+        }
+
+        tx.commit()
+            .map_err(|e| StrataError::Database(format!("Failed to commit mark_deltas_synced: {e}")))?;
+
+        Ok(())
+    }
+
+    /// Record a failure for a batch of deltas, incrementing retry count and calculating exponential backoff.
+    pub fn record_delta_failure(&self, delta_ids: &[Uuid], err_msg: &str) -> Result<(), StrataError> {
+        if delta_ids.is_empty() {
+            return Ok(());
+        }
+
+        let mut conn = self.conn.lock().map_err(|_| {
+            StrataError::Database("Lock poisoned on SQLite connection".to_string())
+        })?;
+
+        let tx = conn
+            .transaction()
+            .map_err(|e| StrataError::Database(format!("Failed to begin transaction: {e}")))?;
+
+        {
+            let mut select_stmt = tx
+                .prepare("SELECT retry_count FROM sync_outbox WHERE id = ?1")
+                .map_err(|e| StrataError::Database(e.to_string()))?;
+
+            let mut update_stmt = tx
+                .prepare("UPDATE sync_outbox SET retry_count = ?1, next_retry_ts = ?2 WHERE id = ?3")
+                .map_err(|e| StrataError::Database(e.to_string()))?;
+
+            for id in delta_ids {
+                let id_str = id.to_string();
+                let retry_count: i64 = select_stmt
+                    .query_row(params![&id_str], |row| row.get(0))
+                    .unwrap_or(0);
+
+                let next_count = retry_count + 1;
+                let backoff_secs = (0.5 * (2_f64.powi(next_count.min(10) as i32))).min(300.0);
+                let next_retry_ts = (Utc::now() + chrono::Duration::milliseconds((backoff_secs * 1000.0) as i64)).to_rfc3339();
+
+                update_stmt
+                    .execute(params![next_count, next_retry_ts, &id_str])
+                    .map_err(|e| StrataError::Database(format!("Failed to update delta failure: {e}")))?;
+            }
+        }
+
+        tx.commit()
+            .map_err(|e| StrataError::Database(format!("Failed to commit record_delta_failure: {e}")))?;
+
+        tracing::warn!("Recorded sync delta failure for {} deltas: {}", delta_ids.len(), err_msg);
+        Ok(())
+    }
+
+    /// Retrieve sync status (pending unsynced deltas count, highest local sequence number).
+    pub fn get_sync_status(&self, workspace_id: &str) -> Result<(usize, u64), StrataError> {
+        let conn = self.conn.lock().map_err(|_| {
+            StrataError::Database("Lock poisoned on SQLite connection".to_string())
+        })?;
+
+        let pending_count: i64 = conn
+            .query_row(
+                "SELECT COUNT(*) FROM sync_outbox WHERE workspace_id = ?1 AND synced = 0",
+                params![workspace_id],
+                |row| row.get(0),
+            )
+            .unwrap_or(0);
+
+        let max_seq: i64 = conn
+            .query_row(
+                "SELECT COALESCE(MAX(seq), 0) FROM sync_outbox WHERE workspace_id = ?1",
+                params![workspace_id],
+                |row| row.get(0),
+            )
+            .unwrap_or(0);
+
+        Ok((pending_count as usize, max_seq as u64))
+    }
+
+    /// Record explicit feedback on a memory, adjusting importance and confidence, and recording an access log.
+    pub fn record_memory_feedback(&self, feedback: &MemoryFeedback) -> Result<(), StrataError> {
+        let conn = self.conn.lock().map_err(|_| {
+            StrataError::Database("Lock poisoned on SQLite connection".to_string())
+        })?;
+
+        // 1. Record access log
+        self.record_memory_access_internal(&conn, &feedback.memory_id, feedback.created_at)?;
+
+        // 2. Compute adjustment delta
+        let score_val = feedback.score.unwrap_or(1.0);
+        let effective_score = if score_val == 0.0 { 1.0 } else { score_val };
+        let adj_delta = match feedback.rating.as_str() {
+            "positive" => 0.1 * effective_score,
+            "negative" => -0.1 * effective_score,
+            _ => 0.0,
+        };
+
+
+        let now_str = feedback.created_at.to_rfc3339();
+        let mem_id_str = feedback.memory_id.to_string();
+
+        // 3. Update memories table if present
+        conn.execute(
+            "UPDATE memories
+             SET importance = MAX(0.0, MIN(1.0, importance + ?1)),
+                 confidence = MAX(0.0, MIN(1.0, confidence + ?1)),
+                 access_count = access_count + 1,
+                 last_accessed_at = ?2,
+                 updated_at = ?2
+             WHERE id = ?3",
+            params![adj_delta, now_str, mem_id_str],
+        )
+        .map_err(|e| StrataError::Database(format!("Failed to update memory feedback: {e}")))?;
+
+        // 4. Update semantic_facts table if present
+        conn.execute(
+            "UPDATE semantic_facts
+             SET importance = MAX(0.0, MIN(1.0, importance + ?1)),
+                 confidence = MAX(0.0, MIN(1.0, confidence + ?1)),
+                 last_updated_at = ?2
+             WHERE id = ?3",
+            params![adj_delta, now_str, mem_id_str],
+        )
+        .map_err(|e| StrataError::Database(format!("Failed to update semantic fact feedback: {e}")))?;
+
+        // 5. Update procedural_skills table if present
+        conn.execute(
+            "UPDATE procedural_skills
+             SET importance = MAX(0.0, MIN(1.0, importance + ?1)),
+                 last_used_at = ?2
+             WHERE id = ?3",
+            params![adj_delta, now_str, mem_id_str],
+        )
+        .map_err(|e| StrataError::Database(format!("Failed to update procedural skill feedback: {e}")))?;
+
+        Ok(())
+    }
+
+    /// Retrieve value from sync_metadata table.
+    pub fn get_sync_metadata(&self, key: &str) -> Result<Option<String>, StrataError> {
+        let conn = self.conn.lock().map_err(|_| {
+            StrataError::Database("Lock poisoned on SQLite connection".to_string())
+        })?;
+
+        let mut stmt = conn
+            .prepare("SELECT value FROM sync_metadata WHERE key = ?1")
+            .map_err(|e| StrataError::Database(e.to_string()))?;
+
+        let res = stmt
+            .query_row(params![key], |row| row.get(0))
+            .optional()
+            .map_err(|e| StrataError::Database(e.to_string()))?;
+
+        Ok(res)
+    }
+
+    /// Store key-value pair in sync_metadata table.
+    pub fn set_sync_metadata(&self, key: &str, value: &str) -> Result<(), StrataError> {
+        let conn = self.conn.lock().map_err(|_| {
+            StrataError::Database("Lock poisoned on SQLite connection".to_string())
+        })?;
+
+        conn.execute(
+            "INSERT INTO sync_metadata (key, value) VALUES (?1, ?2)
+             ON CONFLICT(key) DO UPDATE SET value = excluded.value",
+            params![key, value],
+        )
+        .map_err(|e| StrataError::Database(format!("Failed to set sync metadata: {e}")))?;
+
+        Ok(())
     }
 }
 

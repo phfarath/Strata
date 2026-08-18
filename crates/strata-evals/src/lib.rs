@@ -15,9 +15,11 @@ pub async fn run_all_scenarios() -> Result<()> {
     run_decay_curve_simulation_scenario().await?;
     run_jtms_belief_revision_scenario().await?;
     run_procedural_skill_distillation_scenario().await?;
+    run_mcp_protocol_multi_version_scenario().await?;
+    run_offline_first_cdc_sync_scenario().await?;
 
     println!("\n========================================================");
-    println!("🎉 ALL EVAL SCENARIOS PASSED (5/5)");
+    println!("🎉 ALL EVAL SCENARIOS PASSED (7/7)");
     println!("========================================================\n");
 
     Ok(())
@@ -61,4 +63,19 @@ mod tests {
             .await
             .expect("Procedural skill distillation scenario failed");
     }
+
+    #[tokio::test]
+    async fn test_eval_mcp_protocol_multi_version() {
+        run_mcp_protocol_multi_version_scenario()
+            .await
+            .expect("MCP multi-version scenario failed");
+    }
+
+    #[tokio::test]
+    async fn test_eval_offline_first_cdc_sync() {
+        run_offline_first_cdc_sync_scenario()
+            .await
+            .expect("Offline-first CDC sync scenario failed");
+    }
 }
+

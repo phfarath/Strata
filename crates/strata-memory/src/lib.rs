@@ -5,6 +5,7 @@ pub mod jtms;
 pub mod pipeline;
 pub mod retrieval;
 pub mod store;
+pub mod sync;
 
 #[cfg(test)]
 mod tests;
@@ -29,6 +30,9 @@ pub use jtms::{ConflictMatch, ConflictResolution, TruthMaintenanceSystem};
 pub use pipeline::{ConsolidationPipeline, ConsolidationResult, PipelineConfig};
 pub use retrieval::{HybridRanker, HybridRankerConfig};
 pub use store::SqliteStore;
+pub use sync::{calculate_exponential_backoff, compute_version_hash, SyncEngine};
+
+
 
 /// SQLite-backed persistent memory engine implementing `MemoryEngine` and `EventStore`.
 pub struct SqliteMemoryEngine {

@@ -125,8 +125,36 @@ impl McpServer {
                     }
                 }),
             },
+            ToolDefinition {
+                name: "memory_feedback".to_string(),
+                description: "Provide reinforcement feedback (positive/negative rating, confidence score, comments) on a persistent memory record to optimize cognitive ranking and recall accuracy.".to_string(),
+                input_schema: serde_json::json!({
+                    "type": "object",
+                    "properties": {
+                        "id": {
+                            "type": "string",
+                            "description": "The UUID of the memory record to provide feedback on"
+                        },
+                        "rating": {
+                            "type": "string",
+                            "enum": ["positive", "negative"],
+                            "description": "Reinforcement rating ('positive' or 'negative')"
+                        },
+                        "score": {
+                            "type": "number",
+                            "description": "Optional explicit confidence score (0.0 to 1.0)"
+                        },
+                        "comment": {
+                            "type": "string",
+                            "description": "Optional reasoning or feedback commentary"
+                        }
+                    },
+                    "required": ["id", "rating"]
+                }),
+            },
         ]
     }
+
 
     pub async fn run_stdio(self) -> anyhow::Result<()> {
         info!("Starting Strata MCP server on stdio transport");
@@ -189,8 +217,13 @@ impl McpServer {
 
         match req.method.as_str() {
             "initialize" => {
+                let client_version = req.params.as_ref().and_then(|p| {
+                    p.get("protocolVersion").and_then(|v| v.as_str())
+                });
+                let negotiated_version = negotiate_protocol_version(client_version);
+
                 let init_result = InitializeResult {
-                    protocol_version: MCP_PROTOCOL_VERSION.to_string(),
+                    protocol_version: negotiated_version.to_string(),
                     capabilities: ServerCapabilities {
                         tools: Some(ToolsCapability { list_changed: Some(false) }),
                         resources: None,
@@ -200,6 +233,10 @@ impl McpServer {
                         name: self.server_name.clone(),
                         version: self.server_version.clone(),
                     },
+                    meta: Some(serde_json::json!({
+                        "ttlMs": 3600000,
+                        "cacheScope": "session"
+                    })),
                 };
                 Some(JsonRpcResponse::success(
                     req_id,
@@ -212,14 +249,13 @@ impl McpServer {
             }
             "ping" => Some(JsonRpcResponse::success(req_id, serde_json::json!({}))),
             "tools/list" => {
-                let tools_result = ToolsListResult {
-                    tools: Self::tool_definitions(),
-                };
+                let tools_result = ToolsListResult::new(Self::tool_definitions());
                 Some(JsonRpcResponse::success(
                     req_id,
                     serde_json::to_value(tools_result).unwrap_or(serde_json::json!({})),
                 ))
             }
+
             "tools/call" => {
                 let params: CallToolRequestParams = match req.params {
                     Some(p) => match serde_json::from_value(p) {
@@ -396,7 +432,69 @@ impl McpServer {
                     Err(e) => CallToolResult::error(format!("Memory digest error: {e}")),
                 }
             }
+            "memory_feedback" => {
+                let id_str = match args.get("id").and_then(|v| v.as_str()) {
+                    Some(id) => id,
+                    None => return CallToolResult::error("Missing required parameter: id"),
+                };
+
+                let rating = match args.get("rating").and_then(|v| v.as_str()) {
+                    Some(r) => r,
+                    None => return CallToolResult::error("Missing required parameter: rating"),
+                };
+
+                let score = args.get("score").and_then(|v| v.as_f64()).map(|s| s as f32);
+                let comment = args.get("comment").and_then(|v| v.as_str());
+
+                let uuid = match Uuid::parse_str(id_str) {
+                    Ok(u) => u,
+                    Err(e) => return CallToolResult::error(format!("Invalid UUID format: {e}")),
+                };
+
+                match self.memory_engine.get(&uuid).await {
+                    Ok(Some(mut record)) => {
+                        let new_confidence = if let Some(s) = score {
+                            s.clamp(0.0, 1.0)
+                        } else if rating.eq_ignore_ascii_case("positive") {
+                            (record.confidence + 0.1).min(1.0)
+                        } else if rating.eq_ignore_ascii_case("negative") {
+                            (record.confidence - 0.2).max(0.0)
+                        } else {
+                            record.confidence
+                        };
+
+                        record.confidence = new_confidence;
+                        if let Some(c) = comment {
+                            if let Some(meta_obj) = record.metadata.as_object_mut() {
+                                meta_obj.insert("last_feedback_comment".to_string(), serde_json::Value::String(c.to_string()));
+                            } else {
+                                record.metadata = serde_json::json!({ "last_feedback_comment": c });
+                            }
+                        }
+
+                        match self.memory_engine.write(&record).await {
+                            Ok(handle) => {
+                                let structured = serde_json::json!({
+                                    "status": "feedback_recorded",
+                                    "id": handle.id.to_string(),
+                                    "rating": rating,
+                                    "confidence": new_confidence,
+                                    "comment": comment
+                                });
+                                CallToolResult::structured(
+                                    format!("Feedback recorded for memory '{}': rating='{}', new confidence={:.2}", handle.id, rating, new_confidence),
+                                    structured,
+                                )
+                            }
+                            Err(e) => CallToolResult::error(format!("Failed to record memory feedback: {e}")),
+                        }
+                    }
+                    Ok(None) => CallToolResult::error(format!("Memory record with ID '{id_str}' not found")),
+                    Err(e) => CallToolResult::error(format!("Memory get error: {e}")),
+                }
+            }
             unknown_tool => CallToolResult::error(format!("Unknown tool: '{unknown_tool}'")),
         }
     }
 }
+

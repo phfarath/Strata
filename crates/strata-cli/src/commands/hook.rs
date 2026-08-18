@@ -75,6 +75,21 @@ pub async fn handle_hook(command: HookCommand, engine: Arc<SqliteMemoryEngine>) 
             debug!("Running session-start hook for session '{session_id}'");
             let digest = engine.digest(&session_id, Some(450)).await?;
 
+            // Trigger background sync check
+            let store_bg = engine.store_arc();
+            let sid_bg = session_id.clone();
+            tokio::spawn(async move {
+                if let Ok(endpoint) = std::env::var("STRATA_SYNC_ENDPOINT") {
+                    if !endpoint.trim().is_empty() {
+                        let mut config = strata_core::schemas::SyncConfig::new(&sid_bg);
+                        config.endpoint = Some(endpoint);
+                        config.token = std::env::var("STRATA_SYNC_TOKEN").ok();
+                        let sync_engine = strata_memory::SyncEngine::new(store_bg, config);
+                        let _ = sync_engine.sync_cycle().await;
+                    }
+                }
+            });
+
             if json {
                 println!("{}", serde_json::to_string_pretty(&digest)?);
             } else {
@@ -113,6 +128,7 @@ pub async fn handle_hook(command: HookCommand, engine: Arc<SqliteMemoryEngine>) 
                 print!("{output}");
             }
         }
+
 
         HookCommand::UserPrompt { query, limit, scope, json } => {
             debug!("Running user-prompt hook for query: '{query}'");
@@ -174,7 +190,7 @@ pub async fn handle_hook(command: HookCommand, engine: Arc<SqliteMemoryEngine>) 
         }
 
         HookCommand::SessionEnd { session_id } => {
-            info!("Running session-end background consolidation for session '{session_id}'");
+            info!("Running session-end background consolidation and sync for session '{session_id}'");
             let store = engine.store_arc();
             let embedder = engine.embedding_provider();
             let reasoning = resolve_reasoning_engine(None);
@@ -189,8 +205,16 @@ pub async fn handle_hook(command: HookCommand, engine: Arc<SqliteMemoryEngine>) 
                         info!("Async consolidation completed successfully for session '{sid}'");
                     }
                 }
+
+                // Trigger background sync cycle
+                let mut config = strata_core::schemas::SyncConfig::new(&sid);
+                config.endpoint = std::env::var("STRATA_SYNC_ENDPOINT").ok();
+                config.token = std::env::var("STRATA_SYNC_TOKEN").ok();
+                let sync_engine = strata_memory::SyncEngine::new(store, config);
+                let _ = sync_engine.sync_cycle().await;
             });
         }
+
 
         HookCommand::PostTool { tool, error, params, context } => {
             if let Some(err_msg) = error {

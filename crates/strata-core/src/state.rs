@@ -1,4 +1,4 @@
-﻿use std::fmt;
+use std::fmt;
 use std::str::FromStr;
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
@@ -375,3 +375,27 @@ impl DigestOutput {
         }
     }
 }
+
+/// Outbox entry for offline-first Change Data Capture (CDC) replication.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct OutboxEntry {
+    pub id: i64,
+    pub record_id: String,
+    pub entity_type: String,
+    pub action: String,
+    pub payload_json: String,
+    pub created_at: DateTime<Utc>,
+    pub retry_count: u32,
+    pub last_attempt: Option<DateTime<Utc>>,
+    pub status: String,
+}
+
+/// Health and status metric for offline-first CDC outbox.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct OutboxStatus {
+    pub pending_count: usize,
+    pub synced_count: usize,
+    pub failed_count: usize,
+    pub last_synced_at: Option<DateTime<Utc>>,
+}
+

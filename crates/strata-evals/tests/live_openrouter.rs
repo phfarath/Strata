@@ -1,7 +1,7 @@
-use std::sync::Arc;
 use anyhow::Result;
 use chrono::{Duration, Utc};
 use uuid::Uuid;
+
 
 use strata_core::events::{
     Event, EventPayload, ObservationReceived, SessionEnded, SessionStarted, TaskCompleted,

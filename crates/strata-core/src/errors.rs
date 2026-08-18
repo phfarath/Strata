@@ -59,6 +59,12 @@ pub enum StrataError {
     #[error("Configuration error: {0}")]
     Configuration(String),
 
+    #[error("Network error: {0}")]
+    Network(String),
+
+    #[error("Sync error: {0}")]
+    Sync(String),
+
     #[error("Internal error: {0}")]
     Internal(String),
 

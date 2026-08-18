@@ -6,9 +6,11 @@ use strata_core::events::{
     TaskStarted, ToolInvoked, ToolResultReceived,
 };
 use strata_core::schemas::{
-    DecayConfig, EpisodicMemory, FactStatus,
+    DecayConfig, EpisodicMemory, FactStatus, MemoryFeedback,
     ProceduralSkill, ProceduralStep, SemanticFact, SignalScores,
+    SyncConfig, SyncDelta,
 };
+
 use strata_core::state::{
     FailureSeverity, MemoryRecord, MemoryType, Scope,
 };
@@ -22,7 +24,9 @@ use crate::embedding::{
 use crate::jtms::{ConflictResolution, TruthMaintenanceSystem};
 use crate::pipeline::ConsolidationPipeline;
 use crate::store::SqliteStore;
+use crate::sync::{compute_version_hash, SyncEngine};
 use crate::SqliteMemoryEngine;
+use std::sync::Arc;
 
 #[tokio::test]
 async fn test_memory_crud_and_access_metrics() {
@@ -593,3 +597,187 @@ async fn test_phase2_store_crud_and_access_logs() {
     let logs = store.get_memory_access_logs(&fact.id).expect("get logs");
     assert!(!logs.is_empty());
 }
+
+#[tokio::test]
+async fn test_cdc_outbox_operations() {
+    let store = SqliteStore::open_in_memory().expect("init store");
+    let ws = "ws-alpha";
+
+    let delta1 = SyncDelta::new(
+        ws,
+        1,
+        "event",
+        serde_json::json!({"action": "start"}),
+        "hash-001",
+    );
+    let delta2 = SyncDelta::new(
+        ws,
+        2,
+        "fact",
+        serde_json::json!({"statement": "Atomic facts"}),
+        "hash-002",
+    );
+
+    store.enqueue_delta(&delta1).expect("enqueue delta 1");
+    store.enqueue_delta(&delta2).expect("enqueue delta 2");
+
+    // Check status
+    let (pending_count, max_seq) = store.get_sync_status(ws).expect("get sync status");
+    assert_eq!(pending_count, 2);
+    assert_eq!(max_seq, 2);
+
+    // Get pending deltas
+    let pending = store.get_pending_deltas(ws, 10).expect("get pending");
+    assert_eq!(pending.len(), 2);
+    assert_eq!(pending[0].seq, 1);
+    assert_eq!(pending[1].seq, 2);
+
+    // Mark delta1 synced
+    store.mark_deltas_synced(&[delta1.id]).expect("mark synced");
+
+    let (pending_count_after, _) = store.get_sync_status(ws).expect("get sync status");
+    assert_eq!(pending_count_after, 1);
+
+    let pending_after = store.get_pending_deltas(ws, 10).expect("get pending after");
+    assert_eq!(pending_after.len(), 1);
+    assert_eq!(pending_after[0].id, delta2.id);
+}
+
+#[tokio::test]
+async fn test_sync_metadata_and_delta_failure() {
+    let store = SqliteStore::open_in_memory().expect("init store");
+    let ws = "ws-beta";
+
+    let delta = SyncDelta::new(
+        ws,
+        10,
+        "skill",
+        serde_json::json!({"name": "deploy"}),
+        "hash-010",
+    );
+    store.enqueue_delta(&delta).expect("enqueue");
+
+    // Record failure
+    store
+        .record_delta_failure(&[delta.id], "Network timeout")
+        .expect("record failure");
+
+    // Test metadata operations
+    store.set_sync_metadata("last_remote_seq", "42").expect("set meta");
+    let val = store.get_sync_metadata("last_remote_seq").expect("get meta");
+    assert_eq!(val.as_deref(), Some("42"));
+}
+
+#[tokio::test]
+async fn test_memory_feedback_adjustment() {
+    let store = SqliteStore::open_in_memory().expect("init store");
+
+    // 1. Create a memory record
+    let mut mem = MemoryRecord::new(MemoryType::Semantic, "Test statement for feedback", Scope::Global);
+    mem.importance = 0.5;
+    mem.confidence = 0.5;
+    store.insert_or_update_memory(&mem).expect("insert mem");
+
+    // 2. Positive feedback reinforces importance & confidence
+    let fb_pos = MemoryFeedback::positive(mem.id);
+    store.record_memory_feedback(&fb_pos).expect("record positive fb");
+
+    let updated_mem = store.get_memory(&mem.id).expect("get mem").expect("found");
+    assert!(updated_mem.importance > 0.5);
+    assert!(updated_mem.confidence > 0.5);
+
+    // 3. Negative feedback reduces importance & confidence
+    let fb_neg = MemoryFeedback::negative(mem.id, Some("Incorrect assumption".to_string()));
+    store.record_memory_feedback(&fb_neg).expect("record negative fb");
+
+    let updated_neg = store.get_memory(&mem.id).expect("get mem").expect("found");
+    assert!(updated_neg.importance < updated_mem.importance);
+
+    // 4. Access log recorded
+    let logs = store.get_memory_access_logs(&mem.id).expect("get logs");
+    assert!(logs.len() >= 2);
+}
+
+#[tokio::test]
+async fn test_sync_engine_push_pull_and_cycle() {
+    let store = Arc::new(SqliteStore::open_in_memory().expect("init store"));
+    let config = SyncConfig::new("ws-cycle").with_batch_size(10);
+    let engine = SyncEngine::new(Arc::clone(&store), config);
+
+    // 1. Enqueue local deltas
+    let delta = SyncDelta::new(
+        "ws-cycle",
+        1,
+        "memory",
+        serde_json::to_value(MemoryRecord::new(
+            MemoryType::Semantic,
+            "Offline local fact",
+            Scope::Global,
+        ))
+        .expect("to value"),
+        "hash-local",
+    );
+    store.enqueue_delta(&delta).expect("enqueue delta");
+
+    // 2. Push in offline mode (endpoint is None)
+    let pushed = engine.push_deltas().await.expect("push deltas");
+    assert_eq!(pushed, 1);
+
+    let (pending_count, _) = store.get_sync_status("ws-cycle").expect("status");
+    assert_eq!(pending_count, 0);
+
+    // 3. Pull incoming remote deltas
+    let remote_fact = SemanticFact::new("SQLite WAL ensures concurrent readers", "db", Scope::Global);
+    let remote_fact_payload = serde_json::to_value(&remote_fact).expect("serialize fact");
+    let remote_hash = compute_version_hash(&remote_fact_payload);
+
+    let remote_delta = SyncDelta::new(
+        "ws-cycle",
+        5,
+        "semantic_fact",
+        remote_fact_payload,
+        remote_hash,
+    );
+
+    let pulled = engine.pull_deltas(vec![remote_delta]).await.expect("pull deltas");
+    assert_eq!(pulled, 1);
+
+    let fetched_fact = store.get_semantic_fact(&remote_fact.id).expect("get fact").expect("found");
+    assert_eq!(fetched_fact.statement, "SQLite WAL ensures concurrent readers");
+
+    // 4. Full sync cycle
+    let report = engine.sync_cycle().await.expect("sync cycle");
+    assert_eq!(report.last_seq, 5);
+}
+
+#[tokio::test]
+async fn test_sync_engine_jtms_conflict_resolution() {
+    let store = Arc::new(SqliteStore::open_in_memory().expect("init store"));
+    let config = SyncConfig::new("ws-jtms");
+    let engine = SyncEngine::new(Arc::clone(&store), config);
+
+    // Local fact
+    let fact_id = Uuid::new_v4();
+    let mut local_fact = SemanticFact::new("Always enable debug logging in production", "logging", Scope::Global);
+    local_fact.id = fact_id;
+    local_fact.version = 1;
+    store.insert_or_update_semantic_fact(&local_fact).expect("insert local");
+
+    // Remote divergent delta with opposite statement
+    let mut remote_fact = SemanticFact::new("Always disable debug logging in production", "logging", Scope::Global);
+    remote_fact.id = fact_id;
+    let remote_payload = serde_json::to_value(&remote_fact).expect("serialize");
+    let remote_hash = compute_version_hash(&remote_payload);
+
+    let delta = SyncDelta::new("ws-jtms", 10, "fact", remote_payload, remote_hash);
+
+    // Pull delta should trigger JTMS supersede
+    let pulled = engine.pull_deltas(vec![delta]).await.expect("pull delta");
+    assert_eq!(pulled, 1);
+
+    let updated_fact = store.get_semantic_fact(&fact_id).expect("get fact").expect("found");
+    assert_eq!(updated_fact.status, FactStatus::Active);
+    assert_eq!(updated_fact.version, 2);
+    assert_eq!(updated_fact.statement, "Always disable debug logging in production");
+}
+

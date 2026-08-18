@@ -21,6 +21,8 @@ strata-core = { path = "crates/strata-core" }
 strata-memory = { path = "crates/strata-memory" }
 strata-tools = { path = "crates/strata-tools" }
 strata-reasoning = { path = "crates/strata-reasoning" }
+strata-cli = { path = "crates/strata-cli" }
+
 
 # Async & Runtime
 tokio = { version = "1.43", features = ["full"] }

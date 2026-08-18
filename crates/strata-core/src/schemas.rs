@@ -274,12 +274,18 @@ impl SemanticFact {
         }
     }
 
+    pub fn with_id(mut self, id: Uuid) -> Self {
+        self.id = id;
+        self
+    }
+
     pub fn with_project(mut self, project: impl Into<String>) -> Self {
         self.project = Some(project.into());
         self
     }
 
     pub fn with_importance(mut self, importance: f32) -> Self {
+
         self.importance = importance.clamp(0.0, 1.0);
         self
     }
@@ -536,4 +542,203 @@ pub struct DecayMetrics {
     pub stability: f32,
     /// Whether retention is below the prune threshold
     pub is_expired: bool,
+}
+
+fn default_batch_size() -> usize {
+    100
+}
+
+fn default_max_retries() -> u32 {
+    5
+}
+
+fn default_base_backoff_ms() -> u64 {
+    500
+}
+
+/// Represents a change data capture (CDC) delta for offline-first synchronization.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct SyncDelta {
+    pub id: Uuid,
+    pub workspace_id: String,
+    pub seq: u64,
+    pub ts: DateTime<Utc>,
+    pub kind: String,
+    pub payload: serde_json::Value,
+    pub version_hash: String,
+    #[serde(default)]
+    pub synced: bool,
+}
+
+impl SyncDelta {
+    pub fn new(
+        workspace_id: impl Into<String>,
+        seq: u64,
+        kind: impl Into<String>,
+        payload: serde_json::Value,
+        version_hash: impl Into<String>,
+    ) -> Self {
+        Self {
+            id: Uuid::new_v4(),
+            workspace_id: workspace_id.into(),
+            seq,
+            ts: Utc::now(),
+            kind: kind.into(),
+            payload,
+            version_hash: version_hash.into(),
+            synced: false,
+        }
+    }
+
+    pub fn with_id(mut self, id: Uuid) -> Self {
+        self.id = id;
+        self
+    }
+
+    pub fn with_ts(mut self, ts: DateTime<Utc>) -> Self {
+        self.ts = ts;
+        self
+    }
+
+    pub fn with_synced(mut self, synced: bool) -> Self {
+        self.synced = synced;
+        self
+    }
+}
+
+/// User or agent feedback on a retrieved memory.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct MemoryFeedback {
+    pub memory_id: Uuid,
+    pub rating: String,
+    #[serde(default)]
+    pub score: Option<f32>,
+    #[serde(default)]
+    pub comment: Option<String>,
+    pub created_at: DateTime<Utc>,
+}
+
+impl MemoryFeedback {
+    pub fn new(memory_id: Uuid, rating: impl Into<String>) -> Self {
+        Self {
+            memory_id,
+            rating: rating.into(),
+            score: None,
+            comment: None,
+            created_at: Utc::now(),
+        }
+    }
+
+    pub fn positive(memory_id: Uuid) -> Self {
+        Self {
+            memory_id,
+            rating: "positive".to_string(),
+            score: Some(1.0),
+            comment: None,
+            created_at: Utc::now(),
+        }
+    }
+
+    pub fn negative(memory_id: Uuid, comment: Option<String>) -> Self {
+        Self {
+            memory_id,
+            rating: "negative".to_string(),
+            score: Some(1.0),
+            comment,
+            created_at: Utc::now(),
+        }
+    }
+
+
+    pub fn with_score(mut self, score: f32) -> Self {
+        self.score = Some(score.clamp(0.0, 1.0));
+        self
+    }
+
+    pub fn with_comment(mut self, comment: impl Into<String>) -> Self {
+        self.comment = Some(comment.into());
+        self
+    }
+
+    pub fn with_created_at(mut self, created_at: DateTime<Utc>) -> Self {
+        self.created_at = created_at;
+        self
+    }
+}
+
+/// Configuration for the synchronization engine.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct SyncConfig {
+    #[serde(default)]
+    pub endpoint: Option<String>,
+    #[serde(default)]
+    pub token: Option<String>,
+    pub workspace_id: String,
+    #[serde(default = "default_batch_size")]
+    pub batch_size: usize,
+    #[serde(default = "default_max_retries")]
+    pub max_retries: u32,
+    #[serde(default = "default_base_backoff_ms")]
+    pub base_backoff_ms: u64,
+}
+
+impl SyncConfig {
+    pub fn new(workspace_id: impl Into<String>) -> Self {
+        Self {
+            endpoint: None,
+            token: None,
+            workspace_id: workspace_id.into(),
+            batch_size: 100,
+            max_retries: 5,
+            base_backoff_ms: 500,
+        }
+    }
+
+    pub fn with_endpoint(mut self, endpoint: impl Into<String>) -> Self {
+        self.endpoint = Some(endpoint.into());
+        self
+    }
+
+    pub fn with_token(mut self, token: impl Into<String>) -> Self {
+        self.token = Some(token.into());
+        self
+    }
+
+    pub fn with_batch_size(mut self, batch_size: usize) -> Self {
+        self.batch_size = batch_size;
+        self
+    }
+
+    pub fn with_max_retries(mut self, max_retries: u32) -> Self {
+        self.max_retries = max_retries;
+        self
+    }
+
+    pub fn with_base_backoff_ms(mut self, base_backoff_ms: u64) -> Self {
+        self.base_backoff_ms = base_backoff_ms;
+        self
+    }
+}
+
+impl Default for SyncConfig {
+    fn default() -> Self {
+        Self {
+            endpoint: None,
+            token: None,
+            workspace_id: "default".to_string(),
+            batch_size: 100,
+            max_retries: 5,
+            base_backoff_ms: 500,
+        }
+    }
+}
+
+/// Summary report of a sync cycle execution.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Default)]
+pub struct SyncReport {
+    pub pushed_count: usize,
+    pub pulled_count: usize,
+    pub conflicts_resolved: usize,
+    pub last_seq: u64,
+    pub errors: Vec<String>,
 }
