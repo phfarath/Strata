@@ -165,7 +165,7 @@ enum Commands {
     Export(ExportArgs),
 
     /// Compile and synchronize persistent memory & alignment rules across host instruction files within token budget
-    #[command(alias = "sync-hosts")]
+    #[command(name = "sync-hosts", alias = "sync_hosts")]
     SyncHosts(SyncHostsArgs),
 
     /// Provide explicit reinforcement feedback on a persistent memory record
