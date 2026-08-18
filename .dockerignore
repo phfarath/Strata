@@ -1,0 +1,10 @@
+target
+.git
+.gemini
+.cursor
+.claude
+.codex
+*.db
+*.db-shm
+*.db-wal
+*.log

@@ -7,7 +7,7 @@ use serde_json::Value;
 use strata_core::errors::StrataError;
 use strata_core::events::Event;
 use strata_core::schemas::{
-    MemoryFeedback, ProceduralSkill, SemanticFact, SyncConfig, SyncDelta, SyncReport,
+    EpisodicMemory, MemoryFeedback, ProceduralSkill, SemanticFact, SyncConfig, SyncDelta, SyncReport,
 };
 use strata_core::state::{FailurePattern, MemoryRecord};
 use uuid::Uuid;
@@ -209,6 +209,12 @@ impl SyncEngine {
                     } else {
                         self.store.insert_or_update_semantic_fact(&fact)?;
                     }
+                    applied_count += 1;
+                }
+                "episodic" | "episodic_memory" => {
+                    let ep: EpisodicMemory = serde_json::from_value(delta.payload.clone())
+                        .map_err(|e| StrataError::Serialization(e.to_string()))?;
+                    self.store.insert_episodic_memory(&ep)?;
                     applied_count += 1;
                 }
                 "memory" | "memory_record" => {
