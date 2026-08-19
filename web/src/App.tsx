@@ -2,11 +2,12 @@ import React, { useState, useEffect } from 'react';
 import { User, Workspace } from './types';
 import { api } from './api';
 import { Navbar } from './components/Navbar';
+import { Sidebar } from './components/Sidebar';
 import { LandingPage } from './components/LandingPage';
 import { Dashboard } from './components/Dashboard';
 import { AuthModal } from './components/AuthModal';
 import { Toaster, toast } from './components/Toast';
-import { Plus, X } from 'lucide-react';
+import { X } from 'lucide-react';
 
 export function App() {
   const [user, setUser] = useState<User | null>(null);
@@ -15,7 +16,20 @@ export function App() {
   const [authModalOpen, setAuthModalOpen] = useState(false);
   const [createWsModalOpen, setCreateWsModalOpen] = useState(false);
   const [newWsName, setNewWsName] = useState('');
-  const [currentView, setCurrentView] = useState<'landing' | 'overview' | 'explorer' | 'keys' | 'stream' | 'playground'>('landing');
+  const [currentTab, setCurrentTab] = useState<'overview' | 'explorer' | 'keys' | 'stream' | 'playground'>('overview');
+  const [landingViewOpen, setLandingViewOpen] = useState(false);
+
+  // Helper to construct a safe fallback workspace
+  const getSafeWorkspace = (u: User, wsList: Workspace[]): Workspace => {
+    if (wsList.length > 0) return wsList[0];
+    return {
+      id: u.id,
+      owner_id: u.id,
+      name: `${u.full_name || 'My'} Organization`,
+      slug: 'default-workspace',
+      created_at: new Date().toISOString(),
+    };
+  };
 
   // Check existing session
   useEffect(() => {
@@ -25,26 +39,22 @@ export function App() {
         .then((resp) => {
           setUser(resp.user);
           setWorkspaces(resp.workspaces);
-          if (resp.workspaces.length > 0) {
-            setActiveWorkspace(resp.workspaces[0]);
-          }
-          setCurrentView('overview');
+          setActiveWorkspace(getSafeWorkspace(resp.user, resp.workspaces));
         })
         .catch(() => {
           api.clearToken();
           setUser(null);
-          setCurrentView('landing');
         });
     }
   }, []);
 
   const handleAuthSuccess = (u: User, wsList: Workspace[]) => {
     setUser(u);
-    setWorkspaces(wsList);
-    if (wsList.length > 0) {
-      setActiveWorkspace(wsList[0]);
-    }
-    setCurrentView('overview');
+    const safeWs = getSafeWorkspace(u, wsList);
+    setWorkspaces(wsList.length > 0 ? wsList : [safeWs]);
+    setActiveWorkspace(safeWs);
+    setLandingViewOpen(false);
+    setCurrentTab('overview');
   };
 
   const handleLogout = () => {
@@ -52,7 +62,7 @@ export function App() {
     setUser(null);
     setWorkspaces([]);
     setActiveWorkspace(null);
-    setCurrentView('landing');
+    setLandingViewOpen(false);
     toast.info('Signed out');
   };
 
@@ -72,44 +82,76 @@ export function App() {
     }
   };
 
+  // If not logged in or explicitly viewing landing page
+  if (!user || landingViewOpen) {
+    return (
+      <div className="min-h-screen bg-background text-slate-100 flex flex-col selection:bg-primary/20 selection:text-primary">
+        <Navbar
+          user={user}
+          workspaces={workspaces}
+          activeWorkspace={activeWorkspace}
+          onSelectWorkspace={(ws) => {
+            setActiveWorkspace(ws);
+            setLandingViewOpen(false);
+          }}
+          onCreateWorkspaceClick={() => setCreateWsModalOpen(true)}
+          onOpenAuth={() => setAuthModalOpen(true)}
+          onLogout={handleLogout}
+          currentView={landingViewOpen ? 'landing' : 'overview'}
+          onNavigate={(view) => {
+            if (view === 'landing') {
+              setLandingViewOpen(true);
+            } else {
+              setLandingViewOpen(false);
+              setCurrentTab(view as any);
+            }
+          }}
+        />
+
+        <main className="flex-1">
+          <LandingPage onOpenAuth={() => setAuthModalOpen(true)} />
+        </main>
+
+        <AuthModal
+          isOpen={authModalOpen}
+          onClose={() => setAuthModalOpen(false)}
+          onSuccess={handleAuthSuccess}
+        />
+
+        <Toaster />
+      </div>
+    );
+  }
+
+  // Active workspace guaranteed
+  const safeCurrentWorkspace = activeWorkspace || getSafeWorkspace(user, workspaces);
+
   return (
-    <div className="min-h-screen bg-background text-slate-100 flex flex-col selection:bg-primary/20 selection:text-primary">
-      <Navbar
+    <div className="flex h-screen w-screen overflow-hidden bg-background text-slate-100 selection:bg-primary/20 selection:text-primary">
+      {/* Sleek App Sidebar */}
+      <Sidebar
         user={user}
-        workspaces={workspaces}
-        activeWorkspace={activeWorkspace}
+        workspaces={workspaces.length > 0 ? workspaces : [safeCurrentWorkspace]}
+        activeWorkspace={safeCurrentWorkspace}
         onSelectWorkspace={(ws) => setActiveWorkspace(ws)}
         onCreateWorkspaceClick={() => setCreateWsModalOpen(true)}
-        onOpenAuth={() => setAuthModalOpen(true)}
         onLogout={handleLogout}
-        currentView={currentView}
-        onNavigate={(view) => setCurrentView(view)}
+        currentTab={currentTab}
+        onTabChange={(tab) => setCurrentTab(tab)}
       />
 
-      <main className="flex-1">
-        {currentView === 'landing' ? (
-          <LandingPage onOpenAuth={() => setAuthModalOpen(true)} />
-        ) : (
-          user && activeWorkspace && (
-            <Dashboard
-              user={user}
-              workspace={activeWorkspace}
-              currentTab={currentView as any}
-              onTabChange={(tab) => setCurrentView(tab)}
-              onRefreshWorkspaces={() => {
-                api.listWorkspaces().then(setWorkspaces).catch(() => {});
-              }}
-            />
-          )
-        )}
+      {/* Main Dashboard Area */}
+      <main className="flex-1 h-screen overflow-y-auto bg-[#07090e]">
+        <Dashboard
+          user={user}
+          workspace={safeCurrentWorkspace}
+          currentTab={currentTab}
+          onTabChange={(tab) => setCurrentTab(tab)}
+          onRefreshWorkspaces={() => {
+            api.listWorkspaces().then(setWorkspaces).catch(() => {});
+          }}
+        />
       </main>
-
-      {/* Auth Modal */}
-      <AuthModal
-        isOpen={authModalOpen}
-        onClose={() => setAuthModalOpen(false)}
-        onSuccess={handleAuthSuccess}
-      />
 
       {/* Create Workspace Modal */}
       {createWsModalOpen && (
@@ -153,7 +195,7 @@ export function App() {
         </div>
       )}
 
-      {/* Sonner-style Toast Container */}
+      {/* Sonner-style Toast Notifications */}
       <Toaster />
     </div>
   );
