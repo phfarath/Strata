@@ -73,6 +73,12 @@ pub fn create_app(state: Arc<AppState>) -> Router {
         .route("/health", get(handlers::health_handler))
         .route("/api/health", get(handlers::health_handler))
         .route("/api/v1/health", get(handlers::health_handler))
+        // Browser CLI Auth endpoints
+        .route("/auth/cli", get(handlers::cli_auth_page_handler))
+        .route(
+            "/api/v1/auth/cli/authorize",
+            post(handlers::cli_authorize_handler),
+        )
         // Self-Serve SaaS Auth endpoints
         .route("/api/v1/auth/signup", post(handlers::signup_handler))
         .route("/api/v1/auth/login", post(handlers::login_handler))

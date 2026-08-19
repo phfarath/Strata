@@ -32,10 +32,18 @@ pub enum SyncAction {
     Status,
 }
 
+use crate::config::StrataConfig;
+
 pub async fn run_sync(args: SyncArgs, store: Arc<SqliteStore>) -> Result<()> {
-    let mut config = SyncConfig::new(&args.workspace);
-    config.endpoint = args.endpoint.or_else(|| std::env::var("STRATA_SYNC_ENDPOINT").ok());
-    config.token = args.token.or_else(|| std::env::var("STRATA_SYNC_TOKEN").ok());
+    let workspace = if args.workspace != "default" {
+        args.workspace.clone()
+    } else {
+        StrataConfig::resolve_workspace(Some(&args.workspace))
+    };
+
+    let mut config = SyncConfig::new(&workspace);
+    config.endpoint = Some(StrataConfig::resolve_endpoint(args.endpoint.as_deref()));
+    config.token = StrataConfig::resolve_token(args.token.as_deref());
 
     let sync_engine = SyncEngine::new(store.clone(), config.clone());
 

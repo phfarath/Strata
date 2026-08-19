@@ -22,6 +22,7 @@ use strata_cli::{
         hook::{handle_hook, HookCommand},
         init::{run_init, InitOptions},
         key::{run_key, KeyArgs},
+        login::{run_login, run_logout, LoginArgs},
         prune::{run_prune, PruneOptions},
         search::{run_search, SearchOptions},
         sync::{run_sync, SyncArgs},
@@ -178,6 +179,12 @@ enum Commands {
 
     /// Manage Strata Cloud machine API keys
     Key(KeyArgs),
+
+    /// Log in to Strata Cloud via interactive browser window
+    Login(LoginArgs),
+
+    /// Log out from Strata Cloud and clear stored credentials
+    Logout,
 }
 
 
@@ -206,7 +213,13 @@ async fn main() -> Result<()> {
         });
     }
 
-    // Fast-path for Auth & Key commands (communicate over HTTP with Strata Cloud)
+    // Fast-path for Auth, Key & Login commands (communicate over HTTP with Strata Cloud)
+    if let Commands::Login(args) = cli.command {
+        return run_login(args).await;
+    }
+    if let Commands::Logout = cli.command {
+        return run_logout().await;
+    }
     if let Commands::Auth(args) = cli.command {
         return run_auth(args).await;
     }
@@ -222,7 +235,7 @@ async fn main() -> Result<()> {
     );
 
     match cli.command {
-        Commands::Init { .. } | Commands::Auth(_) | Commands::Key(_) => unreachable!(),
+        Commands::Init { .. } | Commands::Auth(_) | Commands::Key(_) | Commands::Login(_) | Commands::Logout => unreachable!(),
 
         Commands::Mcp => {
             let server = McpServer::new(engine);
