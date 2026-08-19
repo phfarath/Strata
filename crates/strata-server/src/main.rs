@@ -51,6 +51,9 @@ async fn main() -> Result<()> {
         .with(tracing_subscriber::fmt::layer())
         .init();
 
+    // Install default crypto provider for Rustls (TLS for Supabase/Neon/Railway Postgres)
+    let _ = rustls::crypto::ring::default_provider().install_default();
+
     let args = CliArgs::parse();
 
     let mut config = ServerConfig::default();
