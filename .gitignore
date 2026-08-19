@@ -9,4 +9,7 @@ Thumbs.db
 *.db
 *.db-shm
 *.db-wal
+node_modules
+dist
+.vercel
 

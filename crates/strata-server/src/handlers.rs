@@ -680,11 +680,24 @@ pub async fn login_handler(
             .into_response());
     }
 
-    let workspaces = state
+    let mut workspaces = state
         .storage
         .get_workspaces_for_user(&user.id)
         .await
         .unwrap_or_default();
+
+    if workspaces.is_empty() {
+        let clean_name = if user.full_name.trim().is_empty() {
+            "Personal".to_string()
+        } else {
+            user.full_name.clone()
+        };
+        let slug = format!("{}-{}", clean_name.to_lowercase().replace(' ', "-"), Uuid::new_v4().simple());
+        let ws_name = format!("{clean_name} Workspace");
+        if let Ok(ws) = state.storage.create_workspace(&user.id, &ws_name, &slug).await {
+            workspaces.push(ws);
+        }
+    }
 
     let token = create_jwt(&user.id, &user.email, &state.jwt_secret, 30 * 86400).map_err(|e| {
         (
@@ -707,11 +720,24 @@ pub async fn me_handler(
     Query(query): Query<AuthQuery>,
 ) -> Result<Json<AuthResponse>, Response> {
     let user = require_user_session(&headers, Some(&query), &state.storage, &state.jwt_secret).await?;
-    let workspaces = state
+    let mut workspaces = state
         .storage
         .get_workspaces_for_user(&user.id)
         .await
         .unwrap_or_default();
+
+    if workspaces.is_empty() {
+        let clean_name = if user.full_name.trim().is_empty() {
+            "Personal".to_string()
+        } else {
+            user.full_name.clone()
+        };
+        let slug = format!("{}-{}", clean_name.to_lowercase().replace(' ', "-"), Uuid::new_v4().simple());
+        let ws_name = format!("{clean_name} Workspace");
+        if let Ok(ws) = state.storage.create_workspace(&user.id, &ws_name, &slug).await {
+            workspaces.push(ws);
+        }
+    }
 
     let token = create_jwt(&user.id, &user.email, &state.jwt_secret, 30 * 86400).map_err(|e| {
         (
