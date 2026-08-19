@@ -5,7 +5,7 @@ FROM rust:bookworm AS builder
 WORKDIR /app
 
 # Copy workspace manifests
-COPY Cargo.toml Cargo.lock ./
+COPY Cargo.toml Cargo.lock* ./
 COPY crates/strata-core/Cargo.toml crates/strata-core/
 COPY crates/strata-memory/Cargo.toml crates/strata-memory/
 COPY crates/strata-tools/Cargo.toml crates/strata-tools/
