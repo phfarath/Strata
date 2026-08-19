@@ -3,75 +3,52 @@
 @tailwind utilities;
 
 :root {
-  --ease-out: cubic-bezier(0.23, 1, 0.32, 1);
-  --ease-in-out: cubic-bezier(0.77, 0, 0.175, 1);
-  --ease-drawer: cubic-bezier(0.32, 0.72, 0, 1);
+  --ease-out: cubic-bezier(0.16, 1, 0.3, 1);
 }
 
 body {
-  background-color: #07090e;
-  color: #f1f5f9;
+  background-color: #09090b;
+  color: #f4f4f5;
   font-feature-settings: "cv02", "cv03", "cv04", "cv11";
   overflow-x: hidden;
 }
 
-/* Emil Kowalski Craft Button Feedback */
+/* Tactile Button Feedback */
 .btn-pressable {
-  transition: transform 160ms var(--ease-out), background-color 150ms ease, opacity 150ms ease;
+  transition: transform 120ms var(--ease-out), background-color 120ms ease, border-color 120ms ease;
   user-select: none;
 }
 .btn-pressable:active {
-  transform: scale(0.97);
+  transform: scale(0.98);
 }
 
-/* Subtle Interactive Card Transition */
-.card-interactive {
-  transition: transform 200ms var(--ease-out), border-color 200ms ease, box-shadow 200ms ease;
-}
-.card-interactive:hover {
-  transform: translateY(-2px);
-}
-
-/* Custom Minimal Scrollbar */
+/* Minimal Scrollbar */
 ::-webkit-scrollbar {
   width: 6px;
   height: 6px;
 }
 ::-webkit-scrollbar-track {
-  background: #07090e;
+  background: #09090b;
 }
 ::-webkit-scrollbar-thumb {
-  background: #1b2333;
-  border-radius: 9999px;
+  background: #27272a;
+  border-radius: 4px;
 }
 ::-webkit-scrollbar-thumb:hover {
-  background: #2a364f;
+  background: #3f3f46;
 }
 
-/* Glassmorphism Effect */
-.glass-panel {
-  background: rgba(13, 17, 26, 0.75);
-  backdrop-filter: blur(16px);
-  -webkit-backdrop-filter: blur(16px);
-  border: 1px solid rgba(30, 41, 59, 0.6);
+/* Solid Clean Card Surfaces */
+.surface-card {
+  background-color: #121215;
+  border: 1px solid #27272a;
 }
 
-.glass-panel-glow {
-  background: rgba(13, 17, 26, 0.85);
-  backdrop-filter: blur(20px);
-  -webkit-backdrop-filter: blur(20px);
-  border: 1px solid rgba(56, 189, 248, 0.2);
-  box-shadow: 0 0 35px -10px rgba(56, 189, 248, 0.15);
+.surface-card:hover {
+  border-color: #3f3f46;
 }
 
-/* Radial Glow Backgrounds */
-.hero-glow {
-  background: radial-gradient(circle 600px at 50% 0%, rgba(56, 189, 248, 0.12), transparent 70%);
-}
-
-.subtle-grid {
-  background-size: 32px 32px;
-  background-image: 
-    linear-gradient(to right, rgba(255, 255, 255, 0.02) 1px, transparent 1px),
-    linear-gradient(to bottom, rgba(255, 255, 255, 0.02) 1px, transparent 1px);
+.surface-elevated {
+  background-color: #18181b;
+  border: 1px solid #27272a;
 }

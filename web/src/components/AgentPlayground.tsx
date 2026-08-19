@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { PlayCircle, Sparkles, Send, Brain, GitBranch, ShieldCheck, CheckCircle2, ArrowRight } from 'lucide-react';
+import { Sliders, ArrowRight } from 'lucide-react';
 import { toast } from './Toast';
 
 export const AgentPlayground: React.FC = () => {
@@ -14,11 +14,10 @@ export const AgentPlayground: React.FC = () => {
     setLoading(true);
     setResult(null);
 
-    // Simulate vector search + JTMS arbitration pipeline
     setTimeout(() => {
       setResult({
         query: prompt,
-        latency_ms: 1.4,
+        latency_ms: 0.8,
         retrieved_memories: [
           {
             title: 'PostgreSQL Supabase Transaction Pooler Port 6543 TLS Handshake',
@@ -44,84 +43,70 @@ export const AgentPlayground: React.FC = () => {
         },
       });
       setLoading(false);
-      toast.success('Simulation Completed', 'Retrieved 2 high-confidence memories in 1.4ms.');
-    }, 450);
+      toast.success('Recall Completed', '2 memories retrieved in 0.8ms');
+    }, 300);
   };
 
   return (
-    <div className="space-y-6 max-w-4xl">
-      <div className="glass-panel p-6 rounded-2xl border border-border">
-        <div className="flex items-center gap-3 mb-2">
-          <div className="p-2 rounded-xl bg-purple-500/10 border border-purple-500/20 text-purple-400">
-            <PlayCircle className="w-5 h-5" />
-          </div>
-          <div>
-            <h3 className="text-base font-bold text-white">Agent Memory Simulator</h3>
-            <p className="text-xs text-slate-400">
-              Test how Claude Code or Cursor queries Strata's semantic memory graph and JTMS belief engine.
-            </p>
-          </div>
+    <div className="space-y-4 max-w-4xl font-sans">
+      <div className="p-4 rounded-xl border border-zinc-800 bg-[#111114]">
+        <div className="flex items-center gap-2 mb-1">
+          <Sliders className="w-4 h-4 text-zinc-400" />
+          <h3 className="text-sm font-semibold text-white">Agent Memory Recall Simulator</h3>
         </div>
+        <p className="text-xs text-zinc-400 mb-3">
+          Simulate how Claude Code, Cursor or Codex queries the semantic graph and JTMS belief engine.
+        </p>
 
-        <form onSubmit={handleSimulate} className="mt-4 space-y-3">
-          <div>
-            <label className="text-[10px] font-mono uppercase tracking-wider text-slate-400 mb-1 block">
-              Agent Coding Prompt
-            </label>
-            <textarea
-              rows={2}
-              value={prompt}
-              onChange={(e) => setPrompt(e.target.value)}
-              placeholder="Enter a task or architectural query..."
-              className="w-full px-4 py-3 rounded-xl bg-[#080c16] border border-border text-slate-100 placeholder:text-slate-500 focus:outline-none focus:border-primary text-xs font-mono resize-none leading-relaxed"
-            />
-          </div>
+        <form onSubmit={handleSimulate} className="space-y-2.5">
+          <textarea
+            rows={2}
+            value={prompt}
+            onChange={(e) => setPrompt(e.target.value)}
+            placeholder="Enter an architectural prompt or query..."
+            className="w-full px-3 py-2 rounded-lg bg-zinc-900 border border-zinc-800 text-zinc-200 placeholder:text-zinc-500 focus:outline-none focus:border-zinc-700 text-xs font-mono resize-none leading-relaxed"
+          />
 
           <button
             type="submit"
             disabled={loading}
-            className="px-6 py-2.5 rounded-xl bg-primary hover:bg-primary-hover text-black font-bold text-xs flex items-center justify-center gap-2 btn-pressable shadow-glow disabled:opacity-50"
+            className="px-4 py-2 rounded-lg bg-white text-black font-semibold text-xs flex items-center justify-center gap-1.5 hover:bg-zinc-200 btn-pressable disabled:opacity-50"
           >
-            <Sparkles className="w-4 h-4" />
-            <span>{loading ? 'Retrieving Memories...' : 'Simulate Agent Recall'}</span>
+            <span>{loading ? 'Querying...' : 'Execute Simulator Query'}</span>
+            <ArrowRight className="w-3.5 h-3.5" />
           </button>
         </form>
       </div>
 
       {result && (
-        <div className="glass-panel-glow p-6 rounded-2xl border border-border space-y-5 animate-in fade-in zoom-in-95">
-          <div className="flex items-center justify-between border-b border-border/80 pb-3 text-xs font-mono">
-            <span className="text-slate-400">
-              Query Latency: <strong className="text-emerald-400">{result.latency_ms}ms</strong>
+        <div className="p-5 rounded-xl border border-zinc-800 bg-[#111114] space-y-4 font-mono text-xs animate-in fade-in">
+          <div className="flex items-center justify-between border-b border-zinc-800 pb-2.5 text-zinc-400">
+            <span>
+              Latency: <strong className="text-zinc-200">{result.latency_ms} ms</strong>
             </span>
-            <span className="text-purple-400 font-bold">
-              JTMS State: {result.jtms_arbitration.belief_state}
+            <span>
+              JTMS State: <strong className="text-zinc-200">{result.jtms_arbitration.belief_state}</strong>
             </span>
           </div>
 
-          <div>
-            <h4 className="text-xs font-bold font-mono uppercase tracking-wider text-slate-400 mb-3">
-              Retrieved Semantic Memories ({result.retrieved_memories.length})
-            </h4>
-
-            <div className="space-y-3">
-              {result.retrieved_memories.map((m: any, idx: number) => (
-                <div key={idx} className="p-4 rounded-xl bg-card border border-border">
-                  <div className="flex items-center justify-between text-xs mb-1.5 font-mono">
-                    <span className="font-bold text-white">{m.title}</span>
-                    <span className="text-primary font-bold">
-                      Cosine: {(m.similarity * 100).toFixed(1)}%
-                    </span>
-                  </div>
-                  <p className="text-xs text-slate-300 font-mono leading-relaxed">{m.content}</p>
+          <div className="space-y-2">
+            <div className="text-zinc-500 text-[11px]">Retrieved Semantic Facts ({result.retrieved_memories.length})</div>
+            {result.retrieved_memories.map((m: any, idx: number) => (
+              <div key={idx} className="p-3 rounded-lg bg-zinc-900 border border-zinc-800 space-y-1">
+                <div className="flex items-center justify-between">
+                  <span className="font-semibold text-zinc-200">{m.title}</span>
+                  <span className="text-zinc-400 font-mono text-[11px]">
+                    Score: {(m.similarity * 100).toFixed(1)}%
+                  </span>
                 </div>
-              ))}
-            </div>
+                <p className="text-zinc-400 text-xs">{m.content}</p>
+              </div>
+            ))}
           </div>
 
-          <div className="p-4 rounded-xl bg-purple-950/30 border border-purple-500/30 text-xs font-mono">
-            <span className="text-purple-300 font-bold block mb-1">🤖 Injected Prompt Context for Agent:</span>
-            <p className="text-slate-200">{result.jtms_arbitration.recommended_directive}</p>
+          <div className="p-3 rounded-lg bg-zinc-900/80 border border-zinc-800 text-zinc-300">
+            <span className="text-zinc-400 text-[11px] block mb-0.5 font-medium">Injected Agent Directive:</span>
+            <p className="text-zinc-200 text-xs">{result.jtms_arbitration.recommended_directive}</p>
           </div>
         </div>
       )}

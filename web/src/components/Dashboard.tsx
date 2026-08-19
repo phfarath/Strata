@@ -1,19 +1,11 @@
 import React, { useState, useEffect } from 'react';
 import {
-  Brain,
-  Key,
-  Radio,
-  PlayCircle,
+  Layers,
   Database,
   Activity,
-  Layers,
-  Sparkles,
-  Plus,
-  Server,
-  ShieldCheck,
-  CheckCircle2,
-  HardDrive,
   Cpu,
+  Server,
+  ExternalLink,
 } from 'lucide-react';
 import { User, Workspace, StatusResponse, PingResponse } from '../types';
 import { api } from '../api';
@@ -22,7 +14,6 @@ import { ApiKeyManager } from './ApiKeyManager';
 import { RealtimeStream } from './RealtimeStream';
 import { AgentPlayground } from './AgentPlayground';
 import { CodeBlock } from './CodeBlock';
-import { toast } from './Toast';
 
 interface DashboardProps {
   user: User;
@@ -37,7 +28,6 @@ export const Dashboard: React.FC<DashboardProps> = ({
   workspace,
   currentTab,
   onTabChange,
-  onRefreshWorkspaces,
 }) => {
   const [status, setStatus] = useState<StatusResponse | null>(null);
   const [ping, setPing] = useState<PingResponse | null>(null);
@@ -48,115 +38,91 @@ export const Dashboard: React.FC<DashboardProps> = ({
   }, [workspace.id]);
 
   return (
-    <div className="max-w-7xl mx-auto px-4 sm:px-6 py-8 space-y-8">
+    <div className="max-w-6xl mx-auto p-6 space-y-6">
       {/* Workspace Header Strip */}
-      <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4 glass-panel p-6 rounded-2xl border border-border">
+      <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4 p-4 rounded-xl border border-zinc-800 bg-[#111114]">
         <div>
-          <div className="flex items-center gap-2 text-xs font-mono text-slate-400 mb-1">
-            <span>ORGANIZATION WORKSPACE</span>
-            <span>•</span>
-            <span className="text-primary font-semibold">{workspace.slug}</span>
+          <div className="flex items-center gap-2 text-xs font-mono text-zinc-500 mb-0.5">
+            <span>Workspace</span>
+            <span>/</span>
+            <span className="text-zinc-300 font-semibold">{workspace.slug}</span>
           </div>
-          <h1 className="text-2xl font-extrabold text-white tracking-tight flex items-center gap-2">
-            <span>{workspace.name}</span>
+          <h1 className="text-xl font-bold text-white tracking-tight">
+            {workspace.name}
           </h1>
         </div>
 
-        {/* Status Pill */}
-        <div className="flex items-center gap-3">
-          <div className="flex items-center gap-2 px-3 py-1.5 rounded-xl bg-card border border-border text-xs font-mono">
-            <Server className="w-4 h-4 text-emerald-400" />
-            <span className="text-slate-300">
-              Supabase Postgres: <strong className="text-emerald-400">Connected</strong>
-            </span>
+        <div className="flex items-center gap-2 text-xs font-mono text-zinc-400">
+          <div className="flex items-center gap-1.5 px-2.5 py-1 rounded-md bg-zinc-900 border border-zinc-800">
+            <span className="w-1.5 h-1.5 rounded-full bg-emerald-500" />
+            <span>Supabase Postgres</span>
+          </div>
+          <div className="flex items-center gap-1.5 px-2.5 py-1 rounded-md bg-zinc-900 border border-zinc-800">
+            <span>pgvector: <strong className="text-zinc-200">gte-small (384d)</strong></span>
           </div>
         </div>
       </div>
 
-      {/* Overview Metrics Grid (visible on Overview tab) */}
+      {/* Tab 1: Overview */}
       {currentTab === 'overview' && (
-        <div className="space-y-8 animate-in fade-in duration-200">
-          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
-            <div className="glass-panel p-5 rounded-2xl border border-border card-interactive">
-              <div className="flex items-center justify-between text-xs font-mono text-slate-400 mb-3">
-                <span>TOTAL MEMORIES</span>
-                <Brain className="w-4 h-4 text-primary" />
-              </div>
-              <div className="text-3xl font-extrabold text-white font-mono">1,842</div>
-              <div className="text-xs text-slate-400 mt-2 flex items-center gap-1">
-                <span className="text-emerald-400 font-bold">+14%</span> across 5 coding sessions
+        <div className="space-y-6 animate-in fade-in duration-150">
+          {/* Asymmetric Telemetry Section */}
+          <div className="grid grid-cols-1 md:grid-cols-3 gap-4 font-mono text-xs">
+            <div className="p-4 rounded-xl border border-zinc-800 bg-[#111114] space-y-1">
+              <div className="text-zinc-500">Total Memories</div>
+              <div className="text-2xl font-bold text-white">1,842</div>
+              <div className="text-zinc-500 text-[11px] pt-1">
+                Semantic facts, failure patterns & skills
               </div>
             </div>
 
-            <div className="glass-panel p-5 rounded-2xl border border-border card-interactive">
-              <div className="flex items-center justify-between text-xs font-mono text-slate-400 mb-3">
-                <span>SYNCHRONIZED DELTAS</span>
-                <Activity className="w-4 h-4 text-purple-400" />
+            <div className="p-4 rounded-xl border border-zinc-800 bg-[#111114] space-y-1">
+              <div className="text-zinc-500">CDC Sequence</div>
+              <div className="text-2xl font-bold text-zinc-200">
+                #{status?.total_deltas || 2418}
               </div>
-              <div className="text-3xl font-extrabold text-white font-mono">
-                {status?.total_deltas || '2,418'}
-              </div>
-              <div className="text-xs text-slate-400 mt-2 flex items-center gap-1">
-                <span className="text-purple-400 font-bold">100%</span> bi-directional CDC sync
+              <div className="text-zinc-500 text-[11px] pt-1">
+                Monotonic version counter
               </div>
             </div>
 
-            <div className="glass-panel p-5 rounded-2xl border border-border card-interactive">
-              <div className="flex items-center justify-between text-xs font-mono text-slate-400 mb-3">
-                <span>CONNECTED AGENTS</span>
-                <Cpu className="w-4 h-4 text-emerald-400" />
-              </div>
-              <div className="text-3xl font-extrabold text-white font-mono">3</div>
-              <div className="text-xs text-slate-400 mt-2 flex items-center gap-1">
-                <span>Cursor, Claude Code, Gemini</span>
-              </div>
-            </div>
-
-            <div className="glass-panel p-5 rounded-2xl border border-border card-interactive">
-              <div className="flex items-center justify-between text-xs font-mono text-slate-400 mb-3">
-                <span>PGVECTOR INDEX</span>
-                <Database className="w-4 h-4 text-amber-400" />
-              </div>
-              <div className="text-3xl font-extrabold text-emerald-400 font-mono">ACTIVE</div>
-              <div className="text-xs text-slate-400 mt-2">
-                <span>gte-small (384-dims) cosine</span>
+            <div className="p-4 rounded-xl border border-zinc-800 bg-[#111114] space-y-1">
+              <div className="text-zinc-500">Active Agents</div>
+              <div className="text-2xl font-bold text-zinc-200">3</div>
+              <div className="text-zinc-500 text-[11px] pt-1">
+                Cursor, Claude Code, Gemini CLI
               </div>
             </div>
           </div>
 
-          {/* Connect CLI Instructions */}
-          <div className="glass-panel-glow p-6 rounded-2xl border border-border space-y-4">
-            <div className="flex items-center gap-3">
-              <div className="p-2 rounded-xl bg-primary/10 border border-primary/20 text-primary">
-                <Brain className="w-5 h-5" />
-              </div>
-              <div>
-                <h3 className="text-base font-bold text-white">Connect Your Coding Agent in 1 Step</h3>
-                <p className="text-xs text-slate-400">
-                  Run this in your repository to link persistent memory to this workspace.
-                </p>
-              </div>
+          {/* Quick Setup for Repository */}
+          <div className="p-5 rounded-xl border border-zinc-800 bg-[#111114] space-y-4">
+            <div>
+              <h3 className="text-sm font-semibold text-white">Link Local Repository</h3>
+              <p className="text-xs text-zinc-400 mt-0.5">
+                Run these commands in your project root to start syncing agent memories.
+              </p>
             </div>
 
             <CodeBlock
-              title="Terminal Setup Command"
+              title="CLI Setup"
               language="bash"
-              code={`# 1. Login with unified Supabase credentials\nstrata login\n\n# 2. Link this workspace\nstrata sync push\n\n# 3. Use memory in any agent (Claude Code / Cursor / Windsurf)\nstrata recall "How is PostgreSQL TLS initialized?"`}
+              code={`# 1. Login once\nstrata login\n\n# 2. Push initial codebase memories\nstrata sync push\n\n# 3. Query memories\nstrata recall "PostgreSQL connection requirements"`}
             />
           </div>
         </div>
       )}
 
-      {/* Memory Explorer Tab */}
+      {/* Tab 2: Memory Explorer */}
       {currentTab === 'explorer' && <MemoryExplorer />}
 
-      {/* API Keys Tab */}
+      {/* Tab 3: API Keys */}
       {currentTab === 'keys' && <ApiKeyManager workspace={workspace} />}
 
-      {/* CDC Stream Tab */}
+      {/* Tab 4: CDC Delta Stream */}
       {currentTab === 'stream' && <RealtimeStream />}
 
-      {/* Simulator Playground Tab */}
+      {/* Tab 5: Agent Simulator */}
       {currentTab === 'playground' && <AgentPlayground />}
     </div>
   );

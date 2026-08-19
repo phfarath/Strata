@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { Key, Plus, Trash2, Copy, Check, ShieldCheck, AlertCircle, Clock } from 'lucide-react';
+import { Key, Plus, Trash2, Copy, Check, Shield } from 'lucide-react';
 import { ApiKey, ApiKeyCreated, Workspace } from '../types';
 import { api } from '../api';
 import { toast } from './Toast';
@@ -39,7 +39,7 @@ export const ApiKeyManager: React.FC<ApiKeyManagerProps> = ({ workspace }) => {
       const resp = await api.createApiKey(workspace.id, newKeyName.trim());
       setCreatedKey(resp);
       setNewKeyName('');
-      toast.success('API Key generated!', 'Save your secret key now; it will not be shown again.');
+      toast.success('API Key generated', 'Save your secret key; it will not be shown again.');
       fetchKeys();
     } catch (err: any) {
       toast.error('Failed to create API key', err.message);
@@ -47,7 +47,7 @@ export const ApiKeyManager: React.FC<ApiKeyManagerProps> = ({ workspace }) => {
   };
 
   const handleRevoke = async (keyId: string) => {
-    if (!confirm('Are you sure you want to revoke this API key? Agents using it will lose access immediately.')) {
+    if (!confirm('Revoke this API key? Connected agents will lose access.')) {
       return;
     }
 
@@ -63,113 +63,103 @@ export const ApiKeyManager: React.FC<ApiKeyManagerProps> = ({ workspace }) => {
   const handleCopy = (keyText: string, id: string) => {
     navigator.clipboard.writeText(keyText);
     setCopiedKeyId(id);
-    toast.success('API Key copied to clipboard');
+    toast.success('Key copied to clipboard');
     setTimeout(() => setCopiedKeyId(null), 2000);
   };
 
   return (
-    <div className="space-y-6 max-w-4xl">
-      {/* Creation Card */}
-      <div className="glass-panel p-6 rounded-2xl border border-border">
-        <div className="flex items-center gap-3 mb-2">
-          <div className="p-2 rounded-xl bg-primary/10 border border-primary/20 text-primary">
-            <Key className="w-5 h-5" />
-          </div>
-          <div>
-            <h3 className="text-base font-bold text-white">Generate Machine API Key</h3>
-            <p className="text-xs text-slate-400">
-              Provide this key to Cursor, Claude Code, Windsurf or Codex for persistent memory synchronization.
-            </p>
-          </div>
+    <div className="space-y-4 max-w-4xl font-sans">
+      {/* Create Key Card */}
+      <div className="p-4 rounded-xl border border-zinc-800 bg-[#111114]">
+        <div className="flex items-center gap-2 mb-1">
+          <Key className="w-4 h-4 text-zinc-400" />
+          <h3 className="text-sm font-semibold text-white">Generate Machine API Key</h3>
         </div>
+        <p className="text-xs text-zinc-400 mb-3">
+          Configure this key in Cursor, Claude Code or Windsurf configuration to sync memories.
+        </p>
 
-        <form onSubmit={handleCreate} className="mt-4 flex flex-col sm:flex-row gap-3">
+        <form onSubmit={handleCreate} className="flex flex-col sm:flex-row gap-2">
           <input
             type="text"
             required
-            placeholder="Key Name (e.g. Cursor MacBook Pro, Claude Desktop)"
+            placeholder="Key Description (e.g. Cursor MacBook Pro)"
             value={newKeyName}
             onChange={(e) => setNewKeyName(e.target.value)}
-            className="flex-1 px-4 py-2.5 rounded-xl bg-[#080c16] border border-border text-slate-100 placeholder:text-slate-500 focus:outline-none focus:border-primary text-xs"
+            className="flex-1 px-3 py-2 rounded-lg bg-zinc-900 border border-zinc-800 text-zinc-100 placeholder:text-zinc-500 focus:outline-none focus:border-zinc-700 text-xs font-mono"
           />
 
           <button
             type="submit"
-            className="px-5 py-2.5 rounded-xl bg-primary hover:bg-primary-hover text-black font-bold text-xs flex items-center justify-center gap-2 btn-pressable shadow-glow"
+            className="px-4 py-2 rounded-lg bg-white text-black font-semibold text-xs flex items-center justify-center gap-1.5 hover:bg-zinc-200 btn-pressable"
           >
-            <Plus className="w-4 h-4" />
+            <Plus className="w-3.5 h-3.5" />
             <span>Generate Key</span>
           </button>
         </form>
       </div>
 
-      {/* Newly Created Key Banner */}
+      {/* Newly Created Key Alert */}
       {createdKey && (
-        <div className="p-5 rounded-2xl bg-emerald-950/40 border border-emerald-500/40 glass-panel animate-in zoom-in-95 space-y-2">
-          <div className="flex items-center justify-between text-xs font-bold text-emerald-300">
-            <span className="flex items-center gap-1.5">
-              <ShieldCheck className="w-4 h-4 text-emerald-400" />
-              <span>Copy Your Secret Key Now</span>
-            </span>
+        <div className="p-4 rounded-xl bg-zinc-900 border border-zinc-700 space-y-2">
+          <div className="flex items-center justify-between text-xs text-zinc-200 font-medium">
+            <span>Copy Secret API Key (Shown only once)</span>
             <button
               onClick={() => setCreatedKey(null)}
-              className="text-xs text-slate-400 hover:text-white"
+              className="text-zinc-500 hover:text-zinc-300 text-[11px]"
             >
               Dismiss
             </button>
           </div>
 
-          <div className="flex items-center gap-2 bg-black/60 p-3 rounded-xl border border-emerald-500/20 font-mono text-xs text-slate-100">
+          <div className="flex items-center gap-2 bg-[#09090c] p-2.5 rounded-lg border border-zinc-800 font-mono text-xs text-zinc-200">
             <span className="flex-1 truncate">{createdKey.key}</span>
             <button
               onClick={() => handleCopy(createdKey.key, 'newly-created')}
-              className="p-1.5 rounded-lg bg-emerald-500 text-black hover:bg-emerald-400 btn-pressable"
+              className="p-1 rounded bg-zinc-800 text-zinc-300 hover:text-white btn-pressable"
             >
-              {copiedKeyId === 'newly-created' ? <Check className="w-4 h-4" /> : <Copy className="w-4 h-4" />}
+              {copiedKeyId === 'newly-created' ? <Check className="w-3.5 h-3.5 text-emerald-400" /> : <Copy className="w-3.5 h-3.5" />}
             </button>
           </div>
         </div>
       )}
 
-      {/* Keys List */}
-      <div className="glass-panel rounded-2xl border border-border overflow-hidden">
-        <div className="px-6 py-4 border-b border-border/80 flex items-center justify-between">
-          <h4 className="text-sm font-bold text-white">Active Machine Keys ({keys.length})</h4>
-          <span className="text-xs text-slate-500 font-mono">Workspace: {workspace.name}</span>
+      {/* Keys Table */}
+      <div className="rounded-xl border border-zinc-800 bg-[#111114] overflow-hidden">
+        <div className="px-4 py-3 border-b border-zinc-800 flex items-center justify-between">
+          <h4 className="text-xs font-semibold text-white">Active Keys ({keys.length})</h4>
+          <span className="text-xs text-zinc-500 font-mono">Workspace: {workspace.slug}</span>
         </div>
 
         {loading ? (
-          <div className="p-8 text-center text-xs text-slate-500 font-mono">Loading API keys...</div>
+          <div className="p-6 text-center text-xs text-zinc-500 font-mono">Loading keys...</div>
         ) : keys.length === 0 ? (
-          <div className="p-8 text-center text-xs text-slate-500 font-mono">
-            No API keys issued yet. Generate one above to connect an IDE.
+          <div className="p-6 text-center text-xs text-zinc-500 font-mono">
+            No machine keys issued.
           </div>
         ) : (
-          <div className="divide-y divide-border/60">
+          <div className="divide-y divide-zinc-800/80 font-mono text-xs">
             {keys.map((k) => (
-              <div key={k.id} className="px-6 py-4 flex items-center justify-between gap-4 hover:bg-card/40 transition-colors">
-                <div className="space-y-1">
+              <div key={k.id} className="px-4 py-3 flex items-center justify-between gap-4 hover:bg-zinc-900/40">
+                <div className="space-y-0.5">
                   <div className="flex items-center gap-2">
-                    <span className="font-bold text-xs text-slate-200">{k.name}</span>
-                    <span className="px-2 py-0.5 rounded-md bg-card border border-border text-[10px] font-mono text-slate-400">
+                    <span className="font-medium text-zinc-200">{k.name}</span>
+                    <span className="px-1.5 py-0.5 rounded bg-zinc-900 border border-zinc-800 text-[10px] text-zinc-400">
                       {k.key_prefix}...
                     </span>
                   </div>
-                  <div className="text-[11px] text-slate-500 font-mono flex items-center gap-3">
-                    <span>Created: {new Date(k.created_at).toLocaleDateString()}</span>
-                    <span>Scopes: {k.scopes.join(', ')}</span>
+                  <div className="text-[11px] text-zinc-500">
+                    Created: {new Date(k.created_at).toLocaleDateString()} • Scopes: {k.scopes.join(', ')}
                   </div>
                 </div>
 
-                <div className="flex items-center gap-2">
-                  <button
-                    onClick={() => handleRevoke(k.id)}
-                    className="p-2 rounded-lg text-slate-500 hover:text-rose-400 hover:bg-rose-950/30 btn-pressable transition-colors"
-                    title="Revoke API key"
-                  >
-                    <Trash2 className="w-4 h-4" />
-                  </button>
-                </div>
+                <button
+                  onClick={() => handleRevoke(k.id)}
+                  className="p-1.5 rounded text-zinc-500 hover:text-rose-400 hover:bg-zinc-900 btn-pressable"
+                  title="Revoke key"
+                >
+                  <Trash2 className="w-3.5 h-3.5" />
+                </button>
               </div>
             ))}
           </div>

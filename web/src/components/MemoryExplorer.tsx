@@ -1,8 +1,7 @@
 import React, { useState } from 'react';
-import { Brain, Search, Filter, ShieldAlert, Sparkles, CheckCircle2, Clock, Layers, ArrowUpRight, Eye } from 'lucide-react';
-import { MemoryRecord, FactStatus, MemoryType } from '../types';
+import { Search, Layers, GitBranch } from 'lucide-react';
+import { MemoryRecord } from '../types';
 
-// Mock sample memories populated when workspace is opened
 const SAMPLE_MEMORIES: MemoryRecord[] = [
   {
     id: 'mem-1',
@@ -92,51 +91,51 @@ export const MemoryExplorer: React.FC = () => {
   });
 
   return (
-    <div className="grid grid-cols-1 lg:grid-cols-12 gap-6">
+    <div className="grid grid-cols-1 lg:grid-cols-12 gap-6 font-sans">
       {/* Left Column: Search & List */}
-      <div className="lg:col-span-7 space-y-4">
-        {/* Controls Bar */}
-        <div className="flex flex-col sm:flex-row gap-3">
+      <div className="lg:col-span-7 space-y-3">
+        {/* Search and Filters */}
+        <div className="flex flex-col sm:flex-row gap-2">
           <div className="relative flex-1">
-            <Search className="absolute left-3.5 top-3 w-4 h-4 text-slate-500" />
+            <Search className="absolute left-3 top-2.5 w-3.5 h-3.5 text-zinc-500" />
             <input
               type="text"
               placeholder="Search memories, anti-patterns, scopes..."
               value={search}
               onChange={(e) => setSearch(e.target.value)}
-              className="w-full pl-10 pr-4 py-2.5 rounded-xl bg-card border border-border text-slate-100 placeholder:text-slate-500 focus:outline-none focus:border-primary text-xs"
+              className="w-full pl-9 pr-3 py-2 rounded-lg bg-zinc-900 border border-zinc-800 text-zinc-200 placeholder:text-zinc-500 focus:outline-none focus:border-zinc-700 text-xs font-mono"
             />
           </div>
 
-          <div className="flex items-center gap-1 bg-card border border-border p-1 rounded-xl">
+          <div className="flex items-center gap-1 bg-zinc-900 border border-zinc-800 p-1 rounded-lg">
             <button
               onClick={() => setTypeFilter('all')}
-              className={`px-2.5 py-1.5 rounded-lg text-xs font-semibold transition-all ${
-                typeFilter === 'all' ? 'bg-primary text-black' : 'text-slate-400 hover:text-slate-200'
+              className={`px-2.5 py-1 rounded text-xs font-medium transition-colors ${
+                typeFilter === 'all' ? 'bg-zinc-800 text-white' : 'text-zinc-400 hover:text-zinc-200'
               }`}
             >
               All
             </button>
             <button
               onClick={() => setTypeFilter('semantic_fact')}
-              className={`px-2.5 py-1.5 rounded-lg text-xs font-semibold transition-all ${
-                typeFilter === 'semantic_fact' ? 'bg-primary text-black' : 'text-slate-400 hover:text-slate-200'
+              className={`px-2.5 py-1 rounded text-xs font-medium transition-colors ${
+                typeFilter === 'semantic_fact' ? 'bg-zinc-800 text-white' : 'text-zinc-400 hover:text-zinc-200'
               }`}
             >
               Facts
             </button>
             <button
               onClick={() => setTypeFilter('failure_pattern')}
-              className={`px-2.5 py-1.5 rounded-lg text-xs font-semibold transition-all ${
-                typeFilter === 'failure_pattern' ? 'bg-rose-500 text-white' : 'text-slate-400 hover:text-slate-200'
+              className={`px-2.5 py-1 rounded text-xs font-medium transition-colors ${
+                typeFilter === 'failure_pattern' ? 'bg-zinc-800 text-white' : 'text-zinc-400 hover:text-zinc-200'
               }`}
             >
               Anti-Patterns
             </button>
             <button
               onClick={() => setTypeFilter('procedural_skill')}
-              className={`px-2.5 py-1.5 rounded-lg text-xs font-semibold transition-all ${
-                typeFilter === 'procedural_skill' ? 'bg-purple-500 text-white' : 'text-slate-400 hover:text-slate-200'
+              className={`px-2.5 py-1 rounded text-xs font-medium transition-colors ${
+                typeFilter === 'procedural_skill' ? 'bg-zinc-800 text-white' : 'text-zinc-400 hover:text-zinc-200'
               }`}
             >
               Skills
@@ -144,122 +143,86 @@ export const MemoryExplorer: React.FC = () => {
           </div>
         </div>
 
-        {/* Memory List */}
-        <div className="space-y-3">
+        {/* Memory Items */}
+        <div className="space-y-2">
           {filteredMemories.map((mem) => {
             const isSelected = selectedMemory?.id === mem.id;
             return (
               <div
                 key={mem.id}
                 onClick={() => setSelectedMemory(mem)}
-                className={`p-4 rounded-xl border glass-panel cursor-pointer card-interactive ${
+                className={`p-3.5 rounded-lg border cursor-pointer transition-colors ${
                   isSelected
-                    ? 'border-primary/60 bg-primary/5 shadow-glow'
-                    : 'border-border hover:border-border-light'
+                    ? 'border-zinc-600 bg-zinc-900'
+                    : 'border-zinc-800 bg-[#111114] hover:border-zinc-700'
                 }`}
               >
-                <div className="flex items-start justify-between gap-3 mb-1.5">
+                <div className="flex items-center justify-between gap-2 mb-1">
                   <div className="flex items-center gap-2">
-                    <span
-                      className={`px-2 py-0.5 rounded-md text-[10px] font-mono font-bold uppercase tracking-wider ${
-                        mem.type === 'failure_pattern'
-                          ? 'bg-rose-500/20 text-rose-300 border border-rose-500/30'
-                          : mem.type === 'procedural_skill'
-                          ? 'bg-purple-500/20 text-purple-300 border border-purple-500/30'
-                          : 'bg-primary/20 text-primary border border-primary/30'
-                      }`}
-                    >
+                    <span className="px-1.5 py-0.5 rounded text-[10px] font-mono font-medium bg-zinc-800 text-zinc-300 border border-zinc-700">
                       {mem.type.replace('_', ' ')}
                     </span>
-                    <span className="text-[11px] font-mono text-slate-500 truncate max-w-[180px]">
+                    <span className="text-[11px] font-mono text-zinc-500 truncate max-w-[200px]">
                       {mem.scope}
                     </span>
                   </div>
 
-                  <div className="flex items-center gap-2 text-xs font-mono">
-                    <span className="text-slate-400">Retention:</span>
-                    <span className="text-emerald-400 font-bold">{(mem.decay_score * 100).toFixed(0)}%</span>
-                  </div>
+                  <span className="text-[11px] font-mono text-zinc-400">
+                    Retention: <strong className="text-zinc-200">{(mem.decay_score * 100).toFixed(0)}%</strong>
+                  </span>
                 </div>
 
-                <h4 className="font-bold text-sm text-slate-100 mb-1">{mem.title}</h4>
-                <p className="text-xs text-slate-400 line-clamp-2 leading-relaxed">{mem.content}</p>
-
-                <div className="mt-3 pt-2 border-t border-border/60 flex items-center justify-between text-[11px] text-slate-500 font-mono">
-                  <span>Accessed: {mem.access_count} times</span>
-                  <span>{mem.evidence_count} evidence references</span>
-                </div>
+                <h4 className="font-semibold text-xs text-zinc-100 mb-0.5">{mem.title}</h4>
+                <p className="text-xs text-zinc-400 line-clamp-2 leading-relaxed">{mem.content}</p>
               </div>
             );
           })}
         </div>
       </div>
 
-      {/* Right Column: Detailed Memory Inspector */}
+      {/* Right Column: Detailed Inspector */}
       <div className="lg:col-span-5">
         {selectedMemory ? (
-          <div className="glass-panel-glow p-6 rounded-2xl border border-border sticky top-24 space-y-5 animate-in fade-in">
-            <div className="flex items-center justify-between border-b border-border/80 pb-4">
-              <div>
-                <span className="text-[10px] font-mono uppercase tracking-wider text-slate-400">
-                  Memory Inspector
-                </span>
-                <h3 className="text-base font-bold text-white mt-0.5">{selectedMemory.title}</h3>
-              </div>
+          <div className="p-5 rounded-xl border border-zinc-800 bg-[#111114] sticky top-6 space-y-4 font-mono text-xs">
+            <div className="border-b border-zinc-800 pb-3">
+              <div className="text-zinc-500 text-[11px]">Memory Inspector</div>
+              <h3 className="text-sm font-bold text-white mt-1">{selectedMemory.title}</h3>
+            </div>
 
-              <div className="p-2 rounded-xl bg-primary/10 border border-primary/20 text-primary">
-                <Brain className="w-5 h-5" />
+            <div className="grid grid-cols-2 gap-2 text-[11px]">
+              <div className="p-2.5 rounded-md bg-zinc-900 border border-zinc-800">
+                <span className="text-zinc-500 block">Status</span>
+                <span className="font-semibold text-zinc-200 mt-0.5 block">{selectedMemory.status}</span>
+              </div>
+              <div className="p-2.5 rounded-md bg-zinc-900 border border-zinc-800">
+                <span className="text-zinc-500 block">ACT-R Retention</span>
+                <span className="font-semibold text-zinc-200 mt-0.5 block">{(selectedMemory.decay_score * 100).toFixed(1)}%</span>
               </div>
             </div>
 
-            {/* Metadata Badges */}
-            <div className="grid grid-cols-2 gap-3 text-xs font-mono">
-              <div className="p-3 rounded-xl bg-card border border-border">
-                <span className="text-slate-500 block text-[10px]">EPISTEMIC STATUS</span>
-                <span className="font-bold text-emerald-400 uppercase mt-0.5 block">
-                  ✓ {selectedMemory.status}
-                </span>
-              </div>
-
-              <div className="p-3 rounded-xl bg-card border border-border">
-                <span className="text-slate-500 block text-[10px]">ACT-R DECAY SCORE</span>
-                <span className="font-bold text-primary mt-0.5 block">
-                  {(selectedMemory.decay_score * 100).toFixed(1)}% (Active)
-                </span>
-              </div>
-            </div>
-
-            {/* Full Statement */}
             <div>
-              <label className="text-[10px] font-mono uppercase tracking-wider text-slate-400 mb-1.5 block">
-                Full Statement & Heuristic
-              </label>
-              <div className="p-4 rounded-xl bg-[#080c16] border border-border text-xs text-slate-200 leading-relaxed font-mono">
+              <div className="text-zinc-500 text-[11px] mb-1">Statement</div>
+              <div className="p-3 rounded-md bg-zinc-900 border border-zinc-800 text-zinc-200 text-xs leading-relaxed">
                 {selectedMemory.content}
               </div>
             </div>
 
-            {/* Scope & Graph Coordinates */}
-            <div className="text-xs space-y-2 font-mono">
-              <div className="flex justify-between py-1.5 border-b border-border/60">
-                <span className="text-slate-500">Scope Filter:</span>
-                <span className="text-slate-300 font-semibold">{selectedMemory.scope}</span>
+            <div className="space-y-1.5 pt-2 border-t border-zinc-800 text-[11px]">
+              <div className="flex justify-between">
+                <span className="text-zinc-500">Scope:</span>
+                <span className="text-zinc-300">{selectedMemory.scope}</span>
               </div>
-              <div className="flex justify-between py-1.5 border-b border-border/60">
-                <span className="text-slate-500">Evidence Tree:</span>
-                <span className="text-purple-400 font-semibold">{selectedMemory.evidence_count} nodes (JTMS in-tree)</span>
+              <div className="flex justify-between">
+                <span className="text-zinc-500">Evidence Graph:</span>
+                <span className="text-zinc-300">{selectedMemory.evidence_count} nodes</span>
               </div>
-              <div className="flex justify-between py-1.5">
-                <span className="text-slate-500">Last Synced:</span>
-                <span className="text-slate-400">{new Date(selectedMemory.updated_at).toLocaleTimeString()}</span>
+              <div className="flex justify-between">
+                <span className="text-zinc-500">Access Count:</span>
+                <span className="text-zinc-300">{selectedMemory.access_count} reads</span>
               </div>
             </div>
           </div>
-        ) : (
-          <div className="glass-panel p-10 rounded-2xl border border-border text-center text-slate-500 text-xs">
-            Select a memory from the left to inspect its causal graph and retention metrics.
-          </div>
-        )}
+        ) : null}
       </div>
     </div>
   );
