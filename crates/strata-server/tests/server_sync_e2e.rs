@@ -20,6 +20,7 @@ async fn spawn_test_server(legacy_secret: Option<String>) -> (String, tokio::tas
         storage,
         jwt_secret: "test-jwt-secret-key-1234567890".to_string(),
         legacy_secret,
+        custom_domain: Some("strata.pedrofarath.me".to_string()),
         ws_broadcast: ws_tx,
         start_time: std::time::Instant::now(),
     });
@@ -452,5 +453,45 @@ async fn test_vector_embeddings_endpoints_and_health() {
     assert_eq!(search_resp.status(), reqwest::StatusCode::OK);
     let search_data: serde_json::Value = search_resp.json().await.unwrap();
     assert_eq!(search_data["workspace_id"], "test-ws");
+}
+
+#[tokio::test]
+async fn test_ping_endpoint_and_security_headers() {
+    let (base_url, _handle) = spawn_test_server(None).await;
+    let client = Client::new();
+
+    // 1. Query /api/v1/ping and verify ping payload
+    let ping_resp = client
+        .get(format!("{base_url}/api/v1/ping"))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(ping_resp.status(), reqwest::StatusCode::OK);
+
+    let headers = ping_resp.headers();
+    // Verify Security Headers presence
+    assert_eq!(
+        headers.get("strict-transport-security").unwrap().to_str().unwrap(),
+        "max-age=63072000; includeSubDomains; preload"
+    );
+    assert_eq!(
+        headers.get("x-content-type-options").unwrap().to_str().unwrap(),
+        "nosniff"
+    );
+    assert_eq!(
+        headers.get("x-frame-options").unwrap().to_str().unwrap(),
+        "DENY"
+    );
+    assert_eq!(
+        headers.get("referrer-policy").unwrap().to_str().unwrap(),
+        "strict-origin-when-cross-origin"
+    );
+    assert!(headers.get("content-security-policy").is_some());
+
+    let ping_data: serde_json::Value = ping_resp.json().await.unwrap();
+    assert_eq!(ping_data["status"], "pong");
+    assert_eq!(ping_data["protocol"], "strata-cloud/v1");
+    assert!(ping_data["epoch_ms"].is_number());
+    assert!(ping_data["timestamp"].is_string());
 }
 

@@ -9,7 +9,7 @@ pub struct KeyArgs {
     #[command(subcommand)]
     pub action: KeyAction,
 
-    #[arg(long, global = true, env = "STRATA_SYNC_ENDPOINT", default_value = "https://cloud.strata.dev", help = "Strata Cloud Server URL")]
+    #[arg(long, global = true, env = "STRATA_SYNC_ENDPOINT", default_value = "https://strata.pedrofarath.me", help = "Strata Cloud Server URL")]
     pub endpoint: String,
 
     #[arg(long, global = true, env = "STRATA_AUTH_TOKEN", help = "Bearer Session JWT Token")]

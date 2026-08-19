@@ -23,6 +23,7 @@ pub struct AppState {
     pub storage: ServerStorage,
     pub jwt_secret: String,
     pub legacy_secret: Option<String>,
+    pub custom_domain: Option<String>,
     pub ws_broadcast: tokio::sync::broadcast::Sender<WsBroadcastMsg>,
     pub start_time: std::time::Instant,
 }
@@ -80,6 +81,19 @@ pub struct HealthResponse {
     pub workspaces_count: usize,
     pub is_postgres: bool,
     pub has_pgvector: bool,
+    pub custom_domain: Option<String>,
+}
+
+#[derive(Debug, Serialize)]
+pub struct PingResponse {
+    pub status: &'static str,
+    pub timestamp: String,
+    pub epoch_ms: i64,
+    pub protocol: &'static str,
+    pub custom_domain: Option<String>,
+    pub is_postgres: bool,
+    pub has_pgvector: bool,
+    pub uptime_secs: u64,
 }
 
 #[derive(Debug, Deserialize)]
@@ -115,7 +129,7 @@ pub struct CliAuthorizeResponse {
 }
 
 // -------------------------------------------------------------
-// Public Health Check
+// Public Health Check & Latency Ping
 // -------------------------------------------------------------
 
 pub async fn health_handler(State(state): State<Arc<AppState>>) -> Json<HealthResponse> {
@@ -127,6 +141,21 @@ pub async fn health_handler(State(state): State<Arc<AppState>>) -> Json<HealthRe
         workspaces_count: workspaces.len(),
         is_postgres: state.storage.is_postgres(),
         has_pgvector: state.storage.has_pgvector(),
+        custom_domain: state.custom_domain.clone(),
+    })
+}
+
+pub async fn ping_handler(State(state): State<Arc<AppState>>) -> Json<PingResponse> {
+    let now = Utc::now();
+    Json(PingResponse {
+        status: "pong",
+        timestamp: now.to_rfc3339(),
+        epoch_ms: now.timestamp_millis(),
+        protocol: "strata-cloud/v1",
+        custom_domain: state.custom_domain.clone(),
+        is_postgres: state.storage.is_postgres(),
+        has_pgvector: state.storage.has_pgvector(),
+        uptime_secs: state.start_time.elapsed().as_secs(),
     })
 }
 

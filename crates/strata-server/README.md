@@ -59,6 +59,9 @@ DATABASE_URL="postgres://postgres:postgres@localhost:5432/strata?sslmode=disable
 | `DATABASE_PATH` | `None` | Caminho do arquivo SQLite local (usado se `DATABASE_URL` não for fornecido) |
 | `PORT` | `8080` | Porta HTTP do servidor |
 | `HOST` | `0.0.0.0` | Host de escuta |
+| `CUSTOM_DOMAIN` | `strata.pedrofarath.me` | Domínio público para CORS e diagnósticos |
+| `CORS_ALLOWED_ORIGINS` | `*` | Origens CORS permitidas (separadas por vírgula) |
+| `ENABLE_SECURITY_HEADERS` | `true` | Ativação de HSTS, CSP, X-Frame-Options, etc. |
 | `JWT_SECRET` | *(auto)* | Chave secreta para assinatura dos tokens JWT |
 | `STRATA_SERVER_SECRET`| `None` | Token estático legado de autorização global (opcional) |
 | `RUST_LOG` | `info` | Nível de log (`strata_server=info,tower_http=info`) |
@@ -69,6 +72,7 @@ DATABASE_URL="postgres://postgres:postgres@localhost:5432/strata?sslmode=disable
 
 | Método | Rota | Descrição |
 |---|---|---|
+| `GET` | `/ping` ou `/api/v1/ping` | Diagnóstico de latência, protocolo e status do banco |
 | `GET` | `/health` | Liveness check (informa status, uptime, `is_postgres` e `has_pgvector`) |
 | `GET` | `/auth/cli` | Interface visual de login/autorização para o terminal |
 | `POST` | `/api/v1/auth/cli/authorize` | Callback de autorização de dispositivo CLI |
