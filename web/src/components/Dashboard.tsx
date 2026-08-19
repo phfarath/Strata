@@ -1,13 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import {
-  Layers,
-  Database,
-  Activity,
-  Cpu,
-  Server,
-  ExternalLink,
-} from 'lucide-react';
-import { User, Workspace, StatusResponse, PingResponse } from '../types';
+import { User, Workspace, StatusResponse } from '../types';
 import { api } from '../api';
 import { MemoryExplorer } from './MemoryExplorer';
 import { ApiKeyManager } from './ApiKeyManager';
@@ -27,20 +19,17 @@ export const Dashboard: React.FC<DashboardProps> = ({
   user,
   workspace,
   currentTab,
-  onTabChange,
 }) => {
   const [status, setStatus] = useState<StatusResponse | null>(null);
-  const [ping, setPing] = useState<PingResponse | null>(null);
 
   useEffect(() => {
     api.getStatus(workspace.id).then(setStatus).catch(() => {});
-    api.ping().then(setPing).catch(() => {});
   }, [workspace.id]);
 
   return (
     <div className="max-w-6xl mx-auto p-6 space-y-6">
-      {/* Workspace Header Strip */}
-      <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4 p-4 rounded-xl border border-zinc-800 bg-[#111114]">
+      {/* Workspace Header */}
+      <div className="flex items-center justify-between p-4 rounded-xl border border-zinc-800 bg-[#111114]">
         <div>
           <div className="flex items-center gap-2 text-xs font-mono text-zinc-500 mb-0.5">
             <span>Workspace</span>
@@ -51,22 +40,12 @@ export const Dashboard: React.FC<DashboardProps> = ({
             {workspace.name}
           </h1>
         </div>
-
-        <div className="flex items-center gap-2 text-xs font-mono text-zinc-400">
-          <div className="flex items-center gap-1.5 px-2.5 py-1 rounded-md bg-zinc-900 border border-zinc-800">
-            <span className="w-1.5 h-1.5 rounded-full bg-emerald-500" />
-            <span>Supabase Postgres</span>
-          </div>
-          <div className="flex items-center gap-1.5 px-2.5 py-1 rounded-md bg-zinc-900 border border-zinc-800">
-            <span>pgvector: <strong className="text-zinc-200">gte-small (384d)</strong></span>
-          </div>
-        </div>
       </div>
 
       {/* Tab 1: Overview */}
       {currentTab === 'overview' && (
         <div className="space-y-6 animate-in fade-in duration-150">
-          {/* Asymmetric Telemetry Section */}
+          {/* Telemetry Metrics */}
           <div className="grid grid-cols-1 md:grid-cols-3 gap-4 font-mono text-xs">
             <div className="p-4 rounded-xl border border-zinc-800 bg-[#111114] space-y-1">
               <div className="text-zinc-500">Total Memories</div>
@@ -87,7 +66,7 @@ export const Dashboard: React.FC<DashboardProps> = ({
             </div>
 
             <div className="p-4 rounded-xl border border-zinc-800 bg-[#111114] space-y-1">
-              <div className="text-zinc-500">Active Agents</div>
+              <div className="text-zinc-500">Connected Agents</div>
               <div className="text-2xl font-bold text-zinc-200">3</div>
               <div className="text-zinc-500 text-[11px] pt-1">
                 Cursor, Claude Code, Gemini CLI
@@ -95,7 +74,7 @@ export const Dashboard: React.FC<DashboardProps> = ({
             </div>
           </div>
 
-          {/* Quick Setup for Repository */}
+          {/* Quick Setup */}
           <div className="p-5 rounded-xl border border-zinc-800 bg-[#111114] space-y-4">
             <div>
               <h3 className="text-sm font-semibold text-white">Link Local Repository</h3>

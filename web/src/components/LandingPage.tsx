@@ -1,29 +1,17 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState } from 'react';
 import {
   Terminal,
-  Layers,
-  Shield,
   ArrowRight,
-  Database,
   Check,
-  Cpu,
-  GitBranch,
 } from 'lucide-react';
 import { toast } from './Toast';
-import { PingResponse } from '../types';
-import { api } from '../api';
 
 interface LandingPageProps {
   onOpenAuth: () => void;
 }
 
 export const LandingPage: React.FC<LandingPageProps> = ({ onOpenAuth }) => {
-  const [ping, setPing] = useState<PingResponse | null>(null);
   const [copiedInstall, setCopiedInstall] = useState(false);
-
-  useEffect(() => {
-    api.ping().then(setPing).catch(() => {});
-  }, []);
 
   const handleCopyInstall = () => {
     navigator.clipboard.writeText('cargo install strata-cli && strata login');
@@ -34,24 +22,8 @@ export const LandingPage: React.FC<LandingPageProps> = ({ onOpenAuth }) => {
 
   return (
     <div className="min-h-screen bg-[#09090b] text-zinc-100 font-sans">
-      {/* Top Telemetry Strip */}
-      <div className="border-b border-[#27272a] bg-[#121215] py-2 px-4 text-center text-xs font-mono text-zinc-400">
-        <div className="max-w-6xl mx-auto flex items-center justify-between">
-          <div className="flex items-center gap-2">
-            <span className="w-1.5 h-1.5 rounded-full bg-emerald-500" />
-            <span>strata.pedrofarath.me</span>
-            <span className="text-zinc-600">/</span>
-            <span className="text-zinc-300">PostgreSQL + pgvector (Supabase)</span>
-          </div>
-          <div className="hidden sm:flex items-center gap-3">
-            <span>Protocol: <code className="text-zinc-200">v1.0-cdc</code></span>
-            <span>Uptime: <code className="text-zinc-200">{ping ? `${Math.round(ping.uptime_secs / 60)}m` : 'active'}</code></span>
-          </div>
-        </div>
-      </div>
-
       {/* Hero Section */}
-      <section className="max-w-5xl mx-auto px-4 sm:px-6 pt-20 pb-16 text-center">
+      <section className="max-w-5xl mx-auto px-4 sm:px-6 pt-24 pb-16 text-center">
         <div className="inline-flex items-center gap-2 px-3 py-1 rounded-md bg-zinc-900 border border-zinc-800 text-zinc-300 text-xs font-mono mb-8">
           <span>Engineered for Claude Code, Cursor & Windsurf</span>
         </div>
@@ -91,7 +63,7 @@ export const LandingPage: React.FC<LandingPageProps> = ({ onOpenAuth }) => {
               <span className="w-2.5 h-2.5 rounded-full bg-zinc-700 inline-block" />
               <span className="ml-2 text-zinc-300">strata-cli — sync & memory recall</span>
             </div>
-            <span className="text-emerald-400 text-[11px]">TCP 127.0.0.1</span>
+            <span className="text-zinc-500 text-[11px]">TCP 127.0.0.1</span>
           </div>
 
           <div className="p-5 font-mono text-xs leading-relaxed space-y-3 bg-[#09090c] text-zinc-300">
@@ -108,9 +80,9 @@ export const LandingPage: React.FC<LandingPageProps> = ({ onOpenAuth }) => {
               <span className="text-zinc-600">$ </span>
               <span className="text-zinc-100 font-medium">strata recall "TLS config for PostgreSQL pooler"</span>
             </div>
-            <div className="text-zinc-400 pl-3 border-l border-emerald-800/60 text-zinc-300">
+            <div className="text-zinc-400 pl-3 border-l border-zinc-700 text-zinc-300">
               [Memory Match 0.94] "Supabase transaction pooler requires AcceptAnyServerCertVerifier on port 6543, or port 5432 session pooler."<br />
-              <span className="text-zinc-500 text-[11px]">Causal JTMS: 0 contradictions | ACT-R Decay: 0.98 (active)</span>
+              <span className="text-zinc-500 text-[11px]">Causal JTMS: 0 contradictions | ACT-R Decay: 0.98</span>
             </div>
           </div>
         </div>
@@ -140,7 +112,7 @@ export const LandingPage: React.FC<LandingPageProps> = ({ onOpenAuth }) => {
               <tr>
                 <td className="py-3.5 px-4 font-medium text-white">Local Storage Engine</td>
                 <td className="py-3.5 px-4 text-zinc-400">Embedded SQLite (WAL mode, memory-mapped)</td>
-                <td className="py-3.5 px-4 text-emerald-400">&lt; 0.5 ms read/write</td>
+                <td className="py-3.5 px-4 text-zinc-300">&lt; 0.5 ms read/write</td>
               </tr>
               <tr>
                 <td className="py-3.5 px-4 font-medium text-white">Cloud Sync Backend</td>

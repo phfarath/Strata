@@ -1,9 +1,8 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState } from 'react';
 import {
   Layers,
   LayoutDashboard,
   Key,
-  Radio,
   Terminal,
   Activity,
   ChevronDown,
@@ -11,10 +10,8 @@ import {
   LogOut,
   Sliders,
   Check,
-  Circle,
 } from 'lucide-react';
-import { User, Workspace, PingResponse } from '../types';
-import { api } from '../api';
+import { User, Workspace } from '../types';
 import { toast } from './Toast';
 
 interface SidebarProps {
@@ -39,36 +36,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
   onTabChange,
 }) => {
   const [wsDropdownOpen, setWsDropdownOpen] = useState(false);
-  const [pingData, setPingData] = useState<PingResponse | null>(null);
-  const [latency, setLatency] = useState<number | null>(null);
   const [copiedCli, setCopiedCli] = useState(false);
-
-  useEffect(() => {
-    let mounted = true;
-    const checkPing = async () => {
-      const start = performance.now();
-      try {
-        const resp = await api.ping();
-        const took = Math.round(performance.now() - start);
-        if (mounted) {
-          setPingData(resp);
-          setLatency(took);
-        }
-      } catch {
-        if (mounted) {
-          setPingData(null);
-          setLatency(null);
-        }
-      }
-    };
-
-    checkPing();
-    const interval = setInterval(checkPing, 15000);
-    return () => {
-      mounted = false;
-      clearInterval(interval);
-    };
-  }, []);
 
   const handleCopyCli = () => {
     navigator.clipboard.writeText('strata login');
@@ -81,14 +49,13 @@ export const Sidebar: React.FC<SidebarProps> = ({
     id: 'overview' | 'explorer' | 'keys' | 'stream' | 'playground';
     label: string;
     icon: React.ElementType;
-    badge?: string;
   }
 
   const navItems: NavItem[] = [
     { id: 'overview', label: 'Overview', icon: LayoutDashboard },
-    { id: 'explorer', label: 'Memory Explorer', icon: Layers, badge: '1.8k' },
+    { id: 'explorer', label: 'Memory Explorer', icon: Layers },
     { id: 'keys', label: 'API Keys & Agents', icon: Key },
-    { id: 'stream', label: 'CDC Delta Stream', icon: Activity, badge: 'Live' },
+    { id: 'stream', label: 'CDC Delta Stream', icon: Activity },
     { id: 'playground', label: 'Simulator', icon: Sliders },
   ];
 
@@ -103,7 +70,6 @@ export const Sidebar: React.FC<SidebarProps> = ({
           <span className="font-semibold text-sm tracking-tight text-zinc-100">
             Strata
           </span>
-          <span className="text-[11px] font-mono text-zinc-500">v0.1</span>
         </div>
       </div>
 
@@ -177,20 +143,6 @@ export const Sidebar: React.FC<SidebarProps> = ({
                 <Icon className={`w-4 h-4 ${isActive ? 'text-white' : 'text-zinc-400'}`} />
                 <span>{item.label}</span>
               </div>
-
-              {item.badge && (
-                <span
-                  className={`text-[10px] px-1.5 py-0.5 rounded font-mono ${
-                    isActive
-                      ? 'bg-zinc-700 text-zinc-200'
-                      : item.badge === 'Live'
-                      ? 'bg-emerald-950 text-emerald-400 border border-emerald-800/40'
-                      : 'bg-zinc-900 text-zinc-500 border border-zinc-800'
-                  }`}
-                >
-                  {item.badge}
-                </span>
-              )}
             </button>
           );
         })}
@@ -198,23 +150,6 @@ export const Sidebar: React.FC<SidebarProps> = ({
 
       {/* 4. Footer */}
       <div className="p-3 border-t border-[#27272a] space-y-2 bg-[#09090c]">
-        {/* Real Status */}
-        <div className="px-2.5 py-2 rounded-md bg-zinc-900 border border-zinc-800/80 flex items-center justify-between text-xs font-mono">
-          <div className="flex items-center gap-2">
-            <span
-              className={`w-1.5 h-1.5 rounded-full ${
-                pingData ? 'bg-emerald-500' : 'bg-rose-500'
-              }`}
-            />
-            <span className="text-zinc-400 text-[11px]">
-              {pingData ? 'Connected' : 'Offline'}
-            </span>
-          </div>
-          {latency !== null && (
-            <span className="text-zinc-500 text-[11px]">{latency}ms</span>
-          )}
-        </div>
-
         {/* CLI Command */}
         <button
           onClick={handleCopyCli}

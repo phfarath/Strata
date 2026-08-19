@@ -54,15 +54,6 @@ export const RealtimeStream: React.FC = () => {
         <div>
           <div className="flex items-center gap-2">
             <h3 className="text-sm font-semibold text-white">CDC Realtime Delta Stream</h3>
-            <span
-              className={`text-[10px] font-mono px-2 py-0.5 rounded border ${
-                isConnected
-                  ? 'bg-emerald-950 text-emerald-400 border-emerald-800/40'
-                  : 'bg-rose-950 text-rose-400 border-rose-800/40'
-              }`}
-            >
-              {isConnected ? 'WebSocket Active' : 'Connecting'}
-            </span>
           </div>
           <p className="text-xs text-zinc-400 mt-0.5">
             Broadcast channel streaming memory insertions, updates, and causal invalidations.
