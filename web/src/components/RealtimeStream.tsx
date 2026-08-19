@@ -86,7 +86,7 @@ export const RealtimeStream: React.FC = () => {
       <div className="rounded-xl border border-[#23262f] bg-[#0f1115] overflow-hidden shadow-xl">
         <div className="px-4 py-2 bg-[#15171d] border-b border-[#23262f] flex items-center justify-between text-xs font-mono text-zinc-500">
           <span>ws://strata.pedrofarath.me/api/v1/sync/ws</span>
-          <span className="text-amber-500 font-semibold">{events.length} frames</span>
+          <span className="text-amber-200 font-semibold">{events.length} frames</span>
         </div>
 
         <div
@@ -106,7 +106,7 @@ export const RealtimeStream: React.FC = () => {
                 className="p-2.5 rounded-md bg-[#15171d] border border-[#23262f] text-zinc-300 sweep-hover"
               >
                 <div className="flex items-center justify-between text-[11px] text-zinc-500 mb-1">
-                  <span className="font-semibold text-amber-400">{evt.event}</span>
+                  <span className="font-semibold text-amber-200">{evt.event}</span>
                   <span>{new Date(evt.timestamp).toLocaleTimeString()}</span>
                 </div>
                 <pre className="text-zinc-400 text-[11px] overflow-x-auto">

@@ -76,7 +76,7 @@ export const ApiKeyManager: React.FC<ApiKeyManagerProps> = ({ workspace }) => {
       {/* Create Key Card */}
       <div className="p-4 rounded-xl border border-[#23262f] bg-[#15171d]">
         <div className="flex items-center gap-2 mb-1">
-          <Key className="w-4 h-4 text-amber-500" />
+          <Key className="w-4 h-4 text-amber-300/90" />
           <h3 className="text-sm font-semibold text-white">Generate Machine API Key</h3>
         </div>
         <p className="text-xs text-zinc-400 mb-3">
@@ -90,12 +90,12 @@ export const ApiKeyManager: React.FC<ApiKeyManagerProps> = ({ workspace }) => {
             placeholder="Key Description (e.g. Cursor MacBook Pro)"
             value={newKeyName}
             onChange={(e) => setNewKeyName(e.target.value)}
-            className="flex-1 px-3 py-2 rounded-lg bg-[#0f1115] border border-[#23262f] text-zinc-100 placeholder:text-zinc-500 focus:outline-none focus:border-amber-500 text-xs font-mono"
+            className="flex-1 px-3 py-2 rounded-lg bg-[#0f1115] border border-[#23262f] text-zinc-100 placeholder:text-zinc-500 focus:outline-none focus:border-amber-300/40 text-xs font-mono"
           />
 
           <button
             type="submit"
-            className="px-4 py-2 rounded-lg bg-amber-500 text-black font-bold text-xs flex items-center justify-center gap-1.5 hover:bg-amber-400 btn-pressable sweep-hover"
+            className="px-4 py-2 rounded-lg bg-amber-300 text-zinc-950 font-bold text-xs flex items-center justify-center gap-1.5 hover:bg-amber-200 btn-pressable sweep-hover"
           >
             <Plus className="w-3.5 h-3.5" />
             <span>Generate Key</span>
@@ -105,8 +105,8 @@ export const ApiKeyManager: React.FC<ApiKeyManagerProps> = ({ workspace }) => {
 
       {/* Newly Created Key Alert */}
       {createdKey && (
-        <div className="p-4 rounded-xl bg-[#1c1913] border border-amber-500/40 space-y-2">
-          <div className="flex items-center justify-between text-xs text-amber-300 font-medium">
+        <div className="p-4 rounded-xl bg-[#1c1913] border border-amber-300/30 space-y-2">
+          <div className="flex items-center justify-between text-xs text-amber-200 font-medium">
             <span>Copy Secret API Key (Shown only once)</span>
             <button
               onClick={() => setCreatedKey(null)}
@@ -117,7 +117,7 @@ export const ApiKeyManager: React.FC<ApiKeyManagerProps> = ({ workspace }) => {
           </div>
 
           <div className="flex items-center gap-2 bg-[#090a0d] p-2.5 rounded-lg border border-[#23262f] font-mono text-xs text-zinc-200">
-            <span className="flex-1 truncate text-amber-300">{createdKey.key}</span>
+            <span className="flex-1 truncate text-amber-200">{createdKey.key}</span>
             <button
               onClick={() => handleCopy(createdKey.key, 'newly-created')}
               className="p-1.5 rounded bg-[#1f232b] text-zinc-300 hover:text-white btn-pressable sweep-hover"
@@ -132,7 +132,7 @@ export const ApiKeyManager: React.FC<ApiKeyManagerProps> = ({ workspace }) => {
       <div className="rounded-xl border border-[#23262f] bg-[#15171d] overflow-hidden">
         <div className="px-4 py-3 border-b border-[#23262f] flex items-center justify-between">
           <h4 className="text-xs font-semibold text-white">Active Keys ({keys.length})</h4>
-          <span className="text-xs text-amber-500 font-mono">Workspace: {workspace.slug}</span>
+          <span className="text-xs text-amber-200 font-mono">Workspace: {workspace.slug}</span>
         </div>
 
         {loading ? (
@@ -148,7 +148,7 @@ export const ApiKeyManager: React.FC<ApiKeyManagerProps> = ({ workspace }) => {
                 <div className="space-y-0.5">
                   <div className="flex items-center gap-2">
                     <span className="font-medium text-zinc-200">{k.name}</span>
-                    <span className="px-1.5 py-0.5 rounded bg-[#0f1115] border border-[#23262f] text-[10px] text-amber-400">
+                    <span className="px-1.5 py-0.5 rounded bg-[#0f1115] border border-[#23262f] text-[10px] text-amber-200/90">
                       {k.key_prefix}...
                     </span>
                   </div>

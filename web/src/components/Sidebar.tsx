@@ -64,7 +64,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
       {/* 1. Header */}
       <div className="h-14 px-4 border-b border-[#23262f] flex items-center justify-between">
         <div className="flex items-center gap-2.5">
-          <div className="w-6 h-6 rounded-md bg-[#1c1f26] border border-[#343846] flex items-center justify-center text-amber-400 font-mono text-xs font-bold shadow-inner">
+          <div className="w-6 h-6 rounded-md bg-[#1c1f26] border border-[#343846] flex items-center justify-center text-amber-200/90 font-mono text-xs font-bold shadow-inner">
             S
           </div>
           <span className="font-semibold text-sm tracking-tight text-white font-sans">
@@ -98,12 +98,12 @@ export const Sidebar: React.FC<SidebarProps> = ({
                   }}
                   className={`w-full flex items-center justify-between px-2.5 py-1.5 rounded-md text-xs text-left transition-colors ${
                     activeWorkspace.id === ws.id
-                      ? 'bg-[#23262f] text-amber-400 font-medium'
+                      ? 'bg-[#23262f] text-amber-200 font-medium'
                       : 'text-zinc-400 hover:bg-[#1b1e26] hover:text-zinc-200'
                   }`}
                 >
                   <span className="truncate">{ws.name}</span>
-                  {activeWorkspace.id === ws.id && <Check className="w-3 h-3 text-amber-400" />}
+                  {activeWorkspace.id === ws.id && <Check className="w-3 h-3 text-amber-300" />}
                 </button>
               ))}
 
@@ -140,10 +140,10 @@ export const Sidebar: React.FC<SidebarProps> = ({
               }`}
             >
               <div className="flex items-center gap-2.5">
-                <Icon className={`w-4 h-4 ${isActive ? 'text-amber-400' : 'text-zinc-400'}`} />
+                <Icon className={`w-4 h-4 ${isActive ? 'text-amber-200' : 'text-zinc-400'}`} />
                 <span>{item.label}</span>
               </div>
-              {isActive && <div className="w-1 h-3.5 rounded-full bg-amber-500" />}
+              {isActive && <div className="w-1 h-3 rounded-full bg-amber-300/80" />}
             </button>
           );
         })}
@@ -158,7 +158,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
           title="Copy CLI login command"
         >
           <div className="flex items-center gap-2">
-            <Terminal className="w-3 h-3 text-amber-500" />
+            <Terminal className="w-3 h-3 text-amber-300/90" />
             <span>strata login</span>
           </div>
           {copiedCli ? <Check className="w-3 h-3 text-emerald-400" /> : <span className="text-zinc-600 text-[10px]">copy</span>}

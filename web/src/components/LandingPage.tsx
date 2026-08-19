@@ -24,8 +24,8 @@ export const LandingPage: React.FC<LandingPageProps> = ({ onOpenAuth }) => {
     <div className="min-h-screen bg-[#090a0d] text-zinc-100 font-sans">
       {/* Hero Section */}
       <section className="max-w-5xl mx-auto px-4 sm:px-6 pt-24 pb-16 text-center">
-        <div className="inline-flex items-center gap-2 px-3 py-1 rounded-md bg-[#15171d] border border-[#23262f] text-amber-400 text-xs font-mono mb-8 shadow-sm">
-          <span className="w-1.5 h-1.5 rounded-full bg-amber-500 inline-block" />
+        <div className="inline-flex items-center gap-2 px-3 py-1 rounded-md bg-amber-300/10 border border-amber-300/20 text-amber-200 text-xs font-mono mb-8">
+          <span className="w-1.5 h-1.5 rounded-full bg-amber-300 inline-block opacity-80" />
           <span>Engineered for Claude Code, Cursor & Windsurf</span>
         </div>
 
@@ -40,7 +40,7 @@ export const LandingPage: React.FC<LandingPageProps> = ({ onOpenAuth }) => {
         <div className="flex flex-col sm:flex-row items-center justify-center gap-3 max-w-md mx-auto mb-16">
           <button
             onClick={onOpenAuth}
-            className="w-full sm:w-auto px-6 py-2.5 rounded-lg bg-amber-500 text-black font-bold text-xs flex items-center justify-center gap-2 hover:bg-amber-400 btn-pressable sweep-hover shadow-lg shadow-amber-500/10"
+            className="w-full sm:w-auto px-6 py-2.5 rounded-lg bg-amber-300 text-zinc-950 font-bold text-xs flex items-center justify-center gap-2 hover:bg-amber-200 btn-pressable sweep-hover shadow-lg shadow-amber-300/5"
           >
             <span>Open Console</span>
             <ArrowRight className="w-4 h-4" />
@@ -50,7 +50,7 @@ export const LandingPage: React.FC<LandingPageProps> = ({ onOpenAuth }) => {
             onClick={handleCopyInstall}
             className="w-full sm:w-auto px-5 py-2.5 rounded-lg bg-[#15171d] border border-[#23262f] hover:border-[#343846] text-zinc-200 font-mono text-xs flex items-center justify-center gap-2 btn-pressable sweep-hover"
           >
-            {copiedInstall ? <Check className="w-3.5 h-3.5 text-emerald-400" /> : <Terminal className="w-3.5 h-3.5 text-amber-500" />}
+            {copiedInstall ? <Check className="w-3.5 h-3.5 text-emerald-400" /> : <Terminal className="w-3.5 h-3.5 text-amber-300/90" />}
             <span>strata login</span>
           </button>
         </div>
@@ -74,14 +74,14 @@ export const LandingPage: React.FC<LandingPageProps> = ({ onOpenAuth }) => {
             </div>
             <div className="text-zinc-400 pl-3 border-l border-[#23262f]">
               Authenticated via browser loopback on https://strata.pedrofarath.me.<br />
-              Generated machine API key: <code className="text-amber-400">strata_live_8f92a...</code>
+              Generated machine API key: <code className="text-amber-200">strata_live_8f92a...</code>
             </div>
 
             <div>
               <span className="text-zinc-600">$ </span>
               <span className="text-zinc-100 font-medium">strata recall "TLS config for PostgreSQL pooler"</span>
             </div>
-            <div className="text-zinc-400 pl-3 border-l border-amber-500/50 text-zinc-200">
+            <div className="text-zinc-400 pl-3 border-l border-amber-300/40 text-zinc-200">
               [Memory Match 0.94] "Supabase transaction pooler requires AcceptAnyServerCertVerifier on port 6543, or port 5432 session pooler."<br />
               <span className="text-zinc-500 text-[11px]">Causal JTMS: 0 contradictions | ACT-R Decay: 0.98</span>
             </div>

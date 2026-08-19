@@ -17,15 +17,16 @@ export default {
           bezel: '#343846',
         },
         quartz: {
-          amber: '#f59e0b',
-          'amber-deep': '#d97706',
-          'amber-light': '#fbbf24',
-          'amber-text': '#fef3c7',
+          amber: '#fde047', // Soft Champagne Amber (Lighter & subtler)
+          'amber-muted': 'rgba(253, 224, 71, 0.12)',
+          'amber-border': 'rgba(253, 224, 71, 0.25)',
+          'amber-soft': '#fef08a',
+          'amber-text': '#fef9c3',
         },
         mineral: {
-          cyan: '#0ea5e9',
-          emerald: '#10b981',
-          ruby: '#ef4444',
+          cyan: '#38bdf8',
+          emerald: '#34d399',
+          ruby: '#f87171',
         },
       },
       fontFamily: {

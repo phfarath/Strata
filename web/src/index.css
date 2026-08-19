@@ -30,7 +30,7 @@ body {
 }
 
 /* -------------------------------------------------------------
-   Light Sweep Animation (Varredura de Luz Tátil)
+   Light Sweep Animation (Suave & Baixa Opacidade)
    ------------------------------------------------------------- */
 
 .sweep-hover {
@@ -49,9 +49,9 @@ body {
   background: linear-gradient(
     90deg,
     transparent 0%,
-    rgba(255, 255, 255, 0.08) 40%,
-    rgba(245, 158, 11, 0.22) 50%,
-    rgba(255, 255, 255, 0.12) 60%,
+    rgba(255, 255, 255, 0.05) 35%,
+    rgba(253, 224, 71, 0.14) 50%,
+    rgba(255, 255, 255, 0.08) 65%,
     transparent 100%
   );
   transform: skewX(-22deg);
@@ -62,18 +62,6 @@ body {
 
 .sweep-hover:hover::before {
   left: 150%;
-}
-
-/* Amber Sweep Variant for Cards & Primary Buttons */
-.sweep-amber::before {
-  background: linear-gradient(
-    90deg,
-    transparent 0%,
-    rgba(251, 191, 36, 0.15) 30%,
-    rgba(245, 158, 11, 0.35) 50%,
-    rgba(251, 191, 36, 0.15) 70%,
-    transparent 100%
-  );
 }
 
 /* -------------------------------------------------------------

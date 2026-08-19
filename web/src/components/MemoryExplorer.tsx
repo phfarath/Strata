@@ -103,7 +103,7 @@ export const MemoryExplorer: React.FC = () => {
               placeholder="Search memories, anti-patterns, scopes..."
               value={search}
               onChange={(e) => setSearch(e.target.value)}
-              className="w-full pl-9 pr-3 py-2 rounded-lg bg-[#15171d] border border-[#23262f] text-zinc-200 placeholder:text-zinc-500 focus:outline-none focus:border-amber-500 text-xs font-mono"
+              className="w-full pl-9 pr-3 py-2 rounded-lg bg-[#15171d] border border-[#23262f] text-zinc-200 placeholder:text-zinc-500 focus:outline-none focus:border-amber-300/40 text-xs font-mono"
             />
           </div>
 
@@ -111,7 +111,7 @@ export const MemoryExplorer: React.FC = () => {
             <button
               onClick={() => setTypeFilter('all')}
               className={`px-2.5 py-1 rounded text-xs font-medium transition-colors btn-pressable ${
-                typeFilter === 'all' ? 'bg-[#23262f] text-amber-400 font-bold' : 'text-zinc-400 hover:text-zinc-200'
+                typeFilter === 'all' ? 'bg-[#23262f] text-amber-200 font-bold' : 'text-zinc-400 hover:text-zinc-200'
               }`}
             >
               All
@@ -119,7 +119,7 @@ export const MemoryExplorer: React.FC = () => {
             <button
               onClick={() => setTypeFilter('semantic_fact')}
               className={`px-2.5 py-1 rounded text-xs font-medium transition-colors btn-pressable ${
-                typeFilter === 'semantic_fact' ? 'bg-[#23262f] text-amber-400 font-bold' : 'text-zinc-400 hover:text-zinc-200'
+                typeFilter === 'semantic_fact' ? 'bg-[#23262f] text-amber-200 font-bold' : 'text-zinc-400 hover:text-zinc-200'
               }`}
             >
               Facts
@@ -127,7 +127,7 @@ export const MemoryExplorer: React.FC = () => {
             <button
               onClick={() => setTypeFilter('failure_pattern')}
               className={`px-2.5 py-1 rounded text-xs font-medium transition-colors btn-pressable ${
-                typeFilter === 'failure_pattern' ? 'bg-[#23262f] text-amber-400 font-bold' : 'text-zinc-400 hover:text-zinc-200'
+                typeFilter === 'failure_pattern' ? 'bg-[#23262f] text-amber-200 font-bold' : 'text-zinc-400 hover:text-zinc-200'
               }`}
             >
               Anti-Patterns
@@ -135,7 +135,7 @@ export const MemoryExplorer: React.FC = () => {
             <button
               onClick={() => setTypeFilter('procedural_skill')}
               className={`px-2.5 py-1 rounded text-xs font-medium transition-colors btn-pressable ${
-                typeFilter === 'procedural_skill' ? 'bg-[#23262f] text-amber-400 font-bold' : 'text-zinc-400 hover:text-zinc-200'
+                typeFilter === 'procedural_skill' ? 'bg-[#23262f] text-amber-200 font-bold' : 'text-zinc-400 hover:text-zinc-200'
               }`}
             >
               Skills
@@ -153,13 +153,13 @@ export const MemoryExplorer: React.FC = () => {
                 onClick={() => setSelectedMemory(mem)}
                 className={`p-3.5 rounded-lg border cursor-pointer transition-colors btn-pressable sweep-hover ${
                   isSelected
-                    ? 'border-amber-500/80 bg-[#1a1d24] shadow-md shadow-amber-500/5'
+                    ? 'border-amber-300/40 bg-[#1a1d24] shadow-sm'
                     : 'border-[#23262f] bg-[#15171d] hover:border-[#343846] hover:bg-[#1b1e26]'
                 }`}
               >
                 <div className="flex items-center justify-between gap-2 mb-1">
                   <div className="flex items-center gap-2">
-                    <span className="px-1.5 py-0.5 rounded text-[10px] font-mono font-medium bg-[#0f1115] text-amber-400 border border-[#23262f]">
+                    <span className="px-1.5 py-0.5 rounded text-[10px] font-mono font-medium bg-[#0f1115] text-amber-200/90 border border-[#23262f]">
                       {mem.type.replace('_', ' ')}
                     </span>
                     <span className="text-[11px] font-mono text-zinc-500 truncate max-w-[200px]">
@@ -168,7 +168,7 @@ export const MemoryExplorer: React.FC = () => {
                   </div>
 
                   <span className="text-[11px] font-mono text-zinc-400">
-                    Retention: <strong className="text-amber-400">{(mem.decay_score * 100).toFixed(0)}%</strong>
+                    Retention: <strong className="text-amber-200">{(mem.decay_score * 100).toFixed(0)}%</strong>
                   </span>
                 </div>
 
@@ -186,7 +186,7 @@ export const MemoryExplorer: React.FC = () => {
           <div className="p-5 rounded-xl border border-[#23262f] bg-[#15171d] sticky top-6 space-y-4 font-mono text-xs shadow-xl">
             <div className="border-b border-[#23262f] pb-3 flex items-center justify-between">
               <div>
-                <div className="text-amber-500 text-[11px] font-semibold">:: Memory Inspector</div>
+                <div className="text-amber-300 text-[11px] font-semibold">:: Memory Inspector</div>
                 <h3 className="text-sm font-bold text-white mt-1">{selectedMemory.title}</h3>
               </div>
             </div>
@@ -198,7 +198,7 @@ export const MemoryExplorer: React.FC = () => {
               </div>
               <div className="p-2.5 rounded-md bg-[#0f1115] border border-[#23262f]">
                 <span className="text-zinc-500 block">ACT-R Retention</span>
-                <span className="font-semibold text-amber-400 mt-0.5 block">{(selectedMemory.decay_score * 100).toFixed(1)}%</span>
+                <span className="font-semibold text-amber-200 mt-0.5 block">{(selectedMemory.decay_score * 100).toFixed(1)}%</span>
               </div>
             </div>
 
@@ -212,7 +212,7 @@ export const MemoryExplorer: React.FC = () => {
             <div className="space-y-1.5 pt-2 border-t border-[#23262f] text-[11px]">
               <div className="flex justify-between">
                 <span className="text-zinc-500">Scope:</span>
-                <span className="text-sky-400">{selectedMemory.scope}</span>
+                <span className="text-sky-300">{selectedMemory.scope}</span>
               </div>
               <div className="flex justify-between">
                 <span className="text-zinc-500">Evidence Graph:</span>

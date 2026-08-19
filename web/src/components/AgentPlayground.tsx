@@ -51,7 +51,7 @@ export const AgentPlayground: React.FC = () => {
     <div className="space-y-4 max-w-4xl font-sans">
       <div className="p-4 rounded-xl border border-[#23262f] bg-[#15171d]">
         <div className="flex items-center gap-2 mb-1">
-          <Sliders className="w-4 h-4 text-amber-500" />
+          <Sliders className="w-4 h-4 text-amber-300/90" />
           <h3 className="text-sm font-semibold text-white">Agent Memory Recall Simulator</h3>
         </div>
         <p className="text-xs text-zinc-400 mb-3">
@@ -64,13 +64,13 @@ export const AgentPlayground: React.FC = () => {
             value={prompt}
             onChange={(e) => setPrompt(e.target.value)}
             placeholder="Enter an architectural prompt or query..."
-            className="w-full px-3 py-2 rounded-lg bg-[#0f1115] border border-[#23262f] text-zinc-200 placeholder:text-zinc-500 focus:outline-none focus:border-amber-500 text-xs font-mono resize-none leading-relaxed"
+            className="w-full px-3 py-2 rounded-lg bg-[#0f1115] border border-[#23262f] text-zinc-200 placeholder:text-zinc-500 focus:outline-none focus:border-amber-300/40 text-xs font-mono resize-none leading-relaxed"
           />
 
           <button
             type="submit"
             disabled={loading}
-            className="px-4 py-2 rounded-lg bg-amber-500 text-black font-bold text-xs flex items-center justify-center gap-1.5 hover:bg-amber-400 btn-pressable sweep-hover disabled:opacity-50"
+            className="px-4 py-2 rounded-lg bg-amber-300 text-zinc-950 font-bold text-xs flex items-center justify-center gap-1.5 hover:bg-amber-200 btn-pressable sweep-hover disabled:opacity-50"
           >
             <span>{loading ? 'Querying...' : 'Execute Simulator Query'}</span>
             <ArrowRight className="w-3.5 h-3.5" />
@@ -85,7 +85,7 @@ export const AgentPlayground: React.FC = () => {
               Latency: <strong className="text-emerald-400">{result.latency_ms} ms</strong>
             </span>
             <span>
-              JTMS State: <strong className="text-amber-400">{result.jtms_arbitration.belief_state}</strong>
+              JTMS State: <strong className="text-amber-200">{result.jtms_arbitration.belief_state}</strong>
             </span>
           </div>
 
@@ -95,7 +95,7 @@ export const AgentPlayground: React.FC = () => {
               <div key={idx} className="p-3 rounded-lg bg-[#0f1115] border border-[#23262f] space-y-1 sweep-hover">
                 <div className="flex items-center justify-between">
                   <span className="font-semibold text-zinc-200">{m.title}</span>
-                  <span className="text-amber-400 font-mono text-[11px]">
+                  <span className="text-amber-200 font-mono text-[11px]">
                     Score: {(m.similarity * 100).toFixed(1)}%
                   </span>
                 </div>
@@ -105,7 +105,7 @@ export const AgentPlayground: React.FC = () => {
           </div>
 
           <div className="p-3 rounded-lg bg-[#0f1115] border border-[#23262f] text-zinc-300">
-            <span className="text-amber-500 text-[11px] block mb-0.5 font-semibold">Injected Agent Directive:</span>
+            <span className="text-amber-300 text-[11px] block mb-0.5 font-semibold">Injected Agent Directive:</span>
             <p className="text-zinc-200 text-xs">{result.jtms_arbitration.recommended_directive}</p>
           </div>
         </div>

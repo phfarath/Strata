@@ -15,13 +15,14 @@
       --basalt-border: #23262f;
       --basalt-bezel: #343846;
       
-      --quartz-amber: #f59e0b;
-      --quartz-amber-deep: #d97706;
-      --quartz-amber-text: #fef3c7;
+      --quartz-amber: #fde047;
+      --quartz-amber-soft: #fef08a;
+      --quartz-amber-text: #fef9c3;
+      --quartz-amber-muted: rgba(253, 224, 71, 0.12);
       
-      --mineral-cyan: #0ea5e9;
-      --mineral-emerald: #10b981;
-      --mineral-ruby: #ef4444;
+      --mineral-cyan: #38bdf8;
+      --mineral-emerald: #34d399;
+      --mineral-ruby: #f87171;
       
       --text-main: #f3f4f6;
       --text-muted: #717686;
@@ -41,9 +42,9 @@
     .header-tag {
       font-family: 'JetBrains Mono', monospace;
       font-size: 11px;
-      color: var(--quartz-amber);
-      background: rgba(245, 158, 11, 0.1);
-      border: 1px solid rgba(245, 158, 11, 0.2);
+      color: var(--quartz-amber-soft);
+      background: var(--quartz-amber-muted);
+      border: 1px solid rgba(253, 224, 71, 0.2);
       padding: 3px 8px;
       border-radius: 4px;
       display: inline-block;
@@ -110,8 +111,8 @@
     }
     
     .layer-amber {
-      background: #171613;
-      border-color: rgba(245, 158, 11, 0.35);
+      background: #151612;
+      border-color: rgba(253, 224, 71, 0.25);
       color: var(--quartz-amber-text);
       font-weight: 600;
     }
@@ -159,6 +160,36 @@
       gap: 12px;
       flex-wrap: wrap;
     }
+    
+    .sweep-hover {
+      position: relative;
+      overflow: hidden;
+      isolation: isolate;
+    }
+    .sweep-hover::before {
+      content: '';
+      position: absolute;
+      top: 0;
+      left: -150%;
+      width: 100%;
+      height: 100%;
+      background: linear-gradient(
+        90deg,
+        transparent 0%,
+        rgba(255, 255, 255, 0.05) 35%,
+        rgba(253, 224, 71, 0.14) 50%,
+        rgba(255, 255, 255, 0.08) 65%,
+        transparent 100%
+      );
+      transform: skewX(-22deg);
+      pointer-events: none;
+      transition: transform 600ms cubic-bezier(0.16, 1, 0.3, 1), left 600ms cubic-bezier(0.16, 1, 0.3, 1);
+      z-index: 1;
+    }
+    .sweep-hover:hover::before {
+      left: 150%;
+    }
+    
     .btn-industrial {
       font-family: 'JetBrains Mono', monospace;
       font-size: 12px;
@@ -183,43 +214,42 @@
     
     .btn-amber {
       background: var(--quartz-amber);
-      border-color: var(--quartz-amber-deep);
+      border-color: #eab308;
       color: #090a0d;
       font-weight: 700;
     }
     .btn-amber:hover {
-      background: #fbbf24;
-      border-color: var(--quartz-amber);
+      background: var(--quartz-amber-soft);
     }
     .btn-amber:active {
       transform: translateY(1px) scale(0.985);
-      background: var(--quartz-amber-deep);
+      background: #eab308;
     }
   </style>
 </head>
 <body>
   <div class="container">
-    <div class="header-tag">AESTHETIC ARCHETYPE 01</div>
-    <h1>Mineral Industrial (Basalt & Quartz Amber)</h1>
+    <div class="header-tag">CALIBRATED AMBER CORE</div>
+    <h1>Mineral Industrial (Basalt & Calibrated Champagne Amber)</h1>
     <div class="subtitle">Tactile Hardware-grade Interface • Teenage Engineering / Linear Inspired • Geological Knowledge Deposition</div>
 
     <!-- 1. The Geological Stratification -->
     <div class="industrial-panel">
       <h2>Knowledge Deposition Layers</h2>
       <div class="strata-stack">
-        <div class="layer-item layer-amber">
+        <div class="layer-item layer-amber sweep-hover">
           <span>04 :: Semantic Bedrock (Verified Architectural Directives)</span>
-          <span style="color: var(--quartz-amber); font-size: 11px;">CRYSTALLIZED AMBER CORE</span>
+          <span style="color: var(--quartz-amber); font-size: 11px;">CHAMPAGNE AMBER CORE</span>
         </div>
-        <div class="layer-item layer-quartz">
+        <div class="layer-item layer-quartz sweep-hover">
           <span>03 :: Procedural Skills & Anti-Patterns</span>
           <span style="color: var(--mineral-cyan); font-size: 11px;">JTMS ARBITRATED</span>
         </div>
-        <div class="layer-item layer-basalt">
+        <div class="layer-item layer-basalt sweep-hover">
           <span>02 :: Episodic Session Frames (Context Memory)</span>
           <span style="color: var(--text-dim); font-size: 11px;">COMPRESSED DIFFS</span>
         </div>
-        <div class="layer-item layer-soil">
+        <div class="layer-item layer-soil sweep-hover">
           <span>01 :: Raw Code Delta Stream (Soil)</span>
           <span style="color: var(--text-muted); font-size: 11px;">CDC INGEST &lt;0.5ms</span>
         </div>
@@ -247,26 +277,26 @@
           <div class="swatch-body"><div class="swatch-name">Border Cut</div><div class="swatch-hex">#23262f</div></div>
         </div>
         <div class="swatch">
-          <div class="swatch-color" style="background: #f59e0b;"></div>
-          <div class="swatch-body"><div class="swatch-name">Quartz Amber</div><div class="swatch-hex">#f59e0b</div></div>
+          <div class="swatch-color" style="background: #fde047;"></div>
+          <div class="swatch-body"><div class="swatch-name">Champagne Amber</div><div class="swatch-hex">#fde047</div></div>
         </div>
         <div class="swatch">
-          <div class="swatch-color" style="background: #ef4444;"></div>
-          <div class="swatch-body"><div class="swatch-name">Ruby Fault</div><div class="swatch-hex">#ef4444</div></div>
+          <div class="swatch-color" style="background: #34d399;"></div>
+          <div class="swatch-body"><div class="swatch-name">Emerald JTMS</div><div class="swatch-hex">#34d399</div></div>
         </div>
       </div>
     </div>
 
     <!-- 3. Physical Tactile Controls -->
     <div class="industrial-panel">
-      <h2>Tactile Hardware Controls</h2>
+      <h2>Tactile Hardware Controls (With Light Sweep Hover)</h2>
       <p style="font-size: 13px; color: var(--text-dim); margin-bottom: 14px;">
-        Click below to feel the 100ms tactile step and physical recede:
+        Hover over the buttons below to see the subtle light sweep and click for the 100ms tactile step:
       </p>
       <div class="btn-row">
-        <button class="btn-industrial btn-amber">strata sync push</button>
-        <button class="btn-industrial">recall memory</button>
-        <button class="btn-industrial">revoke key</button>
+        <button class="btn-industrial btn-amber sweep-hover">strata sync push</button>
+        <button class="btn-industrial sweep-hover">recall memory</button>
+        <button class="btn-industrial sweep-hover">revoke key</button>
       </div>
     </div>
   </div>

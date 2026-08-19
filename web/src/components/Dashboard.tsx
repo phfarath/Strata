@@ -34,7 +34,7 @@ export const Dashboard: React.FC<DashboardProps> = ({
           <div className="flex items-center gap-2 text-xs font-mono text-zinc-500 mb-0.5">
             <span>Workspace</span>
             <span>/</span>
-            <span className="text-amber-400 font-semibold">{workspace.slug}</span>
+            <span className="text-amber-200 font-semibold">{workspace.slug}</span>
           </div>
           <h1 className="text-xl font-bold text-white tracking-tight font-sans">
             {workspace.name}
@@ -49,7 +49,7 @@ export const Dashboard: React.FC<DashboardProps> = ({
           <div className="grid grid-cols-1 md:grid-cols-3 gap-4 font-mono text-xs">
             <div className="p-4 rounded-xl border border-[#23262f] bg-[#15171d] space-y-1 sweep-hover">
               <div className="text-zinc-500">Total Memories</div>
-              <div className="text-2xl font-bold text-amber-400">1,842</div>
+              <div className="text-2xl font-bold text-amber-200">1,842</div>
               <div className="text-zinc-500 text-[11px] pt-1">
                 Semantic facts, failure patterns & skills
               </div>

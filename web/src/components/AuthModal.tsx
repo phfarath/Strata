@@ -78,7 +78,7 @@ export const AuthModal: React.FC<AuthModalProps> = ({ isOpen, onClose, onSuccess
             onClick={() => setMode('login')}
             className={`flex-1 py-1.5 text-xs font-medium rounded-md transition-colors btn-pressable ${
               mode === 'login'
-                ? 'bg-[#23262f] text-amber-400 font-bold'
+                ? 'bg-[#23262f] text-amber-200 font-bold'
                 : 'text-zinc-400 hover:text-zinc-200'
             }`}
           >
@@ -89,7 +89,7 @@ export const AuthModal: React.FC<AuthModalProps> = ({ isOpen, onClose, onSuccess
             onClick={() => setMode('signup')}
             className={`flex-1 py-1.5 text-xs font-medium rounded-md transition-colors btn-pressable ${
               mode === 'signup'
-                ? 'bg-[#23262f] text-amber-400 font-bold'
+                ? 'bg-[#23262f] text-amber-200 font-bold'
                 : 'text-zinc-400 hover:text-zinc-200'
             }`}
           >
@@ -111,7 +111,7 @@ export const AuthModal: React.FC<AuthModalProps> = ({ isOpen, onClose, onSuccess
                   placeholder="Pedro Farath"
                   value={fullName}
                   onChange={(e) => setFullName(e.target.value)}
-                  className="w-full pl-9 pr-3 py-2 rounded-lg bg-[#0f1115] border border-[#23262f] text-zinc-100 placeholder:text-zinc-600 focus:outline-none focus:border-amber-500 text-xs"
+                  className="w-full pl-9 pr-3 py-2 rounded-lg bg-[#0f1115] border border-[#23262f] text-zinc-100 placeholder:text-zinc-600 focus:outline-none focus:border-amber-300/40 text-xs"
                 />
               </div>
             </div>
@@ -129,7 +129,7 @@ export const AuthModal: React.FC<AuthModalProps> = ({ isOpen, onClose, onSuccess
                 placeholder="developer@strata.pedrofarath.me"
                 value={email}
                 onChange={(e) => setEmail(e.target.value)}
-                className="w-full pl-9 pr-3 py-2 rounded-lg bg-[#0f1115] border border-[#23262f] text-zinc-100 placeholder:text-zinc-600 focus:outline-none focus:border-amber-500 text-xs font-mono"
+                className="w-full pl-9 pr-3 py-2 rounded-lg bg-[#0f1115] border border-[#23262f] text-zinc-100 placeholder:text-zinc-600 focus:outline-none focus:border-amber-300/40 text-xs font-mono"
               />
             </div>
           </div>
@@ -146,7 +146,7 @@ export const AuthModal: React.FC<AuthModalProps> = ({ isOpen, onClose, onSuccess
                 placeholder="••••••••••••"
                 value={password}
                 onChange={(e) => setPassword(e.target.value)}
-                className="w-full pl-9 pr-3 py-2 rounded-lg bg-[#0f1115] border border-[#23262f] text-zinc-100 placeholder:text-zinc-600 focus:outline-none focus:border-amber-500 text-xs font-mono"
+                className="w-full pl-9 pr-3 py-2 rounded-lg bg-[#0f1115] border border-[#23262f] text-zinc-100 placeholder:text-zinc-600 focus:outline-none focus:border-amber-300/40 text-xs font-mono"
               />
             </div>
           </div>
@@ -161,7 +161,7 @@ export const AuthModal: React.FC<AuthModalProps> = ({ isOpen, onClose, onSuccess
                 placeholder="My Core Team"
                 value={workspaceName}
                 onChange={(e) => setWorkspaceName(e.target.value)}
-                className="w-full px-3 py-2 rounded-lg bg-[#0f1115] border border-[#23262f] text-zinc-100 placeholder:text-zinc-600 focus:outline-none focus:border-amber-500 text-xs"
+                className="w-full px-3 py-2 rounded-lg bg-[#0f1115] border border-[#23262f] text-zinc-100 placeholder:text-zinc-600 focus:outline-none focus:border-amber-300/40 text-xs"
               />
             </div>
           )}
@@ -169,7 +169,7 @@ export const AuthModal: React.FC<AuthModalProps> = ({ isOpen, onClose, onSuccess
           <button
             type="submit"
             disabled={loading}
-            className="w-full py-2.5 px-4 rounded-lg bg-amber-500 text-black font-bold flex items-center justify-center gap-1.5 hover:bg-amber-400 btn-pressable sweep-hover mt-2 text-xs disabled:opacity-50"
+            className="w-full py-2.5 px-4 rounded-lg bg-amber-300 text-zinc-950 font-bold flex items-center justify-center gap-1.5 hover:bg-amber-200 btn-pressable sweep-hover mt-2 text-xs disabled:opacity-50 shadow-sm"
           >
             <span>{loading ? 'Authenticating...' : mode === 'login' ? 'Sign In' : 'Create Account'}</span>
             {!loading && <ArrowRight className="w-3.5 h-3.5" />}
@@ -177,7 +177,7 @@ export const AuthModal: React.FC<AuthModalProps> = ({ isOpen, onClose, onSuccess
         </form>
 
         <div className="mt-4 pt-3 border-t border-[#23262f] text-center text-[11px] text-zinc-500 font-mono">
-          Unified with <code className="text-amber-400">strata login</code>
+          Unified with <code className="text-amber-200">strata login</code>
         </div>
       </div>
     </div>
