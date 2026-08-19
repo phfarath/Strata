@@ -36,10 +36,23 @@ export function App() {
     const token = api.getToken();
     if (token) {
       api.getMe()
-        .then((resp) => {
+        .then(async (resp) => {
           setUser(resp.user);
-          setWorkspaces(resp.workspaces);
-          setActiveWorkspace(getSafeWorkspace(resp.user, resp.workspaces));
+          let wsList = resp.workspaces;
+          if (wsList.length === 0) {
+            try {
+              const defaultWs = await api.createWorkspace(`${resp.user.full_name || 'My'} Workspace`);
+              wsList = [defaultWs];
+            } catch {
+              // ignore
+            }
+          }
+          setWorkspaces(wsList);
+          if (wsList.length > 0) {
+            setActiveWorkspace(wsList[0]);
+          } else {
+            setActiveWorkspace(getSafeWorkspace(resp.user, []));
+          }
         })
         .catch(() => {
           api.clearToken();
@@ -48,11 +61,23 @@ export function App() {
     }
   }, []);
 
-  const handleAuthSuccess = (u: User, wsList: Workspace[]) => {
+  const handleAuthSuccess = async (u: User, wsList: Workspace[]) => {
     setUser(u);
-    const safeWs = getSafeWorkspace(u, wsList);
-    setWorkspaces(wsList.length > 0 ? wsList : [safeWs]);
-    setActiveWorkspace(safeWs);
+    let effectiveWsList = wsList;
+    if (effectiveWsList.length === 0) {
+      try {
+        const defaultWs = await api.createWorkspace(`${u.full_name || 'My'} Workspace`);
+        effectiveWsList = [defaultWs];
+      } catch {
+        // ignore
+      }
+    }
+    setWorkspaces(effectiveWsList);
+    if (effectiveWsList.length > 0) {
+      setActiveWorkspace(effectiveWsList[0]);
+    } else {
+      setActiveWorkspace(getSafeWorkspace(u, []));
+    }
     setLandingViewOpen(false);
     setCurrentTab('overview');
   };

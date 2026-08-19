@@ -16,12 +16,17 @@ export const ApiKeyManager: React.FC<ApiKeyManagerProps> = ({ workspace }) => {
   const [copiedKeyId, setCopiedKeyId] = useState<string | null>(null);
 
   const fetchKeys = async () => {
+    if (!workspace?.id || workspace.id === 'default' || workspace.id.length < 10) {
+      setLoading(false);
+      return;
+    }
     try {
       setLoading(true);
       const data = await api.listApiKeys(workspace.id);
       setKeys(data);
     } catch (err: any) {
-      toast.error('Failed to load API keys', err.message);
+      // Don't toast error if user simply has no keys or is initializing
+      console.warn('API keys fetch:', err.message);
     } finally {
       setLoading(false);
     }
