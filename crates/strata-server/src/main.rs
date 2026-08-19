@@ -23,6 +23,10 @@ struct CliArgs {
     #[arg(short, long, env = "DATABASE_PATH")]
     db_path: Option<PathBuf>,
 
+    /// Database connection URL (PostgreSQL postgres://... or SQLite sqlite://...)
+    #[arg(short = 'u', long, env = "DATABASE_URL")]
+    database_url: Option<String>,
+
     /// Bearer authentication token for client verification
     #[arg(short, long, env = "STRATA_SERVER_SECRET")]
     auth_token: Option<String>,
@@ -48,6 +52,9 @@ async fn main() -> Result<()> {
     let mut config = ServerConfig::default();
     config.port = args.port;
     config.host = args.host;
+    if args.database_url.is_some() {
+        config.database_url = args.database_url;
+    }
     if args.db_path.is_some() {
         config.db_path = args.db_path;
     }
