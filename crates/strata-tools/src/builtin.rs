@@ -517,3 +517,201 @@ impl Tool for CausalBlastRadiusTool {
     }
 }
 
+/// Tool for decomposing high-level objectives into an executable Goal DAG.
+pub struct GoalDecomposeTool {
+    decomposer: Arc<strata_reasoning::GoalDecomposer>,
+}
+
+impl Default for GoalDecomposeTool {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl GoalDecomposeTool {
+    pub fn new() -> Self {
+        Self {
+            decomposer: Arc::new(strata_reasoning::GoalDecomposer::new()),
+        }
+    }
+
+    pub fn with_decomposer(decomposer: Arc<strata_reasoning::GoalDecomposer>) -> Self {
+        Self { decomposer }
+    }
+}
+
+#[async_trait]
+impl Tool for GoalDecomposeTool {
+    fn name(&self) -> &str {
+        "goal_decompose"
+    }
+
+    fn description(&self) -> &str {
+        "Decompose high-level objectives into a structured Goal DAG with parallel execution waves and verification gates."
+    }
+
+    fn parameters_schema(&self) -> serde_json::Value {
+        json!({
+            "type": "object",
+            "properties": {
+                "goal": {
+                    "type": "string",
+                    "description": "Natural language long-horizon task or objective to decompose"
+                },
+                "max_depth": {
+                    "type": "integer",
+                    "description": "Maximum decomposition depth (default: 3)"
+                },
+                "include_verification": {
+                    "type": "boolean",
+                    "description": "Whether to include verification gates and invariant checks (default: true)"
+                }
+            },
+            "required": ["goal"]
+        })
+    }
+
+    async fn execute(&self, params: serde_json::Value) -> Result<serde_json::Value, StrataError> {
+        let goal = params
+            .get("goal")
+            .and_then(|v| v.as_str())
+            .ok_or_else(|| StrataError::ValidationError("Missing 'goal' field".to_string()))?;
+
+        let include_verification = params
+            .get("include_verification")
+            .and_then(|v| v.as_bool())
+            .unwrap_or(true);
+
+        let dag = if include_verification {
+            self.decomposer.decompose(goal)
+        } else {
+            strata_reasoning::GoalDecomposer::new()
+                .with_verification_gates(false)
+                .decompose(goal)
+        }
+        .map_err(|e| StrataError::ReasoningError(format!("Goal decomposition error: {e}")))?;
+
+        let waves = dag
+            .compute_waves()
+            .map_err(|e| StrataError::ReasoningError(format!("Wave computation error: {e}")))?;
+
+        let ascii_tree = dag.to_ascii_tree();
+        let export = dag.export();
+
+        Ok(json!({
+            "status": "success",
+            "goal": goal,
+            "total_nodes": dag.node_count(),
+            "total_waves": waves.len(),
+            "waves": waves,
+            "dag": export,
+            "ascii_tree": ascii_tree
+        }))
+    }
+}
+
+/// Tool for executing a Goal DAG plan wave-by-wave asynchronously with dynamic recovery.
+pub struct DagExecuteTool {
+    scheduler: Arc<strata_reasoning::DagScheduler>,
+}
+
+impl Default for DagExecuteTool {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl DagExecuteTool {
+    pub fn new() -> Self {
+        Self {
+            scheduler: Arc::new(strata_reasoning::DagScheduler::new()),
+        }
+    }
+
+    pub fn with_scheduler(scheduler: Arc<strata_reasoning::DagScheduler>) -> Self {
+        Self { scheduler }
+    }
+}
+
+#[async_trait]
+impl Tool for DagExecuteTool {
+    fn name(&self) -> &str {
+        "dag_execute"
+    }
+
+    fn description(&self) -> &str {
+        "Execute a Goal DAG plan wave-by-wave asynchronously with controlled concurrency and dynamic failure recovery."
+    }
+
+    fn parameters_schema(&self) -> serde_json::Value {
+        json!({
+            "type": "object",
+            "properties": {
+                "goal": {
+                    "type": "string",
+                    "description": "Optional natural language goal to decompose and execute"
+                },
+                "dag": {
+                    "type": "object",
+                    "description": "Optional pre-decomposed Goal DAG JSON export to execute"
+                },
+                "max_concurrency": {
+                    "type": "integer",
+                    "description": "Maximum number of parallel tasks to run concurrently (default: 4)"
+                },
+                "auto_recover": {
+                    "type": "boolean",
+                    "description": "Whether to dynamically recover from failures by patching DAG (default: true)"
+                }
+            }
+        })
+    }
+
+    async fn execute(&self, params: serde_json::Value) -> Result<serde_json::Value, StrataError> {
+        let concurrency = params
+            .get("max_concurrency")
+            .and_then(|v| v.as_u64())
+            .unwrap_or(4) as usize;
+
+        let auto_recover = params
+            .get("auto_recover")
+            .and_then(|v| v.as_bool())
+            .unwrap_or(true);
+
+        let dag = if let Some(dag_val) = params.get("dag") {
+            let export: strata_reasoning::GoalDagExport = serde_json::from_value(dag_val.clone())
+                .map_err(|e| StrataError::ValidationError(format!("Invalid Goal DAG export: {e}")))?;
+            strata_reasoning::GoalDag::from_export(export)
+                .map_err(|e| StrataError::ValidationError(format!("Invalid Goal DAG structure: {e}")))?
+        } else if let Some(goal) = params.get("goal").and_then(|v| v.as_str()) {
+            strata_reasoning::GoalDecomposer::new()
+                .decompose(goal)
+                .map_err(|e| StrataError::ReasoningError(format!("Goal decomposition error: {e}")))?
+        } else {
+            return Err(StrataError::ValidationError(
+                "Either 'dag' or 'goal' parameter must be provided".to_string(),
+            ));
+        };
+
+        let (finished_dag, report) = if concurrency == 4 && auto_recover {
+            self.scheduler.execute(dag).await
+        } else {
+            strata_reasoning::DagScheduler::new()
+                .with_concurrency(concurrency)
+                .with_auto_recover(auto_recover)
+                .execute(dag)
+                .await
+        }
+        .map_err(|e| StrataError::ReasoningError(format!("DAG execution error: {e}")))?;
+
+        let ascii_tree = finished_dag.to_ascii_tree();
+
+        Ok(json!({
+            "status": if report.success { "success" } else { "failed" },
+            "report": report,
+            "ascii_tree": ascii_tree
+        }))
+    }
+}
+
+

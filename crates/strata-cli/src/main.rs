@@ -25,6 +25,7 @@ use strata_cli::{
         key::{run_key, KeyArgs},
         login::{run_login, run_logout, LoginArgs},
         observe::{run_observe, ObserveArgs},
+        plan::{run_plan, PlanArgs},
         prune::{run_prune, PruneOptions},
         search::{run_search, SearchOptions},
         sync::{run_sync, SyncArgs},
@@ -184,6 +185,10 @@ enum Commands {
     #[command(name = "blast-radius", alias = "causal", alias = "impact", alias = "world-model")]
     BlastRadius(BlastRadiusArgs),
 
+    /// Hierarchical goal planning, topological wave decomposition, and DAG execution scheduler
+    #[command(name = "plan", alias = "dag", alias = "schedule")]
+    Plan(PlanArgs),
+
     /// Manage Strata Cloud developer accounts and authentication
     Auth(AuthArgs),
 
@@ -223,6 +228,11 @@ async fn main() -> Result<()> {
         });
     }
 
+    // Fast-path for Plan (can execute standalone or with scheduler)
+    if let Commands::Plan(args) = cli.command {
+        return run_plan(args).await;
+    }
+
     // Fast-path for Auth, Key & Login commands (communicate over HTTP with Strata Cloud)
     if let Commands::Login(args) = cli.command {
         return run_login(args).await;
@@ -249,7 +259,7 @@ async fn main() -> Result<()> {
     );
 
     match cli.command {
-        Commands::Init { .. } | Commands::Auth(_) | Commands::Key(_) | Commands::Login(_) | Commands::Logout => unreachable!(),
+        Commands::Init { .. } | Commands::Plan(_) | Commands::Auth(_) | Commands::Key(_) | Commands::Login(_) | Commands::Logout => unreachable!(),
 
         Commands::Mcp => {
             let server = McpServer::new(engine);

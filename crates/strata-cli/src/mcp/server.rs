@@ -170,6 +170,49 @@ impl McpServer {
                     "required": ["target"]
                 }),
             },
+            ToolDefinition {
+                name: "goal_decompose".to_string(),
+                description: "Decompose a complex or long-horizon engineering objective into a structured Goal DAG with parallel waves, dependencies, and verification gates.".to_string(),
+                input_schema: serde_json::json!({
+                    "type": "object",
+                    "properties": {
+                        "goal": {
+                            "type": "string",
+                            "description": "The natural language goal or objective to decompose"
+                        },
+                        "include_verification": {
+                            "type": "boolean",
+                            "description": "Whether to include verification gates (default: true)"
+                        }
+                    },
+                    "required": ["goal"]
+                }),
+            },
+            ToolDefinition {
+                name: "dag_execute".to_string(),
+                description: "Execute a Goal DAG plan wave-by-wave asynchronously with bounded concurrency, verification gate checks, and dynamic failure recovery.".to_string(),
+                input_schema: serde_json::json!({
+                    "type": "object",
+                    "properties": {
+                        "goal": {
+                            "type": "string",
+                            "description": "Optional natural language goal to decompose and execute"
+                        },
+                        "dag": {
+                            "type": "object",
+                            "description": "Optional pre-decomposed Goal DAG JSON export to execute"
+                        },
+                        "max_concurrency": {
+                            "type": "integer",
+                            "description": "Maximum parallel concurrency during wave execution (default: 4)"
+                        },
+                        "auto_recover": {
+                            "type": "boolean",
+                            "description": "Whether to dynamically recover from failures by patching DAG (default: true)"
+                        }
+                    }
+                }),
+            },
         ]
     }
 
@@ -530,6 +573,76 @@ impl McpServer {
                         CallToolResult::structured(text_tree, structured)
                     }
                     Err(e) => CallToolResult::error(format!("Causal blast radius prediction error: {e}")),
+                }
+            }
+            "goal_decompose" => {
+                let goal = match args.get("goal").and_then(|v| v.as_str()) {
+                    Some(g) => g,
+                    None => return CallToolResult::error("Missing required parameter: goal"),
+                };
+
+                let include_verification = args
+                    .get("include_verification")
+                    .and_then(|v| v.as_bool())
+                    .unwrap_or(true);
+
+                let decomposer = strata_reasoning::GoalDecomposer::new()
+                    .with_verification_gates(include_verification);
+
+                match decomposer.decompose(goal) {
+                    Ok(dag) => {
+                        let text_tree = dag.to_ascii_tree();
+                        let structured = serde_json::json!({
+                            "status": "success",
+                            "goal": goal,
+                            "total_nodes": dag.node_count(),
+                            "dag": dag.export(),
+                            "waves": dag.compute_waves().unwrap_or_default()
+                        });
+                        CallToolResult::structured(text_tree, structured)
+                    }
+                    Err(e) => CallToolResult::error(format!("Goal decomposition error: {e}")),
+                }
+            }
+            "dag_execute" => {
+                let concurrency = args
+                    .get("max_concurrency")
+                    .and_then(|v| v.as_u64())
+                    .unwrap_or(4) as usize;
+
+                let auto_recover = args
+                    .get("auto_recover")
+                    .and_then(|v| v.as_bool())
+                    .unwrap_or(true);
+
+                let dag = if let Some(dag_val) = args.get("dag") {
+                    match serde_json::from_value::<strata_reasoning::GoalDagExport>(dag_val.clone()) {
+                        Ok(export) => match strata_reasoning::GoalDag::from_export(export) {
+                            Ok(d) => d,
+                            Err(e) => return CallToolResult::error(format!("Invalid Goal DAG structure: {e}")),
+                        },
+                        Err(e) => return CallToolResult::error(format!("Invalid Goal DAG export format: {e}")),
+                    }
+                } else if let Some(goal) = args.get("goal").and_then(|v| v.as_str()) {
+                    match strata_reasoning::GoalDecomposer::new().decompose(goal) {
+                        Ok(d) => d,
+                        Err(e) => return CallToolResult::error(format!("Goal decomposition error: {e}")),
+                    }
+                } else {
+                    return CallToolResult::error("Either 'goal' or 'dag' parameter must be provided");
+                };
+
+                let scheduler = strata_reasoning::DagScheduler::new()
+                    .with_concurrency(concurrency)
+                    .with_auto_recover(auto_recover);
+
+                match scheduler.execute(dag).await {
+                    Ok((finished_dag, report)) => {
+                        let text_tree = finished_dag.to_ascii_tree();
+                        let structured = serde_json::to_value(&report).unwrap_or(serde_json::json!({}));
+                        CallToolResult::structured(text_tree, structured)
+                    }
+                    Err(e) => CallToolResult::error(format!("DAG execution error: {e}")),
                 }
             }
             unknown_tool => CallToolResult::error(format!("Unknown tool: '{unknown_tool}'")),

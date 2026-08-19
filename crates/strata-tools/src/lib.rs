@@ -323,4 +323,34 @@ mod tests {
             _ => panic!("Expected PermissionDenied"),
         }
     }
+
+    #[tokio::test]
+    async fn test_goal_decompose_and_execute_tools() {
+        let decompose_tool = GoalDecomposeTool::new();
+        let decompose_res = decompose_tool
+            .execute(json!({
+                "goal": "Refactor database engine to async"
+            }))
+            .await
+            .unwrap();
+
+        assert_eq!(decompose_res["status"], "success");
+        assert!(decompose_res["total_waves"].as_u64().unwrap() >= 3);
+        assert!(decompose_res["ascii_tree"].as_str().unwrap().contains("WAVE 0"));
+
+        let dag_val = decompose_res["dag"].clone();
+
+        let execute_tool = DagExecuteTool::new();
+        let exec_res = execute_tool
+            .execute(json!({
+                "dag": dag_val,
+                "max_concurrency": 2
+            }))
+            .await
+            .unwrap();
+
+        assert_eq!(exec_res["status"], "success");
+        assert!(exec_res["report"]["success"].as_bool().unwrap());
+        assert!(exec_res["report"]["completed_nodes"].as_u64().unwrap() > 0);
+    }
 }

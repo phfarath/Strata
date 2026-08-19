@@ -20,9 +20,10 @@ pub async fn run_all_scenarios() -> Result<()> {
     run_cognitive_feedback_and_alignment_scenario().await?;
     run_cognitive_observability_scenario().await?;
     run_world_model_causal_scenario().await?;
+    run_hierarchical_planning_dag_scenario().await?;
 
     println!("\n========================================================");
-    println!("🎉 ALL EVAL SCENARIOS PASSED (10/10)");
+    println!("🎉 ALL EVAL SCENARIOS PASSED (11/11)");
     println!("========================================================\n");
 
     Ok(())
@@ -100,6 +101,13 @@ mod tests {
         run_world_model_causal_scenario()
             .await
             .expect("World model causal scenario failed");
+    }
+
+    #[tokio::test]
+    async fn test_eval_hierarchical_planning_dag() {
+        run_hierarchical_planning_dag_scenario()
+            .await
+            .expect("Hierarchical planning DAG scenario failed");
     }
 }
 

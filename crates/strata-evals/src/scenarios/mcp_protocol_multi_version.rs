@@ -104,8 +104,8 @@ pub async fn run_mcp_protocol_multi_version_scenario() -> Result<()> {
     let tool_names: Vec<String> = tools_list.tools.iter().map(|t| t.name.clone()).collect();
     println!("    Discovered tools: {:?}", tool_names);
 
-    if tools_list.tools.len() < 6 {
-        bail!("Expected at least 6 tools registered, got {}", tools_list.tools.len());
+    if tools_list.tools.len() < 8 {
+        bail!("Expected at least 8 tools registered, got {}", tools_list.tools.len());
     }
 
     let expected_tools = [
@@ -115,6 +115,8 @@ pub async fn run_mcp_protocol_multi_version_scenario() -> Result<()> {
         "memory_digest",
         "memory_feedback",
         "causal_blast_radius",
+        "goal_decompose",
+        "dag_execute",
     ];
     for exp in expected_tools {
         if !tool_names.contains(&exp.to_string()) {
@@ -130,7 +132,7 @@ pub async fn run_mcp_protocol_multi_version_scenario() -> Result<()> {
     if meta.get("cacheScope").and_then(|v| v.as_str()) != Some("session") {
         bail!("Expected _meta.cacheScope = 'session', got {:?}", meta.get("cacheScope"));
     }
-    println!("    ✓ tools/list returned 5 tools and verified _meta cache hints: {:?}", meta);
+    println!("    ✓ tools/list returned 8 tools and verified _meta cache hints: {:?}", meta);
 
     // -------------------------------------------------------------------------
     // Test C: Execution of all 5 tools (search, get, write, digest, feedback)

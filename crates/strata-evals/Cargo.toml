@@ -12,6 +12,7 @@ strata-tools = { workspace = true }
 strata-reasoning = { workspace = true }
 strata-cli = { workspace = true }
 tokio = { workspace = true }
+async-trait = { workspace = true }
 
 serde = { workspace = true }
 serde_json = { workspace = true }
