@@ -104,11 +104,18 @@ pub async fn run_mcp_protocol_multi_version_scenario() -> Result<()> {
     let tool_names: Vec<String> = tools_list.tools.iter().map(|t| t.name.clone()).collect();
     println!("    Discovered tools: {:?}", tool_names);
 
-    if tools_list.tools.len() != 5 {
-        bail!("Expected exactly 5 tools registered, got {}", tools_list.tools.len());
+    if tools_list.tools.len() < 6 {
+        bail!("Expected at least 6 tools registered, got {}", tools_list.tools.len());
     }
 
-    let expected_tools = ["memory_search", "memory_get", "memory_write", "memory_digest", "memory_feedback"];
+    let expected_tools = [
+        "memory_search",
+        "memory_get",
+        "memory_write",
+        "memory_digest",
+        "memory_feedback",
+        "causal_blast_radius",
+    ];
     for exp in expected_tools {
         if !tool_names.contains(&exp.to_string()) {
             bail!("Missing expected tool: '{exp}'");

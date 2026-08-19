@@ -1,4 +1,5 @@
 pub mod auth;
+pub mod blast_radius;
 pub mod consolidate;
 pub mod daemon;
 pub mod doctor;
@@ -15,6 +16,7 @@ pub mod sync;
 pub mod sync_hosts;
 
 pub use auth::*;
+pub use blast_radius::*;
 pub use consolidate::*;
 pub use daemon::*;
 pub use doctor::*;

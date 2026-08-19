@@ -460,3 +460,60 @@ impl Tool for SafeShellTool {
         }
     }
 }
+
+/// Tool for evaluating the architectural causal blast radius before modifying code.
+pub struct CausalBlastRadiusTool {
+    world_model: Arc<strata_reasoning::WorldModel>,
+}
+
+impl CausalBlastRadiusTool {
+    pub fn new(world_model: Arc<strata_reasoning::WorldModel>) -> Self {
+        Self { world_model }
+    }
+}
+
+#[async_trait]
+impl Tool for CausalBlastRadiusTool {
+    fn name(&self) -> &str {
+        "causal_blast_radius"
+    }
+
+    fn description(&self) -> &str {
+        "Analyze the architectural causal blast radius, downstream ripple effects, and breaking risk before modifying code."
+    }
+
+    fn parameters_schema(&self) -> serde_json::Value {
+        json!({
+            "type": "object",
+            "properties": {
+                "target": {
+                    "type": "string",
+                    "description": "File path, module name, or struct to evaluate (e.g. 'crates/strata-server/src/storage.rs' or 'ServerStorage')"
+                },
+                "depth": {
+                    "type": "integer",
+                    "description": "Maximum traversal depth for transitive dependencies (default 3)"
+                }
+            },
+            "required": ["target"]
+        })
+    }
+
+    async fn execute(&self, params: serde_json::Value) -> Result<serde_json::Value, StrataError> {
+        let target = params
+            .get("target")
+            .and_then(|v| v.as_str())
+            .ok_or_else(|| StrataError::ValidationError("Missing 'target' field".to_string()))?;
+
+        let depth = params.get("depth").and_then(|v| v.as_u64()).unwrap_or(3) as usize;
+
+        let report = self
+            .world_model
+            .predict_impact(target, depth)
+            .await
+            .map_err(|e| StrataError::ReasoningError(e.to_string()))?;
+
+        Ok(json!(report))
+    }
+}
+

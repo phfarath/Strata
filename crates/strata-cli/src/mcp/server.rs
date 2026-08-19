@@ -152,6 +152,24 @@ impl McpServer {
                     "required": ["id", "rating"]
                 }),
             },
+            ToolDefinition {
+                name: "causal_blast_radius".to_string(),
+                description: "Analyze the architectural causal blast radius, downstream ripple effects, and breaking change risks before modifying code.".to_string(),
+                input_schema: serde_json::json!({
+                    "type": "object",
+                    "properties": {
+                        "target": {
+                            "type": "string",
+                            "description": "File path, module name, struct or API to evaluate (e.g. 'crates/strata-server/src/storage.rs' or 'ServerStorage')"
+                        },
+                        "depth": {
+                            "type": "integer",
+                            "description": "Maximum traversal depth for transitive dependencies (default: 3)"
+                        }
+                    },
+                    "required": ["target"]
+                }),
+            },
         ]
     }
 
@@ -491,6 +509,27 @@ impl McpServer {
                     }
                     Ok(None) => CallToolResult::error(format!("Memory record with ID '{id_str}' not found")),
                     Err(e) => CallToolResult::error(format!("Memory get error: {e}")),
+                }
+            }
+            "causal_blast_radius" => {
+                let target = match args.get("target").and_then(|v| v.as_str()) {
+                    Some(t) => t,
+                    None => return CallToolResult::error("Missing required parameter: target"),
+                };
+
+                let depth = args.get("depth").and_then(|v| v.as_u64()).unwrap_or(3) as usize;
+
+                let world_model = strata_reasoning::WorldModel::new();
+                let cwd = std::env::current_dir().unwrap_or_else(|_| std::path::PathBuf::from("."));
+                let _ = world_model.index_workspace(&cwd).await;
+
+                match world_model.predict_impact(target, depth).await {
+                    Ok(report) => {
+                        let text_tree = world_model.to_ascii_tree(target, depth).await.unwrap_or_default();
+                        let structured = serde_json::to_value(&report).unwrap_or(serde_json::json!({}));
+                        CallToolResult::structured(text_tree, structured)
+                    }
+                    Err(e) => CallToolResult::error(format!("Causal blast radius prediction error: {e}")),
                 }
             }
             unknown_tool => CallToolResult::error(format!("Unknown tool: '{unknown_tool}'")),

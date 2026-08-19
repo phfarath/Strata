@@ -14,6 +14,7 @@ use strata_memory::SqliteMemoryEngine;
 use strata_cli::{
     commands::{
         auth::{run_auth, AuthArgs},
+        blast_radius::{run_blast_radius, BlastRadiusArgs},
         consolidate::{run_consolidate, ConsolidateOptions},
         daemon::{run_daemon, DaemonArgs},
         doctor::run_doctor,
@@ -178,6 +179,10 @@ enum Commands {
     /// View cognitive observability dashboard, Ebbinghaus decay curves, ACT-R activations, and anti-patterns
     #[command(name = "observe", alias = "stats", alias = "decay", alias = "dashboard", alias = "tui")]
     Observe(ObserveArgs),
+
+    /// Analyze architectural causal blast radius, ripple effects, and breaking risk before editing code
+    #[command(name = "blast-radius", alias = "causal", alias = "impact", alias = "world-model")]
+    BlastRadius(BlastRadiusArgs),
 
     /// Manage Strata Cloud developer accounts and authentication
     Auth(AuthArgs),
@@ -387,6 +392,11 @@ async fn main() -> Result<()> {
         Commands::Observe(args) => {
             let store = engine.store_arc();
             run_observe(args, store).await?;
+        }
+
+        Commands::BlastRadius(args) => {
+            let store = engine.store_arc();
+            run_blast_radius(args, store.as_ref()).await?;
         }
     }
 

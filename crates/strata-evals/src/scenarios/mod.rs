@@ -7,6 +7,7 @@ pub mod mcp_protocol_multi_version;
 pub mod offline_first_cdc_sync;
 pub mod procedural_skill_distillation;
 pub mod silent_failure_avoidance;
+pub mod world_model_causal;
 
 pub use cognitive_feedback_and_alignment::*;
 pub use cognitive_observability::*;
@@ -17,4 +18,5 @@ pub use mcp_protocol_multi_version::*;
 pub use offline_first_cdc_sync::*;
 pub use procedural_skill_distillation::*;
 pub use silent_failure_avoidance::*;
+pub use world_model_causal::*;
 

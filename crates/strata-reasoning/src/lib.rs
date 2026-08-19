@@ -1,9 +1,11 @@
 pub mod adapters;
+pub mod causal;
 pub mod engine;
 pub mod mock;
 pub mod prompts;
 
 pub use adapters::*;
+pub use causal::*;
 pub use engine::*;
 pub use mock::*;
 pub use prompts::*;
