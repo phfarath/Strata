@@ -714,4 +714,190 @@ impl Tool for DagExecuteTool {
     }
 }
 
+/// Tool for one-click local LoRA fine-tuning via Unsloth and Ollama deployment.
+pub struct TrainPipelineTool {
+    store: Option<Arc<strata_memory::SqliteStore>>,
+}
+
+impl Default for TrainPipelineTool {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl TrainPipelineTool {
+    pub fn new() -> Self {
+        Self { store: None }
+    }
+
+    pub fn with_store(store: Arc<strata_memory::SqliteStore>) -> Self {
+        Self { store: Some(store) }
+    }
+}
+
+#[async_trait]
+impl Tool for TrainPipelineTool {
+    fn name(&self) -> &str {
+        "train_pipeline"
+    }
+
+    fn description(&self) -> &str {
+        "Synthesize one-click Unsloth LoRA fine-tuning scripts, Ollama Modelfile, datasets, and execution artifacts."
+    }
+
+    fn parameters_schema(&self) -> serde_json::Value {
+        json!({
+            "type": "object",
+            "properties": {
+                "base_model": {
+                    "type": "string",
+                    "description": "HuggingFace base model identifier (default: 'unsloth/Llama-3.2-3B-Instruct')"
+                },
+                "method": {
+                    "type": "string",
+                    "enum": ["dpo", "sft", "orpo", "kto"],
+                    "description": "Fine-tuning optimization method (default: 'dpo')"
+                },
+                "quantization": {
+                    "type": "string",
+                    "enum": ["4bit", "8bit", "16bit", "none"],
+                    "description": "Quantization format for base model loading (default: '4bit')"
+                },
+                "lora_r": {
+                    "type": "integer",
+                    "description": "LoRA rank dimension (default: 16)"
+                },
+                "lora_alpha": {
+                    "type": "integer",
+                    "description": "LoRA scaling alpha (default: 32)"
+                },
+                "lora_dropout": {
+                    "type": "number",
+                    "description": "LoRA dropout probability (default: 0.0)"
+                },
+                "learning_rate": {
+                    "type": "number",
+                    "description": "Optimizer learning rate (default: 5e-5)"
+                },
+                "batch_size": {
+                    "type": "integer",
+                    "description": "Per-device training batch size (default: 2)"
+                },
+                "gradient_accumulation_steps": {
+                    "type": "integer",
+                    "description": "Gradient accumulation steps (default: 4)"
+                },
+                "max_steps": {
+                    "type": "integer",
+                    "description": "Maximum training steps (default: 60)"
+                },
+                "max_seq_length": {
+                    "type": "integer",
+                    "description": "Maximum sequence context length (default: 2048)"
+                },
+                "output_dir": {
+                    "type": "string",
+                    "description": "Target directory for synthesized training artifacts (default: './outputs/lora_run')"
+                },
+                "dataset_content": {
+                    "type": "string",
+                    "description": "Optional raw JSONL dataset string"
+                },
+                "ollama_model_name": {
+                    "type": "string",
+                    "description": "Target model identifier for local Ollama registration (default: 'strata-custom-coder')"
+                },
+                "export_gguf": {
+                    "type": "boolean",
+                    "description": "Whether to export GGUF format for Ollama (default: true)"
+                },
+                "dry_run": {
+                    "type": "boolean",
+                    "description": "Whether to run dry-run artifact synthesis without starting Python (default: true)"
+                }
+            }
+        })
+    }
+
+    async fn execute(&self, params: serde_json::Value) -> Result<serde_json::Value, StrataError> {
+        let base_model = params
+            .get("base_model")
+            .and_then(|v| v.as_str())
+            .unwrap_or("unsloth/Llama-3.2-3B-Instruct");
+
+        let method_str = params
+            .get("method")
+            .and_then(|v| v.as_str())
+            .unwrap_or("dpo");
+        let method = method_str.parse::<strata_reasoning::TrainingMethod>()?;
+
+        let quant_str = params
+            .get("quantization")
+            .and_then(|v| v.as_str())
+            .unwrap_or("4bit");
+        let quantization = quant_str.parse::<strata_reasoning::QuantizationType>()?;
+
+        let lora_r = params.get("lora_r").and_then(|v| v.as_u64()).unwrap_or(16) as u32;
+        let lora_alpha = params.get("lora_alpha").and_then(|v| v.as_u64()).unwrap_or(32) as u32;
+        let lora_dropout = params.get("lora_dropout").and_then(|v| v.as_f64()).unwrap_or(0.0) as f32;
+        let learning_rate = params.get("learning_rate").and_then(|v| v.as_f64()).unwrap_or(5e-5);
+        let batch_size = params.get("batch_size").and_then(|v| v.as_u64()).unwrap_or(2) as usize;
+        let grad_accum = params.get("gradient_accumulation_steps").and_then(|v| v.as_u64()).unwrap_or(4) as usize;
+        let max_steps = params.get("max_steps").and_then(|v| v.as_u64()).unwrap_or(60) as usize;
+        let max_seq_length = params.get("max_seq_length").and_then(|v| v.as_u64()).unwrap_or(2048) as usize;
+        let output_dir_str = params.get("output_dir").and_then(|v| v.as_str()).unwrap_or("./outputs/lora_run");
+        let ollama_name = params.get("ollama_model_name").and_then(|v| v.as_str()).unwrap_or("strata-custom-coder");
+        let export_gguf = params.get("export_gguf").and_then(|v| v.as_bool()).unwrap_or(true);
+
+        let mut config = strata_reasoning::TrainingConfig::new(base_model)
+            .with_method(method)
+            .with_quantization(quantization)
+            .with_lora(lora_r, lora_alpha, lora_dropout)
+            .with_learning_rate(learning_rate)
+            .with_batch_size(batch_size, grad_accum)
+            .with_max_steps(max_steps)
+            .with_max_seq_length(max_seq_length)
+            .with_output_dir(output_dir_str)
+            .with_ollama_model(ollama_name);
+        config.export_gguf = export_gguf;
+
+        // Determine dataset content and sample count
+        let (dataset_str, sample_count) = if let Some(content) = params.get("dataset_content").and_then(|v| v.as_str()) {
+            let lines_count = content.lines().filter(|l| !l.trim().is_empty()).count();
+            (Some(content.to_string()), lines_count)
+        } else if let Some(ref store) = self.store {
+            let miner = strata_memory::PreferenceMiner::new(store.clone());
+            let fmt = match method {
+                strata_reasoning::TrainingMethod::Sft => strata_memory::ExportFormat::Sft,
+                strata_reasoning::TrainingMethod::Kto => strata_memory::ExportFormat::Kto,
+                _ => strata_memory::ExportFormat::Dpo,
+            };
+            let mined = miner.export(fmt, None).unwrap_or_default();
+            let lines_count = mined.lines().filter(|l| !l.trim().is_empty()).count();
+            (Some(mined), lines_count)
+        } else {
+            let default_dpo = "{\"prompt\":\"Context: Agent encountered borrow error\",\"chosen\":\"Use Arc and Clone properly\",\"rejected\":\"Force unsafe raw pointers\"}\n";
+            (Some(default_dpo.to_string()), 1)
+        };
+
+        let pipeline = strata_reasoning::TrainingPipeline::new(config);
+        let out_path = std::path::Path::new(output_dir_str);
+        let result = pipeline.generate_artifacts(out_path, dataset_str.as_deref(), sample_count)?;
+        let summary_table = pipeline.format_summary_table(sample_count);
+
+        Ok(json!({
+            "status": "success",
+            "manifest": result.manifest,
+            "script_path": result.script_path,
+            "dataset_path": result.dataset_path,
+            "modelfile_path": result.modelfile_path,
+            "run_script_path": result.run_script_path,
+            "summary": result.summary,
+            "summary_table": summary_table,
+            "total_samples": sample_count
+        }))
+    }
+}
+
+
 

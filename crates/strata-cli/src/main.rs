@@ -30,6 +30,7 @@ use strata_cli::{
         search::{run_search, SearchOptions},
         sync::{run_sync, SyncArgs},
         sync_hosts::{run_sync_hosts, SyncHostsArgs},
+        train::{run_train, TrainArgs},
     },
     mcp::server::McpServer,
 };
@@ -200,6 +201,10 @@ enum Commands {
 
     /// Log out from Strata Cloud and clear stored credentials
     Logout,
+
+    /// One-click local LoRA fine-tuning via Unsloth and Ollama deployment
+    #[command(name = "train", alias = "lora", alias = "finetune")]
+    Train(TrainArgs),
 }
 
 
@@ -407,6 +412,11 @@ async fn main() -> Result<()> {
         Commands::BlastRadius(args) => {
             let store = engine.store_arc();
             run_blast_radius(args, store.as_ref()).await?;
+        }
+
+        Commands::Train(args) => {
+            let store = engine.store_arc();
+            run_train(args, store).await?;
         }
     }
 

@@ -353,4 +353,29 @@ mod tests {
         assert!(exec_res["report"]["success"].as_bool().unwrap());
         assert!(exec_res["report"]["completed_nodes"].as_u64().unwrap() > 0);
     }
+
+    #[tokio::test]
+    async fn test_train_pipeline_tool() {
+        let temp_dir = std::env::temp_dir().join("strata_tool_test_lora_run");
+        let tool = TrainPipelineTool::new();
+
+        let res = tool
+            .execute(json!({
+                "base_model": "unsloth/Llama-3.2-1B-Instruct",
+                "method": "dpo",
+                "output_dir": temp_dir.to_string_lossy(),
+                "dataset_content": "{\"prompt\":\"test prompt\",\"chosen\":\"test chosen\",\"rejected\":\"test rejected\"}\n",
+                "ollama_model_name": "strata-test-model",
+                "dry_run": true
+            }))
+            .await
+            .unwrap();
+
+        assert_eq!(res["status"], "success");
+        assert_eq!(res["total_samples"], 1);
+        assert!(res["script_path"].as_str().unwrap().contains("train_lora.py"));
+        assert!(res["modelfile_path"].as_str().unwrap().contains("Modelfile"));
+
+        let _ = std::fs::remove_dir_all(&temp_dir);
+    }
 }

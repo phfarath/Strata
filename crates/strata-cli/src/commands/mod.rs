@@ -15,6 +15,7 @@ pub mod prune;
 pub mod search;
 pub mod sync;
 pub mod sync_hosts;
+pub mod train;
 
 pub use auth::*;
 pub use blast_radius::*;
@@ -33,3 +34,4 @@ pub use prune::*;
 pub use search::*;
 pub use sync::*;
 pub use sync_hosts::*;
+pub use train::*;

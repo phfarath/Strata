@@ -4,6 +4,7 @@ pub mod engine;
 pub mod mock;
 pub mod planning;
 pub mod prompts;
+pub mod training;
 
 pub use adapters::*;
 pub use causal::{
@@ -18,6 +19,7 @@ pub use planning::{
     SerializedGoalEdge, TaskExecutor,
 };
 pub use prompts::*;
+pub use training::*;
 
 #[cfg(test)]
 mod tests {
@@ -273,5 +275,57 @@ mod tests {
                 assert_eq!(node.status, GoalStatus::Completed);
             }
         }
+    }
+
+    #[test]
+    fn test_training_config_validation() {
+        let mut config = TrainingConfig::default();
+        assert!(config.validate().is_ok());
+
+        config.lora_r = 0;
+        assert!(config.validate().is_err());
+
+        config.lora_r = 16;
+        config.learning_rate = -1.0;
+        assert!(config.validate().is_err());
+    }
+
+    #[test]
+    fn test_training_generator_python_and_modelfile() {
+        let config = TrainingConfig::new("unsloth/Qwen2.5-Coder-7B-Instruct")
+            .with_method(TrainingMethod::Dpo)
+            .with_lora(32, 64, 0.05)
+            .with_learning_rate(2e-5)
+            .with_max_steps(100);
+
+        let script = generate_unsloth_training_script(&config, "data/dpo.jsonl");
+        assert!(script.contains("FastLanguageModel.from_pretrained"));
+        assert!(script.contains("unsloth/Qwen2.5-Coder-7B-Instruct"));
+        assert!(script.contains("load_in_4bit = True"));
+        assert!(script.contains("DPOTrainer"));
+        assert!(script.contains("r = 32"));
+        assert!(script.contains("lora_alpha = 64"));
+
+        let modelfile = generate_ollama_modelfile(&config, "outputs/lora_adapter");
+        assert!(modelfile.contains("FROM unsloth/Qwen2.5-Coder-7B-Instruct"));
+        assert!(modelfile.contains("ADAPTER outputs/lora_adapter"));
+        assert!(modelfile.contains("SYSTEM"));
+
+        let temp_dir = std::env::temp_dir().join("strata_test_pipeline_artifacts");
+        let pipeline = TrainingPipeline::new(config);
+        let res = pipeline
+            .generate_artifacts(&temp_dir, Some("{\"prompt\":\"p\",\"chosen\":\"c\",\"rejected\":\"r\"}\n"), 1)
+            .unwrap();
+
+        assert!(res.success);
+        assert!(std::path::Path::new(&res.script_path).exists());
+        assert!(std::path::Path::new(&res.dataset_path).exists());
+        assert!(res.modelfile_path.is_some());
+
+        let table = pipeline.format_summary_table(1);
+        assert!(table.contains("STRATA LORA FINE-TUNING PIPELINE"));
+        assert!(table.contains("unsloth/Qwen2.5-Coder-7B-Instruct"));
+
+        let _ = std::fs::remove_dir_all(&temp_dir);
     }
 }

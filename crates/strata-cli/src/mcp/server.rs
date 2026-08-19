@@ -213,6 +213,36 @@ impl McpServer {
                     }
                 }),
             },
+            ToolDefinition {
+                name: "train_pipeline".to_string(),
+                description: "Synthesize one-click local LoRA fine-tuning scripts (Unsloth), datasets, and Ollama Modelfiles from continuous memory traces.".to_string(),
+                input_schema: serde_json::json!({
+                    "type": "object",
+                    "properties": {
+                        "base_model": {
+                            "type": "string",
+                            "description": "HuggingFace base model identifier (default: 'unsloth/Llama-3.2-3B-Instruct')"
+                        },
+                        "method": {
+                            "type": "string",
+                            "enum": ["dpo", "sft", "orpo", "kto"],
+                            "description": "Fine-tuning method (default: 'dpo')"
+                        },
+                        "output_dir": {
+                            "type": "string",
+                            "description": "Artifact output directory (default: './outputs/lora_run')"
+                        },
+                        "ollama_model_name": {
+                            "type": "string",
+                            "description": "Target Ollama model identifier (default: 'strata-custom-coder')"
+                        },
+                        "dry_run": {
+                            "type": "boolean",
+                            "description": "Whether to run in dry-run mode (default: true)"
+                        }
+                    }
+                }),
+            },
         ]
     }
 
@@ -643,6 +673,20 @@ impl McpServer {
                         CallToolResult::structured(text_tree, structured)
                     }
                     Err(e) => CallToolResult::error(format!("DAG execution error: {e}")),
+                }
+            }
+            "train_pipeline" => {
+                use strata_core::traits::Tool;
+                let tool = strata_tools::TrainPipelineTool::new();
+                match tool.execute(args).await {
+                    Ok(val) => {
+                        let summary_table = val
+                            .get("summary_table")
+                            .and_then(|v| v.as_str())
+                            .unwrap_or("Training pipeline execution completed successfully.");
+                        CallToolResult::structured(summary_table.to_string(), val)
+                    }
+                    Err(e) => CallToolResult::error(format!("Train pipeline error: {e}")),
                 }
             }
             unknown_tool => CallToolResult::error(format!("Unknown tool: '{unknown_tool}'")),

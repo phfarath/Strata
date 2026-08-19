@@ -21,9 +21,10 @@ pub async fn run_all_scenarios() -> Result<()> {
     run_cognitive_observability_scenario().await?;
     run_world_model_causal_scenario().await?;
     run_hierarchical_planning_dag_scenario().await?;
+    run_lora_finetuning_pipeline_scenario().await?;
 
     println!("\n========================================================");
-    println!("🎉 ALL EVAL SCENARIOS PASSED (11/11)");
+    println!("🎉 ALL EVAL SCENARIOS PASSED (12/12)");
     println!("========================================================\n");
 
     Ok(())
@@ -108,6 +109,13 @@ mod tests {
         run_hierarchical_planning_dag_scenario()
             .await
             .expect("Hierarchical planning DAG scenario failed");
+    }
+
+    #[tokio::test]
+    async fn test_eval_lora_finetuning_pipeline() {
+        run_lora_finetuning_pipeline_scenario()
+            .await
+            .expect("LoRA fine-tuning pipeline scenario failed");
     }
 }
 
