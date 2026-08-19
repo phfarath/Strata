@@ -12,7 +12,8 @@ use uuid::Uuid;
 use crate::auth::{require_user_session, resolve_auth, AuthQuery};
 use crate::models::{
     ApiKeyCreated, AuthResponse, CreateApiKeyRequest, CreateWorkspaceRequest, LoginRequest,
-    SignupRequest, UserPublic, Workspace,
+    SearchEmbeddingRequest, SearchEmbeddingResponse, SignupRequest, UpsertEmbeddingRequest,
+    UserPublic, Workspace,
 };
 use crate::security::{create_jwt, generate_api_key, hash_password, verify_password};
 use crate::storage::ServerStorage;
@@ -67,6 +68,8 @@ pub struct StatusResponse {
     pub workspace_id: String,
     pub total_deltas: usize,
     pub max_seq: u64,
+    pub is_postgres: bool,
+    pub has_pgvector: bool,
 }
 
 #[derive(Debug, Serialize)]
@@ -75,6 +78,8 @@ pub struct HealthResponse {
     pub version: &'static str,
     pub uptime_secs: u64,
     pub workspaces_count: usize,
+    pub is_postgres: bool,
+    pub has_pgvector: bool,
 }
 
 #[derive(Debug, Deserialize)]
@@ -114,12 +119,14 @@ pub struct CliAuthorizeResponse {
 // -------------------------------------------------------------
 
 pub async fn health_handler(State(state): State<Arc<AppState>>) -> Json<HealthResponse> {
-    let workspaces = state.storage.list_workspaces().unwrap_or_default();
+    let workspaces = state.storage.list_workspaces().await.unwrap_or_default();
     Json(HealthResponse {
         status: "ok",
         version: env!("CARGO_PKG_VERSION"),
         uptime_secs: state.start_time.elapsed().as_secs(),
         workspaces_count: workspaces.len(),
+        is_postgres: state.storage.is_postgres(),
+        has_pgvector: state.storage.has_pgvector(),
     })
 }
 
@@ -387,7 +394,7 @@ pub async fn cli_authorize_handler(
                 .into_response());
         }
 
-        if let Ok(Some(_)) = state.storage.get_user_by_email(email) {
+        if let Ok(Some(_)) = state.storage.get_user_by_email(email).await {
             return Err((
                 StatusCode::CONFLICT,
                 Json(serde_json::json!({ "error": "User with this email already exists. Please sign in." })),
@@ -407,6 +414,7 @@ pub async fn cli_authorize_handler(
         let created_user = state
             .storage
             .create_user(email, &password_hash, &full_name)
+            .await
             .map_err(|e| {
                 (
                     StatusCode::INTERNAL_SERVER_ERROR,
@@ -416,12 +424,13 @@ pub async fn cli_authorize_handler(
             })?;
 
         let slug = format!("{}-workspace", email.split('@').next().unwrap_or("dev"));
-        let _ = state.storage.create_workspace(&created_user.id, &format!("{full_name}'s Workspace"), &slug);
+        let _ = state.storage.create_workspace(&created_user.id, &format!("{full_name}'s Workspace"), &slug).await;
         created_user
     } else {
         let existing = state
             .storage
             .get_user_by_email(email)
+            .await
             .map_err(|e| {
                 (
                     StatusCode::INTERNAL_SERVER_ERROR,
@@ -452,6 +461,7 @@ pub async fn cli_authorize_handler(
     let workspaces = state
         .storage
         .get_workspaces_for_user(&user.id)
+        .await
         .map_err(|e| {
             (
                 StatusCode::INTERNAL_SERVER_ERROR,
@@ -467,6 +477,7 @@ pub async fn cli_authorize_handler(
         state
             .storage
             .create_workspace(&user.id, &format!("{}'s Workspace", user.full_name), &slug)
+            .await
             .map_err(|e| {
                 (
                     StatusCode::INTERNAL_SERVER_ERROR,
@@ -491,7 +502,7 @@ pub async fn cli_authorize_handler(
         &key_hash,
         &["sync:read".to_string(), "sync:write".to_string()],
         None,
-    );
+    ).await;
 
     let redirect_url = format!(
         "http://127.0.0.1:{}/callback?token={}&state={}&workspace_id={}&workspace_slug={}&user_email={}",
@@ -542,7 +553,7 @@ pub async fn signup_handler(
     }
 
     // Check if user already exists
-    if let Ok(Some(_)) = state.storage.get_user_by_email(email) {
+    if let Ok(Some(_)) = state.storage.get_user_by_email(email).await {
         return Err((
             StatusCode::CONFLICT,
             Json(serde_json::json!({ "error": "User with this email already exists" })),
@@ -561,6 +572,7 @@ pub async fn signup_handler(
     let user = state
         .storage
         .create_user(email, &password_hash, &payload.full_name)
+        .await
         .map_err(|e| {
             (
                 StatusCode::INTERNAL_SERVER_ERROR,
@@ -581,6 +593,7 @@ pub async fn signup_handler(
     let workspace = state
         .storage
         .create_workspace(&user.id, &ws_name, &slug)
+        .await
         .map_err(|e| {
             (
                 StatusCode::INTERNAL_SERVER_ERROR,
@@ -613,6 +626,7 @@ pub async fn login_handler(
     let user = state
         .storage
         .get_user_by_email(email)
+        .await
         .map_err(|e| {
             (
                 StatusCode::INTERNAL_SERVER_ERROR,
@@ -640,6 +654,7 @@ pub async fn login_handler(
     let workspaces = state
         .storage
         .get_workspaces_for_user(&user.id)
+        .await
         .unwrap_or_default();
 
     let token = create_jwt(&user.id, &user.email, &state.jwt_secret, 30 * 86400).map_err(|e| {
@@ -662,10 +677,11 @@ pub async fn me_handler(
     headers: HeaderMap,
     Query(query): Query<AuthQuery>,
 ) -> Result<Json<AuthResponse>, Response> {
-    let user = require_user_session(&headers, Some(&query), &state.storage, &state.jwt_secret)?;
+    let user = require_user_session(&headers, Some(&query), &state.storage, &state.jwt_secret).await?;
     let workspaces = state
         .storage
         .get_workspaces_for_user(&user.id)
+        .await
         .unwrap_or_default();
 
     let token = create_jwt(&user.id, &user.email, &state.jwt_secret, 30 * 86400).map_err(|e| {
@@ -693,7 +709,7 @@ pub async fn create_workspace_handler(
     Query(query): Query<AuthQuery>,
     Json(payload): Json<CreateWorkspaceRequest>,
 ) -> Result<Json<Workspace>, Response> {
-    let user = require_user_session(&headers, Some(&query), &state.storage, &state.jwt_secret)?;
+    let user = require_user_session(&headers, Some(&query), &state.storage, &state.jwt_secret).await?;
 
     let name = payload.name.trim();
     if name.is_empty() {
@@ -712,6 +728,7 @@ pub async fn create_workspace_handler(
     let ws = state
         .storage
         .create_workspace(&user.id, name, &slug)
+        .await
         .map_err(|e| {
             (
                 StatusCode::INTERNAL_SERVER_ERROR,
@@ -728,10 +745,11 @@ pub async fn list_workspaces_handler(
     headers: HeaderMap,
     Query(query): Query<AuthQuery>,
 ) -> Result<Json<Vec<Workspace>>, Response> {
-    let user = require_user_session(&headers, Some(&query), &state.storage, &state.jwt_secret)?;
+    let user = require_user_session(&headers, Some(&query), &state.storage, &state.jwt_secret).await?;
     let workspaces = state
         .storage
         .get_workspaces_for_user(&user.id)
+        .await
         .unwrap_or_default();
     Ok(Json(workspaces))
 }
@@ -746,12 +764,13 @@ pub async fn create_key_handler(
     Query(query): Query<AuthQuery>,
     Json(payload): Json<CreateApiKeyRequest>,
 ) -> Result<Json<ApiKeyCreated>, Response> {
-    let user = require_user_session(&headers, Some(&query), &state.storage, &state.jwt_secret)?;
+    let user = require_user_session(&headers, Some(&query), &state.storage, &state.jwt_secret).await?;
 
     // Verify user owns the workspace
     let ws = state
         .storage
         .get_workspace_by_id(&payload.workspace_id)
+        .await
         .map_err(|e| {
             (
                 StatusCode::INTERNAL_SERVER_ERROR,
@@ -790,6 +809,7 @@ pub async fn create_key_handler(
             &scopes,
             expires_at,
         )
+        .await
         .map_err(|e| {
             (
                 StatusCode::INTERNAL_SERVER_ERROR,
@@ -817,11 +837,12 @@ pub async fn list_keys_handler(
     let auth_q = AuthQuery {
         token: query.token.clone(),
     };
-    let user = require_user_session(&headers, Some(&auth_q), &state.storage, &state.jwt_secret)?;
+    let user = require_user_session(&headers, Some(&auth_q), &state.storage, &state.jwt_secret).await?;
 
     let ws = state
         .storage
         .get_workspace_by_id(&query.workspace_id)
+        .await
         .unwrap_or(None)
         .ok_or_else(|| {
             (
@@ -842,6 +863,7 @@ pub async fn list_keys_handler(
     let keys = state
         .storage
         .list_api_keys_for_workspace(&query.workspace_id)
+        .await
         .unwrap_or_default();
 
     Ok(Json(keys))
@@ -853,11 +875,12 @@ pub async fn revoke_key_handler(
     headers: HeaderMap,
     Query(query): Query<AuthQuery>,
 ) -> Result<Json<serde_json::Value>, Response> {
-    let user = require_user_session(&headers, Some(&query), &state.storage, &state.jwt_secret)?;
+    let user = require_user_session(&headers, Some(&query), &state.storage, &state.jwt_secret).await?;
 
     let revoked = state
         .storage
         .revoke_api_key(&key_id, &user.id)
+        .await
         .map_err(|e| {
             (
                 StatusCode::INTERNAL_SERVER_ERROR,
@@ -895,7 +918,8 @@ pub async fn push_handler(
         &state.storage,
         &state.jwt_secret,
         state.legacy_secret.as_deref(),
-    )?;
+    )
+    .await?;
 
     let workspace_id = payload.workspace_id.trim();
     if workspace_id.is_empty() {
@@ -909,6 +933,7 @@ pub async fn push_handler(
     let (pushed, max_seq) = state
         .storage
         .push_deltas(workspace_id, payload.deltas)
+        .await
         .map_err(|e| {
             (
                 StatusCode::INTERNAL_SERVER_ERROR,
@@ -949,7 +974,8 @@ pub async fn pull_handler(
         &state.storage,
         &state.jwt_secret,
         state.legacy_secret.as_deref(),
-    )?;
+    )
+    .await?;
 
     let workspace_id = query
         .workspace_id
@@ -964,6 +990,7 @@ pub async fn pull_handler(
     let deltas = state
         .storage
         .pull_deltas(workspace_id, since_seq, limit)
+        .await
         .map_err(|e| {
             (
                 StatusCode::INTERNAL_SERVER_ERROR,
@@ -989,7 +1016,8 @@ pub async fn status_handler(
         &state.storage,
         &state.jwt_secret,
         state.legacy_secret.as_deref(),
-    )?;
+    )
+    .await?;
 
     let workspace_id = query
         .workspace_id
@@ -998,7 +1026,7 @@ pub async fn status_handler(
         .filter(|s| !s.is_empty())
         .unwrap_or("default");
 
-    let (total_deltas, max_seq) = state.storage.get_status(workspace_id).map_err(|e| {
+    let (total_deltas, max_seq) = state.storage.get_status(workspace_id).await.map_err(|e| {
         (
             StatusCode::INTERNAL_SERVER_ERROR,
             Json(serde_json::json!({ "error": format!("Failed to get status: {e}") })),
@@ -1010,6 +1038,80 @@ pub async fn status_handler(
         workspace_id: workspace_id.to_string(),
         total_deltas,
         max_seq,
+        is_postgres: state.storage.is_postgres(),
+        has_pgvector: state.storage.has_pgvector(),
+    }))
+}
+
+// -------------------------------------------------------------
+// Vector Embeddings Handlers (pgvector Cloud Vector Store)
+// -------------------------------------------------------------
+
+pub async fn upsert_embedding_handler(
+    State(state): State<Arc<AppState>>,
+    headers: HeaderMap,
+    Json(payload): Json<UpsertEmbeddingRequest>,
+) -> Result<Json<serde_json::Value>, Response> {
+    let _auth = resolve_auth(
+        &headers,
+        None,
+        &state.storage,
+        &state.jwt_secret,
+        state.legacy_secret.as_deref(),
+    )
+    .await?;
+
+    let metadata = payload.metadata.unwrap_or_else(|| serde_json::json!({}));
+    state
+        .storage
+        .upsert_embedding(&payload.workspace_id, &payload.memory_id, &payload.embedding, &metadata)
+        .await
+        .map_err(|e| {
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(serde_json::json!({ "error": format!("Failed to upsert embedding: {e}") })),
+            )
+                .into_response()
+        })?;
+
+    Ok(Json(serde_json::json!({
+        "status": "success",
+        "memory_id": payload.memory_id
+    })))
+}
+
+pub async fn search_embedding_handler(
+    State(state): State<Arc<AppState>>,
+    headers: HeaderMap,
+    Json(payload): Json<SearchEmbeddingRequest>,
+) -> Result<Json<SearchEmbeddingResponse>, Response> {
+    let _auth = resolve_auth(
+        &headers,
+        None,
+        &state.storage,
+        &state.jwt_secret,
+        state.legacy_secret.as_deref(),
+    )
+    .await?;
+
+    let limit = payload.limit.unwrap_or(10);
+    let results = state
+        .storage
+        .search_embeddings(&payload.workspace_id, &payload.query_embedding, limit)
+        .await
+        .map_err(|e| {
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(serde_json::json!({ "error": format!("Failed to search embeddings: {e}") })),
+            )
+                .into_response()
+        })?;
+
+    let total = results.len();
+    Ok(Json(SearchEmbeddingResponse {
+        workspace_id: payload.workspace_id,
+        results,
+        total,
     }))
 }
 
@@ -1029,7 +1131,8 @@ pub async fn ws_handler(
         &state.storage,
         &state.jwt_secret,
         state.legacy_secret.as_deref(),
-    )?;
+    )
+    .await?;
 
     Ok(ws.on_upgrade(move |socket| handle_ws_socket(socket, state)))
 }

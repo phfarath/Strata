@@ -404,3 +404,53 @@ async fn test_cli_auth_browser_page_and_authorize_flow() {
     assert!(redirect_url.contains(token));
 }
 
+#[tokio::test]
+async fn test_vector_embeddings_endpoints_and_health() {
+    let (base_url, _handle) = spawn_test_server(None).await;
+    let client = Client::new();
+
+    // 1. Check health response includes engine flags
+    let health_resp = client
+        .get(format!("{base_url}/health"))
+        .send()
+        .await
+        .unwrap();
+    let health_data: serde_json::Value = health_resp.json().await.unwrap();
+    assert_eq!(health_data["status"], "ok");
+    assert_eq!(health_data["is_postgres"], false);
+    assert_eq!(health_data["has_pgvector"], false);
+
+    // 2. Test upsert embedding endpoint
+    let upsert_payload = serde_json::json!({
+        "workspace_id": "test-ws",
+        "memory_id": Uuid::new_v4(),
+        "embedding": vec![0.1f32; 384],
+        "metadata": { "statement": "Persistent Memory Layer in Rust" }
+    });
+
+    let upsert_resp = client
+        .post(format!("{base_url}/api/v1/embeddings/upsert"))
+        .json(&upsert_payload)
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(upsert_resp.status(), reqwest::StatusCode::OK);
+
+    // 3. Test search embedding endpoint
+    let search_payload = serde_json::json!({
+        "workspace_id": "test-ws",
+        "query_embedding": vec![0.1f32; 384],
+        "limit": 5
+    });
+
+    let search_resp = client
+        .post(format!("{base_url}/api/v1/embeddings/search"))
+        .json(&search_payload)
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(search_resp.status(), reqwest::StatusCode::OK);
+    let search_data: serde_json::Value = search_resp.json().await.unwrap();
+    assert_eq!(search_data["workspace_id"], "test-ws");
+}
+

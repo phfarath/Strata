@@ -122,3 +122,32 @@ pub struct Claims {
     pub exp: usize,
     pub iat: usize,
 }
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct VectorSearchResult {
+    pub memory_id: Uuid,
+    pub score: f32,
+    pub metadata: serde_json::Value,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+pub struct UpsertEmbeddingRequest {
+    pub workspace_id: String,
+    pub memory_id: Uuid,
+    pub embedding: Vec<f32>,
+    pub metadata: Option<serde_json::Value>,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+pub struct SearchEmbeddingRequest {
+    pub workspace_id: String,
+    pub query_embedding: Vec<f32>,
+    pub limit: Option<usize>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct SearchEmbeddingResponse {
+    pub workspace_id: String,
+    pub results: Vec<VectorSearchResult>,
+    pub total: usize,
+}

@@ -22,6 +22,7 @@ pub use storage::ServerStorage;
 pub struct ServerConfig {
     pub host: String,
     pub port: u16,
+    pub database_url: Option<String>,
     pub db_path: Option<PathBuf>,
     pub jwt_secret: String,
     pub legacy_secret: Option<String>,
@@ -35,6 +36,12 @@ impl Default for ServerConfig {
             .unwrap_or(8080);
 
         let host = std::env::var("HOST").unwrap_or_else(|_| "0.0.0.0".to_string());
+
+        let database_url = std::env::var("DATABASE_URL")
+            .or_else(|_| std::env::var("POSTGRES_URL"))
+            .or_else(|_| std::env::var("SUPABASE_DB_URL"))
+            .ok()
+            .filter(|s| !s.trim().is_empty());
 
         let db_path = std::env::var("DATABASE_PATH")
             .or_else(|_| std::env::var("DATA_DIR").map(|d| format!("{d}/strata_sync.db")))
@@ -54,6 +61,7 @@ impl Default for ServerConfig {
         Self {
             host,
             port,
+            database_url,
             db_path,
             jwt_secret,
             legacy_secret,
@@ -61,7 +69,7 @@ impl Default for ServerConfig {
     }
 }
 
-/// Create the Axum router with all SaaS authentication, workspace, API key, and CDC sync routes.
+/// Create the Axum router with all SaaS authentication, workspace, API key, CDC sync, and pgvector routes.
 pub fn create_app(state: Arc<AppState>) -> Router {
     let cors = CorsLayer::new()
         .allow_origin(Any)
@@ -107,6 +115,9 @@ pub fn create_app(state: Arc<AppState>) -> Router {
         .route("/status", get(handlers::status_handler))
         .route("/sync/status", get(handlers::status_handler))
         .route("/api/v1/sync/status", get(handlers::status_handler))
+        // Vector Embeddings endpoints (pgvector)
+        .route("/api/v1/embeddings/upsert", post(handlers::upsert_embedding_handler))
+        .route("/api/v1/embeddings/search", post(handlers::search_embedding_handler))
         // Realtime WebSocket stream
         .route("/ws", get(handlers::ws_handler))
         .route("/sync/ws", get(handlers::ws_handler))
@@ -118,19 +129,29 @@ pub fn create_app(state: Arc<AppState>) -> Router {
 
 /// Initialize state and launch the Axum server.
 pub async fn run_server(config: ServerConfig) -> Result<()> {
-    let storage = match config.db_path {
-        Some(ref path) => {
-            if let Some(parent) = path.parent() {
-                std::fs::create_dir_all(parent)
-                    .with_context(|| format!("Failed to create parent directory for {:?}", path))?;
-            }
-            ServerStorage::open(path)
-                .with_context(|| format!("Failed to open SQLite database at {:?}", path))?
+    let storage = if let Some(ref db_url) = config.database_url {
+        if db_url.starts_with("postgres://") || db_url.starts_with("postgresql://") {
+            tracing::info!("🐘 Connecting to PostgreSQL production database (Supabase/Neon/Railway)...");
+            ServerStorage::open_postgres(db_url)
+                .await
+                .with_context(|| "Failed to connect to PostgreSQL database")?
+        } else if db_url.starts_with("sqlite://") {
+            let path = db_url.strip_prefix("sqlite://").unwrap();
+            ServerStorage::open_sqlite(path)
+                .with_context(|| format!("Failed to open SQLite database at {path}"))?
+        } else {
+            anyhow::bail!("Unsupported database URL scheme: {db_url}");
         }
-        None => {
-            tracing::warn!("No DATABASE_PATH specified; using ephemeral in-memory storage.");
-            ServerStorage::in_memory().context("Failed to initialize in-memory storage")?
+    } else if let Some(ref path) = config.db_path {
+        if let Some(parent) = path.parent() {
+            std::fs::create_dir_all(parent)
+                .with_context(|| format!("Failed to create parent directory for {:?}", path))?;
         }
+        ServerStorage::open_sqlite(path)
+            .with_context(|| format!("Failed to open SQLite database at {:?}", path))?
+    } else {
+        tracing::warn!("No DATABASE_URL or DATABASE_PATH specified; using ephemeral in-memory storage.");
+        ServerStorage::in_memory().context("Failed to initialize in-memory storage")?
     };
 
     let (ws_tx, _) = tokio::sync::broadcast::channel(256);

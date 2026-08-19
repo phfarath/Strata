@@ -78,7 +78,7 @@ pub fn extract_token_str<'a>(
 }
 
 /// Validate authentication token and resolve context.
-pub fn resolve_auth(
+pub async fn resolve_auth(
     headers: &HeaderMap,
     query: Option<&AuthQuery>,
     storage: &ServerStorage,
@@ -107,9 +107,9 @@ pub fn resolve_auth(
     // 1. Check if token is an API Key (starts with `strata_live_`)
     if token.starts_with("strata_live_") {
         let key_hash = hash_api_key(token);
-        if let Ok(Some(api_key)) = storage.get_api_key_by_hash(&key_hash) {
-            let _ = storage.record_api_key_usage(&api_key.id);
-            let workspace = storage.get_workspace_by_id(&api_key.workspace_id).ok().flatten();
+        if let Ok(Some(api_key)) = storage.get_api_key_by_hash(&key_hash).await {
+            let _ = storage.record_api_key_usage(&api_key.id).await;
+            let workspace = storage.get_workspace_by_id(&api_key.workspace_id).await.ok().flatten();
             return Ok(AuthContext::ApiKey {
                 key: api_key,
                 workspace,
@@ -127,7 +127,7 @@ pub fn resolve_auth(
     // 3. Check if token is a valid User Session JWT
     if let Ok(claims) = verify_jwt(token, jwt_secret) {
         if let Ok(user_id) = Uuid::parse_str(&claims.sub) {
-            if let Ok(Some(user)) = storage.get_user_by_id(&user_id) {
+            if let Ok(Some(user)) = storage.get_user_by_id(&user_id).await {
                 return Ok(AuthContext::User(user));
             }
         }
@@ -145,7 +145,7 @@ pub fn resolve_auth(
 }
 
 /// Require valid user session JWT for protected user/workspace/key management routes.
-pub fn require_user_session(
+pub async fn require_user_session(
     headers: &HeaderMap,
     query: Option<&AuthQuery>,
     storage: &ServerStorage,
@@ -186,6 +186,7 @@ pub fn require_user_session(
 
     let user = storage
         .get_user_by_id(&user_id)
+        .await
         .map_err(|e| {
             (
                 StatusCode::INTERNAL_SERVER_ERROR,
