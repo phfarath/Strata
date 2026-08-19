@@ -18,9 +18,10 @@ pub async fn run_all_scenarios() -> Result<()> {
     run_mcp_protocol_multi_version_scenario().await?;
     run_offline_first_cdc_sync_scenario().await?;
     run_cognitive_feedback_and_alignment_scenario().await?;
+    run_cognitive_observability_scenario().await?;
 
     println!("\n========================================================");
-    println!("🎉 ALL EVAL SCENARIOS PASSED (8/8)");
+    println!("🎉 ALL EVAL SCENARIOS PASSED (9/9)");
     println!("========================================================\n");
 
     Ok(())
@@ -84,6 +85,13 @@ mod tests {
         run_cognitive_feedback_and_alignment_scenario()
             .await
             .expect("Cognitive feedback and alignment scenario failed");
+    }
+
+    #[tokio::test]
+    async fn test_eval_cognitive_observability() {
+        run_cognitive_observability_scenario()
+            .await
+            .expect("Cognitive observability scenario failed");
     }
 }
 

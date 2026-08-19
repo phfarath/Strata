@@ -23,6 +23,7 @@ use strata_cli::{
         init::{run_init, InitOptions},
         key::{run_key, KeyArgs},
         login::{run_login, run_logout, LoginArgs},
+        observe::{run_observe, ObserveArgs},
         prune::{run_prune, PruneOptions},
         search::{run_search, SearchOptions},
         sync::{run_sync, SyncArgs},
@@ -173,6 +174,10 @@ enum Commands {
 
     /// Provide explicit reinforcement feedback on a persistent memory record
     Feedback(FeedbackArgs),
+
+    /// View cognitive observability dashboard, Ebbinghaus decay curves, ACT-R activations, and anti-patterns
+    #[command(name = "observe", alias = "stats", alias = "decay", alias = "dashboard", alias = "tui")]
+    Observe(ObserveArgs),
 
     /// Manage Strata Cloud developer accounts and authentication
     Auth(AuthArgs),
@@ -377,6 +382,11 @@ async fn main() -> Result<()> {
         Commands::Feedback(args) => {
             let store = engine.store_arc();
             run_feedback(args, store).await?;
+        }
+
+        Commands::Observe(args) => {
+            let store = engine.store_arc();
+            run_observe(args, store).await?;
         }
     }
 
