@@ -25,7 +25,7 @@ export const LandingPage: React.FC<LandingPageProps> = ({ onOpenAuth }) => {
       {/* Hero Section */}
       <section className="max-w-5xl mx-auto px-4 sm:px-6 pt-24 pb-16 text-center">
         <div className="inline-flex items-center gap-2 px-3 py-1 rounded-md bg-amber-300/10 border border-amber-300/20 text-amber-200 text-xs font-mono mb-8">
-          <span className="w-1.5 h-1.5 rounded-full bg-amber-300 inline-block opacity-80" />
+          <span className="w-1.5 h-1.5 rounded-full bg-amber-200 inline-block" />
           <span>Engineered for Claude Code, Cursor & Windsurf</span>
         </div>
 
@@ -40,7 +40,7 @@ export const LandingPage: React.FC<LandingPageProps> = ({ onOpenAuth }) => {
         <div className="flex flex-col sm:flex-row items-center justify-center gap-3 max-w-md mx-auto mb-16">
           <button
             onClick={onOpenAuth}
-            className="w-full sm:w-auto px-6 py-2.5 rounded-lg bg-amber-300 text-zinc-950 font-bold text-xs flex items-center justify-center gap-2 hover:bg-amber-200 btn-pressable sweep-hover shadow-lg shadow-amber-300/5"
+            className="w-full sm:w-auto px-6 py-2.5 rounded-lg bg-[#fef08a] text-zinc-950 font-bold text-xs flex items-center justify-center gap-2 hover:bg-[#fef9c3] btn-pressable shadow-md"
           >
             <span>Open Console</span>
             <ArrowRight className="w-4 h-4" />
@@ -48,9 +48,9 @@ export const LandingPage: React.FC<LandingPageProps> = ({ onOpenAuth }) => {
 
           <button
             onClick={handleCopyInstall}
-            className="w-full sm:w-auto px-5 py-2.5 rounded-lg bg-[#15171d] border border-[#23262f] hover:border-[#343846] text-zinc-200 font-mono text-xs flex items-center justify-center gap-2 btn-pressable sweep-hover"
+            className="w-full sm:w-auto px-5 py-2.5 rounded-lg bg-[#15171d] border border-[#23262f] hover:border-amber-300/40 hover:bg-[#1a1d25] text-zinc-200 font-mono text-xs flex items-center justify-center gap-2 btn-pressable"
           >
-            {copiedInstall ? <Check className="w-3.5 h-3.5 text-emerald-400" /> : <Terminal className="w-3.5 h-3.5 text-amber-300/90" />}
+            {copiedInstall ? <Check className="w-3.5 h-3.5 text-emerald-400" /> : <Terminal className="w-3.5 h-3.5 text-amber-200" />}
             <span>strata login</span>
           </button>
         </div>

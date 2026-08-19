@@ -110,7 +110,7 @@ export const MemoryExplorer: React.FC = () => {
           <div className="flex items-center gap-1 bg-[#15171d] border border-[#23262f] p-1 rounded-lg">
             <button
               onClick={() => setTypeFilter('all')}
-              className={`px-2.5 py-1 rounded text-xs font-medium transition-colors btn-pressable ${
+              className={`px-2.5 py-1 rounded text-xs font-medium btn-pressable ${
                 typeFilter === 'all' ? 'bg-[#23262f] text-amber-200 font-bold' : 'text-zinc-400 hover:text-zinc-200'
               }`}
             >
@@ -118,7 +118,7 @@ export const MemoryExplorer: React.FC = () => {
             </button>
             <button
               onClick={() => setTypeFilter('semantic_fact')}
-              className={`px-2.5 py-1 rounded text-xs font-medium transition-colors btn-pressable ${
+              className={`px-2.5 py-1 rounded text-xs font-medium btn-pressable ${
                 typeFilter === 'semantic_fact' ? 'bg-[#23262f] text-amber-200 font-bold' : 'text-zinc-400 hover:text-zinc-200'
               }`}
             >
@@ -126,7 +126,7 @@ export const MemoryExplorer: React.FC = () => {
             </button>
             <button
               onClick={() => setTypeFilter('failure_pattern')}
-              className={`px-2.5 py-1 rounded text-xs font-medium transition-colors btn-pressable ${
+              className={`px-2.5 py-1 rounded text-xs font-medium btn-pressable ${
                 typeFilter === 'failure_pattern' ? 'bg-[#23262f] text-amber-200 font-bold' : 'text-zinc-400 hover:text-zinc-200'
               }`}
             >
@@ -134,7 +134,7 @@ export const MemoryExplorer: React.FC = () => {
             </button>
             <button
               onClick={() => setTypeFilter('procedural_skill')}
-              className={`px-2.5 py-1 rounded text-xs font-medium transition-colors btn-pressable ${
+              className={`px-2.5 py-1 rounded text-xs font-medium btn-pressable ${
                 typeFilter === 'procedural_skill' ? 'bg-[#23262f] text-amber-200 font-bold' : 'text-zinc-400 hover:text-zinc-200'
               }`}
             >
@@ -143,7 +143,7 @@ export const MemoryExplorer: React.FC = () => {
           </div>
         </div>
 
-        {/* Memory Items with Light Sweep */}
+        {/* Memory Items with Instant Hover */}
         <div className="space-y-2">
           {filteredMemories.map((mem) => {
             const isSelected = selectedMemory?.id === mem.id;
@@ -151,10 +151,10 @@ export const MemoryExplorer: React.FC = () => {
               <div
                 key={mem.id}
                 onClick={() => setSelectedMemory(mem)}
-                className={`p-3.5 rounded-lg border cursor-pointer transition-colors btn-pressable sweep-hover ${
+                className={`p-3.5 rounded-lg border cursor-pointer btn-pressable ${
                   isSelected
-                    ? 'border-amber-300/40 bg-[#1a1d24] shadow-sm'
-                    : 'border-[#23262f] bg-[#15171d] hover:border-[#343846] hover:bg-[#1b1e26]'
+                    ? 'border-amber-300/50 bg-[#1a1d24] shadow-sm'
+                    : 'border-[#23262f] bg-[#15171d] hover:border-amber-300/40 hover:bg-[#1b1e26]'
                 }`}
               >
                 <div className="flex items-center justify-between gap-2 mb-1">

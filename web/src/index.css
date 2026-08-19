@@ -30,38 +30,16 @@ body {
 }
 
 /* -------------------------------------------------------------
-   Light Sweep Animation (Suave & Baixa Opacidade)
+   Instant Light Amber Hover (Sem Delay de Animação)
    ------------------------------------------------------------- */
 
-.sweep-hover {
-  position: relative;
-  overflow: hidden;
-  isolation: isolate;
+.hover-amber-instant {
+  transition: background-color 0s, border-color 0s, color 0s;
 }
 
-.sweep-hover::before {
-  content: '';
-  position: absolute;
-  top: 0;
-  left: -150%;
-  width: 100%;
-  height: 100%;
-  background: linear-gradient(
-    90deg,
-    transparent 0%,
-    rgba(255, 255, 255, 0.05) 35%,
-    rgba(253, 224, 71, 0.14) 50%,
-    rgba(255, 255, 255, 0.08) 65%,
-    transparent 100%
-  );
-  transform: skewX(-22deg);
-  pointer-events: none;
-  transition: transform 600ms var(--ease-out-expo), left 600ms var(--ease-out-expo);
-  z-index: 1;
-}
-
-.sweep-hover:hover::before {
-  left: 150%;
+.hover-amber-instant:hover {
+  border-color: rgba(253, 224, 71, 0.4) !important;
+  background-color: #1a1d25 !important;
 }
 
 /* -------------------------------------------------------------
@@ -69,15 +47,29 @@ body {
    ------------------------------------------------------------- */
 
 .btn-pressable {
-  transition: transform 100ms var(--ease-out-expo),
-              background-color 100ms ease,
-              border-color 100ms ease,
-              box-shadow 100ms ease;
+  transition: transform 60ms var(--ease-out-expo), background-color 0s, border-color 0s;
   user-select: none;
 }
 
 .btn-pressable:active {
   transform: translateY(1px) scale(0.985);
+}
+
+/* Primary Light Amber Button */
+.btn-amber-light {
+  background-color: #fef08a; /* Amber 200 */
+  border: 1px solid #fde047;
+  color: #090a0d;
+  font-weight: 700;
+}
+
+.btn-amber-light:hover {
+  background-color: #fef9c3; /* Amber 100 */
+  border-color: #fef08a;
+}
+
+.btn-amber-light:active {
+  background-color: #fde047;
 }
 
 /* Solid Basalt Surfaces */
@@ -87,7 +79,7 @@ body {
 }
 
 .surface-basalt:hover {
-  border-color: #343846;
+  border-color: rgba(253, 224, 71, 0.4);
 }
 
 .surface-chassis {

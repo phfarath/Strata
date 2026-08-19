@@ -64,7 +64,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
       {/* 1. Header */}
       <div className="h-14 px-4 border-b border-[#23262f] flex items-center justify-between">
         <div className="flex items-center gap-2.5">
-          <div className="w-6 h-6 rounded-md bg-[#1c1f26] border border-[#343846] flex items-center justify-center text-amber-200/90 font-mono text-xs font-bold shadow-inner">
+          <div className="w-6 h-6 rounded-md bg-[#1c1f26] border border-[#343846] flex items-center justify-center text-amber-200 font-mono text-xs font-bold shadow-inner">
             S
           </div>
           <span className="font-semibold text-sm tracking-tight text-white font-sans">
@@ -78,7 +78,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
         <div className="relative">
           <button
             onClick={() => setWsDropdownOpen(!wsDropdownOpen)}
-            className="w-full flex items-center justify-between px-3 py-2 rounded-lg bg-[#15171d] border border-[#23262f] hover:border-[#343846] text-xs font-medium text-zinc-200 btn-pressable sweep-hover"
+            className="w-full flex items-center justify-between px-3 py-2 rounded-lg bg-[#15171d] border border-[#23262f] hover:border-amber-300/40 hover:bg-[#1a1d25] text-xs font-medium text-zinc-200 btn-pressable"
           >
             <span className="truncate">{activeWorkspace.name}</span>
             <ChevronDown className="w-3.5 h-3.5 text-zinc-500 shrink-0 ml-1" />
@@ -96,14 +96,14 @@ export const Sidebar: React.FC<SidebarProps> = ({
                     onSelectWorkspace(ws);
                     setWsDropdownOpen(false);
                   }}
-                  className={`w-full flex items-center justify-between px-2.5 py-1.5 rounded-md text-xs text-left transition-colors ${
+                  className={`w-full flex items-center justify-between px-2.5 py-1.5 rounded-md text-xs text-left ${
                     activeWorkspace.id === ws.id
                       ? 'bg-[#23262f] text-amber-200 font-medium'
                       : 'text-zinc-400 hover:bg-[#1b1e26] hover:text-zinc-200'
                   }`}
                 >
                   <span className="truncate">{ws.name}</span>
-                  {activeWorkspace.id === ws.id && <Check className="w-3 h-3 text-amber-300" />}
+                  {activeWorkspace.id === ws.id && <Check className="w-3 h-3 text-amber-200" />}
                 </button>
               ))}
 
@@ -113,7 +113,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
                     setWsDropdownOpen(false);
                     onCreateWorkspaceClick();
                   }}
-                  className="w-full flex items-center gap-1.5 px-2.5 py-1.5 rounded-md text-xs text-zinc-300 hover:bg-[#1b1e26] transition-colors"
+                  className="w-full flex items-center gap-1.5 px-2.5 py-1.5 rounded-md text-xs text-zinc-300 hover:bg-[#1b1e26] hover:text-amber-200"
                 >
                   <Plus className="w-3 h-3" />
                   <span>New Workspace</span>
@@ -133,17 +133,17 @@ export const Sidebar: React.FC<SidebarProps> = ({
             <button
               key={item.id}
               onClick={() => onTabChange(item.id)}
-              className={`w-full flex items-center justify-between px-3 py-2 rounded-lg text-xs font-medium btn-pressable sweep-hover transition-colors ${
+              className={`w-full flex items-center justify-between px-3 py-2 rounded-lg text-xs font-medium btn-pressable ${
                 isActive
-                  ? 'bg-[#1e222b] text-white border border-[#343846] shadow-sm'
-                  : 'text-zinc-400 hover:text-zinc-200 hover:bg-[#15171d]'
+                  ? 'bg-[#1e222b] text-white border border-amber-300/30 shadow-sm'
+                  : 'text-zinc-400 hover:text-zinc-100 hover:bg-[#15171d] hover:border hover:border-amber-300/20'
               }`}
             >
               <div className="flex items-center gap-2.5">
                 <Icon className={`w-4 h-4 ${isActive ? 'text-amber-200' : 'text-zinc-400'}`} />
                 <span>{item.label}</span>
               </div>
-              {isActive && <div className="w-1 h-3 rounded-full bg-amber-300/80" />}
+              {isActive && <div className="w-1 h-3 rounded-full bg-amber-200" />}
             </button>
           );
         })}
@@ -154,11 +154,11 @@ export const Sidebar: React.FC<SidebarProps> = ({
         {/* CLI Command */}
         <button
           onClick={handleCopyCli}
-          className="w-full flex items-center justify-between px-2.5 py-1.5 rounded-md bg-[#15171d] border border-[#23262f] hover:border-[#343846] text-zinc-300 hover:text-white font-mono text-[11px] btn-pressable sweep-hover"
+          className="w-full flex items-center justify-between px-2.5 py-1.5 rounded-md bg-[#15171d] border border-[#23262f] hover:border-amber-300/40 hover:bg-[#1a1d25] text-zinc-300 hover:text-white font-mono text-[11px] btn-pressable"
           title="Copy CLI login command"
         >
           <div className="flex items-center gap-2">
-            <Terminal className="w-3 h-3 text-amber-300/90" />
+            <Terminal className="w-3 h-3 text-amber-200" />
             <span>strata login</span>
           </div>
           {copiedCli ? <Check className="w-3 h-3 text-emerald-400" /> : <span className="text-zinc-600 text-[10px]">copy</span>}
@@ -177,7 +177,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
 
           <button
             onClick={onLogout}
-            className="p-1.5 rounded-md text-zinc-500 hover:text-zinc-200 hover:bg-[#1b1e26] btn-pressable transition-colors"
+            className="p-1.5 rounded-md text-zinc-500 hover:text-zinc-200 hover:bg-[#1b1e26] btn-pressable"
             title="Sign Out"
           >
             <LogOut className="w-3.5 h-3.5" />

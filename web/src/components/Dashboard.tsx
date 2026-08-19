@@ -47,7 +47,7 @@ export const Dashboard: React.FC<DashboardProps> = ({
         <div className="space-y-6 animate-in fade-in duration-150">
           {/* Telemetry Metrics */}
           <div className="grid grid-cols-1 md:grid-cols-3 gap-4 font-mono text-xs">
-            <div className="p-4 rounded-xl border border-[#23262f] bg-[#15171d] space-y-1 sweep-hover">
+            <div className="p-4 rounded-xl border border-[#23262f] bg-[#15171d] space-y-1 hover:border-amber-300/40 hover:bg-[#1a1d25] transition-none">
               <div className="text-zinc-500">Total Memories</div>
               <div className="text-2xl font-bold text-amber-200">1,842</div>
               <div className="text-zinc-500 text-[11px] pt-1">
@@ -55,7 +55,7 @@ export const Dashboard: React.FC<DashboardProps> = ({
               </div>
             </div>
 
-            <div className="p-4 rounded-xl border border-[#23262f] bg-[#15171d] space-y-1 sweep-hover">
+            <div className="p-4 rounded-xl border border-[#23262f] bg-[#15171d] space-y-1 hover:border-amber-300/40 hover:bg-[#1a1d25] transition-none">
               <div className="text-zinc-500">CDC Sequence</div>
               <div className="text-2xl font-bold text-zinc-200">
                 #{status?.total_deltas || 2418}
@@ -65,7 +65,7 @@ export const Dashboard: React.FC<DashboardProps> = ({
               </div>
             </div>
 
-            <div className="p-4 rounded-xl border border-[#23262f] bg-[#15171d] space-y-1 sweep-hover">
+            <div className="p-4 rounded-xl border border-[#23262f] bg-[#15171d] space-y-1 hover:border-amber-300/40 hover:bg-[#1a1d25] transition-none">
               <div className="text-zinc-500">Connected Agents</div>
               <div className="text-2xl font-bold text-zinc-200">3</div>
               <div className="text-zinc-500 text-[11px] pt-1">
