@@ -27,6 +27,10 @@ struct CliArgs {
     #[arg(short = 'u', long, env = "DATABASE_URL")]
     database_url: Option<String>,
 
+    /// Public custom domain (e.g. strata.pedrofarath.me)
+    #[arg(short = 'd', long, env = "CUSTOM_DOMAIN")]
+    custom_domain: Option<String>,
+
     /// Bearer authentication token for client verification
     #[arg(short, long, env = "STRATA_SERVER_SECRET")]
     auth_token: Option<String>,
@@ -54,6 +58,9 @@ async fn main() -> Result<()> {
     config.host = args.host;
     if args.database_url.is_some() {
         config.database_url = args.database_url;
+    }
+    if args.custom_domain.is_some() {
+        config.custom_domain = args.custom_domain;
     }
     if args.db_path.is_some() {
         config.db_path = args.db_path;
