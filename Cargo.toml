@@ -7,6 +7,7 @@ members = [
     "crates/strata-reasoning",
     "crates/strata-cli",
     "crates/strata-evals",
+    "crates/strata-server",
 ]
 
 [workspace.package]
@@ -22,12 +23,17 @@ strata-memory = { path = "crates/strata-memory" }
 strata-tools = { path = "crates/strata-tools" }
 strata-reasoning = { path = "crates/strata-reasoning" }
 strata-cli = { path = "crates/strata-cli" }
+strata-server = { path = "crates/strata-server" }
 
 
 # Async & Runtime
 tokio = { version = "1.43", features = ["full"] }
 async-trait = "0.1.86"
 futures = "0.3.31"
+
+# Web & HTTP
+axum = { version = "0.8", features = ["ws"] }
+tower-http = { version = "0.6", features = ["cors", "trace"] }
 
 # Serialization & Data
 serde = { version = "1.0.218", features = ["derive"] }
@@ -48,6 +54,13 @@ tracing-subscriber = { version = "0.3.19", features = ["env-filter"] }
 thiserror = "2.0.11"
 anyhow = "1.0.96"
 dirs = "6.0.0"
+
+# Auth & Security
+argon2 = "0.5.3"
+jsonwebtoken = "9.3.0"
+sha2 = "0.10.8"
+rand = "0.8.5"
+hex = "0.4.3"
 
 # Networking & HTTP
 reqwest = { version = "0.12", features = ["json"] }

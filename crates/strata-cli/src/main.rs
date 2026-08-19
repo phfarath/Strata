@@ -13,6 +13,7 @@ use strata_memory::SqliteMemoryEngine;
 
 use strata_cli::{
     commands::{
+        auth::{run_auth, AuthArgs},
         consolidate::{run_consolidate, ConsolidateOptions},
         daemon::{run_daemon, DaemonArgs},
         doctor::run_doctor,
@@ -20,6 +21,7 @@ use strata_cli::{
         feedback::{run_feedback, FeedbackArgs},
         hook::{handle_hook, HookCommand},
         init::{run_init, InitOptions},
+        key::{run_key, KeyArgs},
         prune::{run_prune, PruneOptions},
         search::{run_search, SearchOptions},
         sync::{run_sync, SyncArgs},
@@ -170,6 +172,12 @@ enum Commands {
 
     /// Provide explicit reinforcement feedback on a persistent memory record
     Feedback(FeedbackArgs),
+
+    /// Manage Strata Cloud developer accounts and authentication
+    Auth(AuthArgs),
+
+    /// Manage Strata Cloud machine API keys
+    Key(KeyArgs),
 }
 
 
@@ -198,6 +206,14 @@ async fn main() -> Result<()> {
         });
     }
 
+    // Fast-path for Auth & Key commands (communicate over HTTP with Strata Cloud)
+    if let Commands::Auth(args) = cli.command {
+        return run_auth(args).await;
+    }
+    if let Commands::Key(args) = cli.command {
+        return run_key(args).await;
+    }
+
     let db_path = resolve_db_path(cli.db_path);
 
     let engine = Arc::new(
@@ -206,7 +222,7 @@ async fn main() -> Result<()> {
     );
 
     match cli.command {
-        Commands::Init { .. } => unreachable!(),
+        Commands::Init { .. } | Commands::Auth(_) | Commands::Key(_) => unreachable!(),
 
         Commands::Mcp => {
             let server = McpServer::new(engine);
