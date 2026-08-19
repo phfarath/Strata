@@ -358,3 +358,49 @@ async fn test_realtime_websocket_delta_notifications() {
     assert_eq!(notification_json["delta_count"], 1);
     assert_eq!(notification_json["max_seq"], 1);
 }
+
+#[tokio::test]
+async fn test_cli_auth_browser_page_and_authorize_flow() {
+    let (base_url, _handle) = spawn_test_server(None).await;
+    let client = Client::new();
+
+    // 1. Verify GET /auth/cli renders modern HTML
+    let html_resp = client
+        .get(format!("{base_url}/auth/cli?port=54321&state=test_state_123"))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(html_resp.status(), reqwest::StatusCode::OK);
+    let html_text = html_resp.text().await.unwrap();
+    assert!(html_text.contains("Authorize Strata CLI"));
+    assert!(html_text.contains("127.0.0.1:54321"));
+
+    // 2. Authorize with signup
+    let auth_payload = serde_json::json!({
+        "email": "browser-dev@strata.ai",
+        "password": "super-secure-password",
+        "port": 54321,
+        "state": "test_state_123",
+        "machine_name": "MacBook Pro M3 Max",
+        "is_signup": true,
+        "full_name": "Browser Dev"
+    });
+
+    let auth_resp = client
+        .post(format!("{base_url}/api/v1/auth/cli/authorize"))
+        .json(&auth_payload)
+        .send()
+        .await
+        .unwrap();
+
+    assert_eq!(auth_resp.status(), reqwest::StatusCode::OK);
+    let auth_data: serde_json::Value = auth_resp.json().await.unwrap();
+    let redirect_url = auth_data["redirect_url"].as_str().unwrap();
+    let token = auth_data["token"].as_str().unwrap();
+
+    assert!(token.starts_with("strata_live_"));
+    assert!(redirect_url.contains("http://127.0.0.1:54321/callback"));
+    assert!(redirect_url.contains("test_state_123"));
+    assert!(redirect_url.contains(token));
+}
+

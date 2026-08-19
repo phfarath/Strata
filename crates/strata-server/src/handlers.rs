@@ -2,7 +2,7 @@ use std::sync::Arc;
 use axum::extract::ws::{Message, WebSocket, WebSocketUpgrade};
 use axum::extract::{Path, Query, State};
 use axum::http::{HeaderMap, StatusCode};
-use axum::response::{IntoResponse, Response};
+use axum::response::{Html, IntoResponse, Response};
 use axum::Json;
 use chrono::Utc;
 use serde::{Deserialize, Serialize};
@@ -83,6 +83,32 @@ pub struct ListKeysQuery {
     pub token: Option<String>,
 }
 
+#[derive(Debug, Deserialize)]
+pub struct CliAuthPageQuery {
+    pub port: Option<u16>,
+    pub state: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct CliAuthorizeRequest {
+    pub email: String,
+    pub password: String,
+    pub port: u16,
+    pub state: String,
+    pub machine_name: Option<String>,
+    pub is_signup: Option<bool>,
+    pub full_name: Option<String>,
+}
+
+#[derive(Debug, Serialize)]
+pub struct CliAuthorizeResponse {
+    pub redirect_url: String,
+    pub token: String,
+    pub workspace_id: Uuid,
+    pub workspace_slug: String,
+    pub user_email: String,
+}
+
 // -------------------------------------------------------------
 // Public Health Check
 // -------------------------------------------------------------
@@ -95,6 +121,399 @@ pub async fn health_handler(State(state): State<Arc<AppState>>) -> Json<HealthRe
         uptime_secs: state.start_time.elapsed().as_secs(),
         workspaces_count: workspaces.len(),
     })
+}
+
+// -------------------------------------------------------------
+// Browser CLI Authentication UI & Authorization
+// -------------------------------------------------------------
+
+pub async fn cli_auth_page_handler(Query(query): Query<CliAuthPageQuery>) -> Html<String> {
+    let port = query.port.unwrap_or(54321);
+    let state = query.state.unwrap_or_default();
+
+    let html = format!(r#"<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Authorize Strata CLI</title>
+  <style>
+    :root {{
+      --bg: #090d16;
+      --card-bg: rgba(19, 27, 46, 0.85);
+      --border: #1e293b;
+      --primary: #38bdf8;
+      --primary-hover: #0284c7;
+      --text: #f8fafc;
+      --text-muted: #94a3b8;
+      --danger: #ef4444;
+      --success: #10b981;
+    }}
+    * {{ box-sizing: border-box; margin: 0; padding: 0; font-family: system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; }}
+    body {{
+      background: var(--bg);
+      background-image: radial-gradient(circle at 50% 10%, #1e293b 0%, var(--bg) 80%);
+      color: var(--text);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      min-height: 100vh;
+      padding: 1rem;
+    }}
+    .card {{
+      background: var(--card-bg);
+      border: 1px solid var(--border);
+      backdrop-filter: blur(12px);
+      padding: 2.5rem;
+      border-radius: 1.25rem;
+      width: 100%;
+      max-width: 440px;
+      box-shadow: 0 25px 50px -12px rgba(0,0,0,0.6);
+      text-align: center;
+    }}
+    .logo-badge {{
+      display: inline-flex;
+      align-items: center;
+      gap: 0.5rem;
+      font-size: 1.25rem;
+      font-weight: 700;
+      letter-spacing: -0.025em;
+      color: var(--primary);
+      margin-bottom: 1.5rem;
+    }}
+    h1 {{ font-size: 1.5rem; font-weight: 700; margin-bottom: 0.5rem; color: var(--text); }}
+    p.subtitle {{ color: var(--text-muted); font-size: 0.9rem; margin-bottom: 2rem; }}
+    .tabs {{
+      display: flex;
+      background: #0f172a;
+      padding: 0.25rem;
+      border-radius: 0.5rem;
+      margin-bottom: 1.5rem;
+      border: 1px solid var(--border);
+    }}
+    .tab-btn {{
+      flex: 1;
+      background: none;
+      border: none;
+      color: var(--text-muted);
+      padding: 0.5rem;
+      font-size: 0.875rem;
+      font-weight: 600;
+      border-radius: 0.375rem;
+      cursor: pointer;
+      transition: all 0.2s;
+    }}
+    .tab-btn.active {{
+      background: var(--primary);
+      color: #04101e;
+    }}
+    form {{ display: flex; flex-direction: column; gap: 1rem; text-align: left; }}
+    label {{ font-size: 0.8rem; font-weight: 600; color: var(--text-muted); text-transform: uppercase; letter-spacing: 0.05em; }}
+    input {{
+      width: 100%;
+      padding: 0.75rem 1rem;
+      background: #0b1120;
+      border: 1px solid var(--border);
+      border-radius: 0.5rem;
+      color: var(--text);
+      font-size: 0.95rem;
+      outline: none;
+      transition: border-color 0.2s;
+    }}
+    input:focus {{ border-color: var(--primary); }}
+    .submit-btn {{
+      margin-top: 0.5rem;
+      width: 100%;
+      padding: 0.85rem;
+      background: var(--primary);
+      color: #04101e;
+      border: none;
+      border-radius: 0.5rem;
+      font-size: 0.95rem;
+      font-weight: 700;
+      cursor: pointer;
+      transition: background 0.2s, transform 0.1s;
+    }}
+    .submit-btn:hover {{ background: var(--primary-hover); }}
+    .submit-btn:active {{ transform: scale(0.98); }}
+    .alert {{
+      padding: 0.75rem;
+      border-radius: 0.5rem;
+      font-size: 0.85rem;
+      margin-bottom: 1rem;
+      display: none;
+      text-align: left;
+    }}
+    .alert.error {{ background: rgba(239, 68, 68, 0.15); border: 1px solid var(--danger); color: #fca5a5; display: block; }}
+    .alert.success {{ background: rgba(16, 185, 129, 0.15); border: 1px solid var(--success); color: #6ee7b7; display: block; }}
+    .meta-tag {{
+      margin-top: 1.5rem;
+      font-size: 0.75rem;
+      color: #64748b;
+    }}
+  </style>
+</head>
+<body>
+  <div class="card">
+    <div class="logo-badge">
+      <span>⚡</span> Strata Cloud
+    </div>
+    <h1>Authorize Machine</h1>
+    <p class="subtitle">Connect your terminal to persistent cloud cognitive runtime</p>
+
+    <div id="alert-box" class="alert"></div>
+
+    <div class="tabs">
+      <button type="button" class="tab-btn active" id="tab-login" onclick="switchTab('login')">Sign In</button>
+      <button type="button" class="tab-btn" id="tab-signup" onclick="switchTab('signup')">Create Account</button>
+    </div>
+
+    <form id="auth-form" onsubmit="handleAuth(event)">
+      <div id="name-group" style="display: none;">
+        <label for="full_name">Full Name</label>
+        <input type="text" id="full_name" placeholder="Pedro Dev">
+      </div>
+
+      <div>
+        <label for="email">Email</label>
+        <input type="email" id="email" required placeholder="developer@strata.dev">
+      </div>
+
+      <div>
+        <label for="password">Password</label>
+        <input type="password" id="password" required placeholder="••••••••••••">
+      </div>
+
+      <div>
+        <label for="machine_name">Device Name</label>
+        <input type="text" id="machine_name" value="CLI Device ({port})">
+      </div>
+
+      <button type="submit" id="submit-btn" class="submit-btn">Authorize Terminal</button>
+    </form>
+
+    <div class="meta-tag">
+      Callback Port: <code>127.0.0.1:{port}</code>
+    </div>
+  </div>
+
+  <script>
+    let isSignup = false;
+    const port = {port};
+    const state = "{state}";
+
+    function switchTab(mode) {{
+      isSignup = (mode === 'signup');
+      document.getElementById('tab-login').classList.toggle('active', !isSignup);
+      document.getElementById('tab-signup').classList.toggle('active', isSignup);
+      document.getElementById('name-group').style.display = isSignup ? 'block' : 'none';
+      document.getElementById('submit-btn').innerText = isSignup ? 'Create Account & Authorize' : 'Authorize Terminal';
+      document.getElementById('alert-box').className = 'alert';
+    }}
+
+    async function handleAuth(e) {{
+      e.preventDefault();
+      const btn = document.getElementById('submit-btn');
+      const alertBox = document.getElementById('alert-box');
+      btn.disabled = true;
+      btn.innerText = 'Connecting...';
+
+      const email = document.getElementById('email').value.trim();
+      const password = document.getElementById('password').value;
+      const full_name = document.getElementById('full_name').value.trim();
+      const machine_name = document.getElementById('machine_name').value.trim();
+
+      try {{
+        const resp = await fetch('/api/v1/auth/cli/authorize', {{
+          method: 'POST',
+          headers: {{ 'Content-Type': 'application/json' }},
+          body: JSON.stringify({{
+            email,
+            password,
+            port,
+            state,
+            machine_name,
+            is_signup: isSignup,
+            full_name: isSignup ? full_name : undefined
+          }})
+        }});
+
+        const data = await resp.json();
+        if (resp.ok) {{
+          alertBox.className = 'alert success';
+          alertBox.innerText = '✓ Authorized! Redirecting back to your terminal...';
+          setTimeout(() => {{
+            window.location.href = data.redirect_url;
+          }}, 500);
+        }} else {{
+          alertBox.className = 'alert error';
+          alertBox.innerText = data.error || 'Authentication failed';
+          btn.disabled = false;
+          btn.innerText = isSignup ? 'Create Account & Authorize' : 'Authorize Terminal';
+        }}
+      }} catch (err) {{
+        alertBox.className = 'alert error';
+        alertBox.innerText = 'Network error: ' + err.message;
+        btn.disabled = false;
+        btn.innerText = isSignup ? 'Create Account & Authorize' : 'Authorize Terminal';
+      }}
+    }}
+  </script>
+</body>
+</html>"#);
+
+    Html(html)
+}
+
+pub async fn cli_authorize_handler(
+    State(state): State<Arc<AppState>>,
+    Json(payload): Json<CliAuthorizeRequest>,
+) -> Result<Json<CliAuthorizeResponse>, Response> {
+    let email = payload.email.trim();
+    if email.is_empty() || !email.contains('@') {
+        return Err((
+            StatusCode::BAD_REQUEST,
+            Json(serde_json::json!({ "error": "Invalid email address" })),
+        )
+            .into_response());
+    }
+
+    let user = if payload.is_signup.unwrap_or(false) {
+        if payload.password.len() < 8 {
+            return Err((
+                StatusCode::BAD_REQUEST,
+                Json(serde_json::json!({ "error": "Password must be at least 8 characters long" })),
+            )
+                .into_response());
+        }
+
+        if let Ok(Some(_)) = state.storage.get_user_by_email(email) {
+            return Err((
+                StatusCode::CONFLICT,
+                Json(serde_json::json!({ "error": "User with this email already exists. Please sign in." })),
+            )
+                .into_response());
+        }
+
+        let full_name = payload.full_name.unwrap_or_else(|| email.split('@').next().unwrap_or("Developer").to_string());
+        let password_hash = hash_password(&payload.password).map_err(|e| {
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(serde_json::json!({ "error": format!("Hash error: {e}") })),
+            )
+                .into_response()
+        })?;
+
+        let created_user = state
+            .storage
+            .create_user(email, &password_hash, &full_name)
+            .map_err(|e| {
+                (
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    Json(serde_json::json!({ "error": format!("Failed to create user: {e}") })),
+                )
+                    .into_response()
+            })?;
+
+        let slug = format!("{}-workspace", email.split('@').next().unwrap_or("dev"));
+        let _ = state.storage.create_workspace(&created_user.id, &format!("{full_name}'s Workspace"), &slug);
+        created_user
+    } else {
+        let existing = state
+            .storage
+            .get_user_by_email(email)
+            .map_err(|e| {
+                (
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    Json(serde_json::json!({ "error": format!("Database error: {e}") })),
+                )
+                    .into_response()
+            })?
+            .ok_or_else(|| {
+                (
+                    StatusCode::UNAUTHORIZED,
+                    Json(serde_json::json!({ "error": "Invalid email or password" })),
+                )
+                    .into_response()
+            })?;
+
+        let valid = verify_password(&payload.password, &existing.password_hash).unwrap_or(false);
+        if !valid {
+            return Err((
+                StatusCode::UNAUTHORIZED,
+                Json(serde_json::json!({ "error": "Invalid email or password" })),
+            )
+                .into_response());
+        }
+        existing
+    };
+
+    // Get user's active workspaces (or ensure at least 1 exists)
+    let workspaces = state
+        .storage
+        .get_workspaces_for_user(&user.id)
+        .map_err(|e| {
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(serde_json::json!({ "error": format!("Storage error: {e}") })),
+            )
+                .into_response()
+        })?;
+
+    let workspace = if let Some(ws) = workspaces.into_iter().next() {
+        ws
+    } else {
+        let slug = format!("{}-ws", user.id.simple());
+        state
+            .storage
+            .create_workspace(&user.id, &format!("{}'s Workspace", user.full_name), &slug)
+            .map_err(|e| {
+                (
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    Json(serde_json::json!({ "error": format!("Workspace provision error: {e}") })),
+                )
+                    .into_response()
+            })?
+    };
+
+    // Generate machine API Key
+    let (full_key, key_prefix, key_hash) = generate_api_key();
+    let key_name = payload
+        .machine_name
+        .filter(|s| !s.trim().is_empty())
+        .unwrap_or_else(|| "CLI Developer Device".to_string());
+
+    let _ = state.storage.create_api_key(
+        &workspace.id,
+        &user.id,
+        &key_name,
+        &key_prefix,
+        &key_hash,
+        &["sync:read".to_string(), "sync:write".to_string()],
+        None,
+    );
+
+    let redirect_url = format!(
+        "http://127.0.0.1:{}/callback?token={}&state={}&workspace_id={}&workspace_slug={}&user_email={}",
+        payload.port,
+        full_key,
+        payload.state,
+        workspace.id,
+        workspace.slug,
+        urlencoding_encode(&user.email)
+    );
+
+    Ok(Json(CliAuthorizeResponse {
+        redirect_url,
+        token: full_key,
+        workspace_id: workspace.id,
+        workspace_slug: workspace.slug,
+        user_email: user.email,
+    }))
+}
+
+fn urlencoding_encode(s: &str) -> String {
+    s.replace('@', "%40").replace('+', "%2B")
 }
 
 // -------------------------------------------------------------
