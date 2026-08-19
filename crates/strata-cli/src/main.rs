@@ -226,6 +226,10 @@ async fn main() -> Result<()> {
     if let Commands::Key(args) = cli.command {
         return run_key(args).await;
     }
+    let resolved_ws = strata_cli::config::StrataConfig::resolve_workspace(None);
+    if std::env::var("STRATA_WORKSPACE_ID").is_err() && resolved_ws != "default" {
+        std::env::set_var("STRATA_WORKSPACE_ID", &resolved_ws);
+    }
 
     let db_path = resolve_db_path(cli.db_path);
 

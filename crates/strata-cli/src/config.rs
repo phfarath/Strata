@@ -106,7 +106,7 @@ impl StrataConfig {
     /// Resolve the workspace ID: CLI arg > ENV `STRATA_WORKSPACE_ID` > Config file > "default"
     pub fn resolve_workspace(arg: Option<&str>) -> String {
         if let Some(a) = arg {
-            if !a.trim().is_empty() {
+            if !a.trim().is_empty() && a.trim() != "default" {
                 return a.trim().to_string();
             }
         }

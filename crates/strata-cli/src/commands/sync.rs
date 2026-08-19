@@ -15,8 +15,8 @@ pub struct SyncArgs {
     #[arg(long, global = true, help = "Bearer authentication token for remote endpoint")]
     pub token: Option<String>,
 
-    #[arg(long, global = true, default_value = "default", help = "Workspace identifier")]
-    pub workspace: String,
+    #[arg(long, global = true, help = "Workspace identifier")]
+    pub workspace: Option<String>,
 
     #[arg(long, global = true, help = "Output report as JSON")]
     pub json: bool,
@@ -35,11 +35,7 @@ pub enum SyncAction {
 use crate::config::StrataConfig;
 
 pub async fn run_sync(args: SyncArgs, store: Arc<SqliteStore>) -> Result<()> {
-    let workspace = if args.workspace != "default" {
-        args.workspace.clone()
-    } else {
-        StrataConfig::resolve_workspace(Some(&args.workspace))
-    };
+    let workspace = StrataConfig::resolve_workspace(args.workspace.as_deref());
 
     let mut config = SyncConfig::new(&workspace);
     config.endpoint = Some(StrataConfig::resolve_endpoint(args.endpoint.as_deref()));

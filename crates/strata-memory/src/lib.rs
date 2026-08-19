@@ -167,6 +167,15 @@ impl MemoryEngine for SqliteMemoryEngine {
         }
 
         self.store.insert_or_update_memory(&to_write)?;
+
+        // Auto-enqueue CDC sync delta in outbox
+        let workspace = std::env::var("STRATA_WORKSPACE_ID").unwrap_or_else(|_| "default".to_string());
+        if let Ok(payload) = serde_json::to_value(&to_write) {
+            let version_hash = sync::compute_version_hash(&payload);
+            let delta = strata_core::schemas::SyncDelta::new(&workspace, 0, "memory_record", payload, version_hash);
+            let _ = self.store.enqueue_delta(&delta);
+        }
+
         Ok(to_write.to_handle(Some(to_write.importance)))
     }
 
