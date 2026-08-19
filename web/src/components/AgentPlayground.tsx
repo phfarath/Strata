@@ -70,7 +70,7 @@ export const AgentPlayground: React.FC = () => {
           <button
             type="submit"
             disabled={loading}
-            className="px-4 py-2 rounded-lg bg-[#fef08a] text-zinc-950 font-bold text-xs flex items-center justify-center gap-1.5 hover:bg-[#fef9c3] btn-pressable disabled:opacity-50"
+            className="px-4 py-2 rounded-lg bg-[#fef08a] text-zinc-950 font-bold text-xs flex items-center justify-center gap-1.5 hover:bg-[#fef9c3] btn-pressable sweep-hover disabled:opacity-50"
           >
             <span>{loading ? 'Querying...' : 'Execute Simulator Query'}</span>
             <ArrowRight className="w-3.5 h-3.5" />
@@ -92,7 +92,7 @@ export const AgentPlayground: React.FC = () => {
           <div className="space-y-2">
             <div className="text-zinc-500 text-[11px]">Retrieved Semantic Facts ({result.retrieved_memories.length})</div>
             {result.retrieved_memories.map((m: any, idx: number) => (
-              <div key={idx} className="p-3 rounded-lg bg-[#0f1115] border border-[#23262f] space-y-1 hover:border-amber-300/40">
+              <div key={idx} className="p-3 rounded-lg bg-[#0f1115] border border-[#23262f] space-y-1 hover:border-amber-300/40 sweep-hover">
                 <div className="flex items-center justify-between">
                   <span className="font-semibold text-zinc-200">{m.title}</span>
                   <span className="text-amber-200 font-mono text-[11px]">

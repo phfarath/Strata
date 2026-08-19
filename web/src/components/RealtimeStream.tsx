@@ -62,7 +62,7 @@ export const RealtimeStream: React.FC = () => {
         <div className="flex items-center gap-2">
           <button
             onClick={() => setIsPaused(!isPaused)}
-            className={`px-3 py-1.5 rounded-lg border text-xs font-medium flex items-center gap-1.5 btn-pressable ${
+            className={`px-3 py-1.5 rounded-lg border text-xs font-medium flex items-center gap-1.5 btn-pressable sweep-hover ${
               isPaused
                 ? 'border-[#343846] bg-[#23262f] text-zinc-200'
                 : 'border-[#23262f] bg-[#0f1115] text-zinc-300 hover:text-white hover:border-amber-300/40'
@@ -74,7 +74,7 @@ export const RealtimeStream: React.FC = () => {
 
           <button
             onClick={() => setEvents([])}
-            className="p-1.5 rounded-lg border border-[#23262f] bg-[#0f1115] text-zinc-400 hover:text-zinc-200 hover:border-amber-300/40 btn-pressable"
+            className="p-1.5 rounded-lg border border-[#23262f] bg-[#0f1115] text-zinc-400 hover:text-zinc-200 hover:border-amber-300/40 btn-pressable sweep-hover"
             title="Clear stream log"
           >
             <Trash2 className="w-3.5 h-3.5" />
@@ -103,7 +103,7 @@ export const RealtimeStream: React.FC = () => {
             events.map((evt, idx) => (
               <div
                 key={idx}
-                className="p-2.5 rounded-md bg-[#15171d] border border-[#23262f] text-zinc-300 hover:border-amber-300/40"
+                className="p-2.5 rounded-md bg-[#15171d] border border-[#23262f] text-zinc-300 hover:border-amber-300/40 sweep-hover"
               >
                 <div className="flex items-center justify-between text-[11px] text-zinc-500 mb-1">
                   <span className="font-semibold text-amber-200">{evt.event}</span>

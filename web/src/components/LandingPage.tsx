@@ -40,7 +40,7 @@ export const LandingPage: React.FC<LandingPageProps> = ({ onOpenAuth }) => {
         <div className="flex flex-col sm:flex-row items-center justify-center gap-3 max-w-md mx-auto mb-16">
           <button
             onClick={onOpenAuth}
-            className="w-full sm:w-auto px-6 py-2.5 rounded-lg bg-[#fef08a] text-zinc-950 font-bold text-xs flex items-center justify-center gap-2 hover:bg-[#fef9c3] btn-pressable shadow-md"
+            className="w-full sm:w-auto px-6 py-2.5 rounded-lg bg-[#fef08a] text-zinc-950 font-bold text-xs flex items-center justify-center gap-2 hover:bg-[#fef9c3] btn-pressable sweep-hover shadow-md"
           >
             <span>Open Console</span>
             <ArrowRight className="w-4 h-4" />
@@ -48,7 +48,7 @@ export const LandingPage: React.FC<LandingPageProps> = ({ onOpenAuth }) => {
 
           <button
             onClick={handleCopyInstall}
-            className="w-full sm:w-auto px-5 py-2.5 rounded-lg bg-[#15171d] border border-[#23262f] hover:border-amber-300/40 hover:bg-[#1a1d25] text-zinc-200 font-mono text-xs flex items-center justify-center gap-2 btn-pressable"
+            className="w-full sm:w-auto px-5 py-2.5 rounded-lg bg-[#15171d] border border-[#23262f] hover:border-amber-300/40 hover:bg-[#1a1d25] text-zinc-200 font-mono text-xs flex items-center justify-center gap-2 btn-pressable sweep-hover"
           >
             {copiedInstall ? <Check className="w-3.5 h-3.5 text-emerald-400" /> : <Terminal className="w-3.5 h-3.5 text-amber-200" />}
             <span>strata login</span>

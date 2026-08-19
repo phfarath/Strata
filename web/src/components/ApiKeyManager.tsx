@@ -95,7 +95,7 @@ export const ApiKeyManager: React.FC<ApiKeyManagerProps> = ({ workspace }) => {
 
           <button
             type="submit"
-            className="px-4 py-2 rounded-lg bg-[#fef08a] text-zinc-950 font-bold text-xs flex items-center justify-center gap-1.5 hover:bg-[#fef9c3] btn-pressable shadow-sm"
+            className="px-4 py-2 rounded-lg bg-[#fef08a] text-zinc-950 font-bold text-xs flex items-center justify-center gap-1.5 hover:bg-[#fef9c3] btn-pressable sweep-hover shadow-sm"
           >
             <Plus className="w-3.5 h-3.5" />
             <span>Generate Key</span>
@@ -120,7 +120,7 @@ export const ApiKeyManager: React.FC<ApiKeyManagerProps> = ({ workspace }) => {
             <span className="flex-1 truncate text-amber-200">{createdKey.key}</span>
             <button
               onClick={() => handleCopy(createdKey.key, 'newly-created')}
-              className="p-1.5 rounded bg-[#1f232b] text-zinc-300 hover:text-white btn-pressable hover:bg-[#272d38]"
+              className="p-1.5 rounded bg-[#1f232b] text-zinc-300 hover:text-white btn-pressable sweep-hover"
             >
               {copiedKeyId === 'newly-created' ? <Check className="w-3.5 h-3.5 text-emerald-400" /> : <Copy className="w-3.5 h-3.5" />}
             </button>
@@ -144,7 +144,7 @@ export const ApiKeyManager: React.FC<ApiKeyManagerProps> = ({ workspace }) => {
         ) : (
           <div className="divide-y divide-[#23262f] font-mono text-xs">
             {keys.map((k) => (
-              <div key={k.id} className="px-4 py-3 flex items-center justify-between gap-4 hover:bg-[#1b1e26] hover:border-amber-300/20">
+              <div key={k.id} className="px-4 py-3 flex items-center justify-between gap-4 hover:bg-[#1b1e26] hover:border-amber-300/20 sweep-hover">
                 <div className="space-y-0.5">
                   <div className="flex items-center gap-2">
                     <span className="font-medium text-zinc-200">{k.name}</span>

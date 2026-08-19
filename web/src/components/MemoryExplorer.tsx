@@ -143,7 +143,7 @@ export const MemoryExplorer: React.FC = () => {
           </div>
         </div>
 
-        {/* Memory Items with Instant Hover */}
+        {/* Memory Items with Restored Light Sweep */}
         <div className="space-y-2">
           {filteredMemories.map((mem) => {
             const isSelected = selectedMemory?.id === mem.id;
@@ -151,7 +151,7 @@ export const MemoryExplorer: React.FC = () => {
               <div
                 key={mem.id}
                 onClick={() => setSelectedMemory(mem)}
-                className={`p-3.5 rounded-lg border cursor-pointer btn-pressable ${
+                className={`p-3.5 rounded-lg border cursor-pointer btn-pressable sweep-hover ${
                   isSelected
                     ? 'border-amber-300/50 bg-[#1a1d24] shadow-sm'
                     : 'border-[#23262f] bg-[#15171d] hover:border-amber-300/40 hover:bg-[#1b1e26]'

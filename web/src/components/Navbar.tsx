@@ -43,7 +43,7 @@ export const Navbar: React.FC<NavbarProps> = ({
               navigator.clipboard.writeText('strata login');
               toast.success('Copied CLI Command', 'Run "strata login" in terminal.');
             }}
-            className="hidden sm:flex items-center gap-1.5 px-2.5 py-1.5 rounded-md bg-[#15171d] border border-[#23262f] hover:border-amber-300/40 hover:bg-[#1a1d25] text-zinc-300 hover:text-white font-mono text-xs btn-pressable"
+            className="hidden sm:flex items-center gap-1.5 px-2.5 py-1.5 rounded-md bg-[#15171d] border border-[#23262f] hover:border-amber-300/40 hover:bg-[#1a1d25] text-zinc-300 hover:text-white font-mono text-xs btn-pressable sweep-hover"
             title="Copy command to connect CLI"
           >
             <Terminal className="w-3.5 h-3.5 text-amber-200" />
@@ -53,14 +53,14 @@ export const Navbar: React.FC<NavbarProps> = ({
           {user ? (
             <button
               onClick={() => onNavigate('overview')}
-              className="px-3.5 py-1.5 rounded-md bg-[#fef08a] text-zinc-950 font-bold text-xs btn-pressable hover:bg-[#fef9c3] shadow-sm"
+              className="px-3.5 py-1.5 rounded-md bg-[#fef08a] text-zinc-950 font-bold text-xs btn-pressable sweep-hover hover:bg-[#fef9c3] shadow-sm"
             >
               Open Console
             </button>
           ) : (
             <button
               onClick={onOpenAuth}
-              className="px-3.5 py-1.5 rounded-md bg-[#fef08a] text-zinc-950 font-bold text-xs btn-pressable hover:bg-[#fef9c3] shadow-sm"
+              className="px-3.5 py-1.5 rounded-md bg-[#fef08a] text-zinc-950 font-bold text-xs btn-pressable sweep-hover hover:bg-[#fef9c3] shadow-sm"
             >
               Sign In
             </button>
