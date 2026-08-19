@@ -36,7 +36,6 @@ COPY --from=builder /app/target/release/strata-server /usr/local/bin/strata-serv
 
 # Create data directory for SQLite persistence
 RUN mkdir -p /data && chmod 777 /data
-VOLUME ["/data"]
 
 ENV HOST=0.0.0.0 \
     PORT=8080 \
