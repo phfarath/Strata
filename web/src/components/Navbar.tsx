@@ -21,17 +21,17 @@ export const Navbar: React.FC<NavbarProps> = ({
   onNavigate,
 }) => {
   return (
-    <header className="sticky top-0 z-40 w-full border-b border-[#27272a] bg-[#0d0d10]">
+    <header className="sticky top-0 z-40 w-full border-b border-[#23262f] bg-[#0f1115]">
       <div className="max-w-6xl mx-auto px-4 sm:px-6 h-14 flex items-center justify-between gap-4 font-sans">
         {/* Brand */}
         <button
           onClick={() => onNavigate(user ? 'overview' : 'landing')}
           className="flex items-center gap-2.5 text-left btn-pressable"
         >
-          <div className="w-6 h-6 rounded-md bg-zinc-800 border border-zinc-700 flex items-center justify-center text-zinc-100 font-mono text-xs font-bold">
+          <div className="w-6 h-6 rounded-md bg-[#1c1f26] border border-[#343846] flex items-center justify-center text-amber-400 font-mono text-xs font-bold shadow-inner">
             S
           </div>
-          <span className="font-semibold text-sm tracking-tight text-white">
+          <span className="font-semibold text-sm tracking-tight text-white font-sans">
             Strata
           </span>
         </button>
@@ -43,24 +43,24 @@ export const Navbar: React.FC<NavbarProps> = ({
               navigator.clipboard.writeText('strata login');
               toast.success('Copied CLI Command', 'Run "strata login" in terminal.');
             }}
-            className="hidden sm:flex items-center gap-1.5 px-2.5 py-1.5 rounded-md bg-zinc-900 border border-zinc-800 hover:border-zinc-700 text-zinc-300 hover:text-white font-mono text-xs btn-pressable"
+            className="hidden sm:flex items-center gap-1.5 px-2.5 py-1.5 rounded-md bg-[#15171d] border border-[#23262f] hover:border-[#343846] text-zinc-300 hover:text-white font-mono text-xs btn-pressable sweep-hover"
             title="Copy command to connect CLI"
           >
-            <Terminal className="w-3.5 h-3.5 text-zinc-400" />
+            <Terminal className="w-3.5 h-3.5 text-amber-500" />
             <span>strata login</span>
           </button>
 
           {user ? (
             <button
               onClick={() => onNavigate('overview')}
-              className="px-3.5 py-1.5 rounded-md bg-white text-black font-semibold text-xs btn-pressable hover:bg-zinc-200"
+              className="px-3.5 py-1.5 rounded-md bg-amber-500 text-black font-bold text-xs btn-pressable sweep-hover hover:bg-amber-400"
             >
               Open Console
             </button>
           ) : (
             <button
               onClick={onOpenAuth}
-              className="px-3.5 py-1.5 rounded-md bg-white text-black font-semibold text-xs btn-pressable hover:bg-zinc-200"
+              className="px-3.5 py-1.5 rounded-md bg-amber-500 text-black font-bold text-xs btn-pressable sweep-hover hover:bg-amber-400"
             >
               Sign In
             </button>

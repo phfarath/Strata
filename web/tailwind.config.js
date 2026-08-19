@@ -8,22 +8,25 @@ export default {
   theme: {
     extend: {
       colors: {
-        background: '#09090b', // Zinc 950
-        surface: {
-          50: '#18181b', // Zinc 900
-          100: '#27272a', // Zinc 800
-          200: '#3f3f46', // Zinc 700
-          border: '#27272a',
-          'border-hover': '#3f3f46',
+        basalt: {
+          void: '#090a0d',
+          chassis: '#0f1115',
+          card: '#15171d',
+          'card-hover': '#1b1e26',
+          border: '#23262f',
+          bezel: '#343846',
         },
-        accent: {
-          DEFAULT: '#3b82f6', // Clean Blue
-          hover: '#2563eb',
-          muted: '#1e3a8a',
+        quartz: {
+          amber: '#f59e0b',
+          'amber-deep': '#d97706',
+          'amber-light': '#fbbf24',
+          'amber-text': '#fef3c7',
         },
-        success: '#10b981',
-        danger: '#ef4444',
-        warning: '#f59e0b',
+        mineral: {
+          cyan: '#0ea5e9',
+          emerald: '#10b981',
+          ruby: '#ef4444',
+        },
       },
       fontFamily: {
         sans: ['Inter', '-apple-system', 'BlinkMacSystemFont', 'Segoe UI', 'Roboto', 'sans-serif'],

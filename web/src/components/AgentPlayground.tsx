@@ -49,9 +49,9 @@ export const AgentPlayground: React.FC = () => {
 
   return (
     <div className="space-y-4 max-w-4xl font-sans">
-      <div className="p-4 rounded-xl border border-zinc-800 bg-[#111114]">
+      <div className="p-4 rounded-xl border border-[#23262f] bg-[#15171d]">
         <div className="flex items-center gap-2 mb-1">
-          <Sliders className="w-4 h-4 text-zinc-400" />
+          <Sliders className="w-4 h-4 text-amber-500" />
           <h3 className="text-sm font-semibold text-white">Agent Memory Recall Simulator</h3>
         </div>
         <p className="text-xs text-zinc-400 mb-3">
@@ -64,13 +64,13 @@ export const AgentPlayground: React.FC = () => {
             value={prompt}
             onChange={(e) => setPrompt(e.target.value)}
             placeholder="Enter an architectural prompt or query..."
-            className="w-full px-3 py-2 rounded-lg bg-zinc-900 border border-zinc-800 text-zinc-200 placeholder:text-zinc-500 focus:outline-none focus:border-zinc-700 text-xs font-mono resize-none leading-relaxed"
+            className="w-full px-3 py-2 rounded-lg bg-[#0f1115] border border-[#23262f] text-zinc-200 placeholder:text-zinc-500 focus:outline-none focus:border-amber-500 text-xs font-mono resize-none leading-relaxed"
           />
 
           <button
             type="submit"
             disabled={loading}
-            className="px-4 py-2 rounded-lg bg-white text-black font-semibold text-xs flex items-center justify-center gap-1.5 hover:bg-zinc-200 btn-pressable disabled:opacity-50"
+            className="px-4 py-2 rounded-lg bg-amber-500 text-black font-bold text-xs flex items-center justify-center gap-1.5 hover:bg-amber-400 btn-pressable sweep-hover disabled:opacity-50"
           >
             <span>{loading ? 'Querying...' : 'Execute Simulator Query'}</span>
             <ArrowRight className="w-3.5 h-3.5" />
@@ -79,23 +79,23 @@ export const AgentPlayground: React.FC = () => {
       </div>
 
       {result && (
-        <div className="p-5 rounded-xl border border-zinc-800 bg-[#111114] space-y-4 font-mono text-xs animate-in fade-in">
-          <div className="flex items-center justify-between border-b border-zinc-800 pb-2.5 text-zinc-400">
+        <div className="p-5 rounded-xl border border-[#23262f] bg-[#15171d] space-y-4 font-mono text-xs animate-in fade-in">
+          <div className="flex items-center justify-between border-b border-[#23262f] pb-2.5 text-zinc-400">
             <span>
-              Latency: <strong className="text-zinc-200">{result.latency_ms} ms</strong>
+              Latency: <strong className="text-emerald-400">{result.latency_ms} ms</strong>
             </span>
             <span>
-              JTMS State: <strong className="text-zinc-200">{result.jtms_arbitration.belief_state}</strong>
+              JTMS State: <strong className="text-amber-400">{result.jtms_arbitration.belief_state}</strong>
             </span>
           </div>
 
           <div className="space-y-2">
             <div className="text-zinc-500 text-[11px]">Retrieved Semantic Facts ({result.retrieved_memories.length})</div>
             {result.retrieved_memories.map((m: any, idx: number) => (
-              <div key={idx} className="p-3 rounded-lg bg-zinc-900 border border-zinc-800 space-y-1">
+              <div key={idx} className="p-3 rounded-lg bg-[#0f1115] border border-[#23262f] space-y-1 sweep-hover">
                 <div className="flex items-center justify-between">
                   <span className="font-semibold text-zinc-200">{m.title}</span>
-                  <span className="text-zinc-400 font-mono text-[11px]">
+                  <span className="text-amber-400 font-mono text-[11px]">
                     Score: {(m.similarity * 100).toFixed(1)}%
                   </span>
                 </div>
@@ -104,8 +104,8 @@ export const AgentPlayground: React.FC = () => {
             ))}
           </div>
 
-          <div className="p-3 rounded-lg bg-zinc-900/80 border border-zinc-800 text-zinc-300">
-            <span className="text-zinc-400 text-[11px] block mb-0.5 font-medium">Injected Agent Directive:</span>
+          <div className="p-3 rounded-lg bg-[#0f1115] border border-[#23262f] text-zinc-300">
+            <span className="text-amber-500 text-[11px] block mb-0.5 font-semibold">Injected Agent Directive:</span>
             <p className="text-zinc-200 text-xs">{result.jtms_arbitration.recommended_directive}</p>
           </div>
         </div>

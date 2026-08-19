@@ -29,14 +29,14 @@ export const Dashboard: React.FC<DashboardProps> = ({
   return (
     <div className="max-w-6xl mx-auto p-6 space-y-6">
       {/* Workspace Header */}
-      <div className="flex items-center justify-between p-4 rounded-xl border border-zinc-800 bg-[#111114]">
+      <div className="flex items-center justify-between p-4 rounded-xl border border-[#23262f] bg-[#0f1115]">
         <div>
           <div className="flex items-center gap-2 text-xs font-mono text-zinc-500 mb-0.5">
             <span>Workspace</span>
             <span>/</span>
-            <span className="text-zinc-300 font-semibold">{workspace.slug}</span>
+            <span className="text-amber-400 font-semibold">{workspace.slug}</span>
           </div>
-          <h1 className="text-xl font-bold text-white tracking-tight">
+          <h1 className="text-xl font-bold text-white tracking-tight font-sans">
             {workspace.name}
           </h1>
         </div>
@@ -47,15 +47,15 @@ export const Dashboard: React.FC<DashboardProps> = ({
         <div className="space-y-6 animate-in fade-in duration-150">
           {/* Telemetry Metrics */}
           <div className="grid grid-cols-1 md:grid-cols-3 gap-4 font-mono text-xs">
-            <div className="p-4 rounded-xl border border-zinc-800 bg-[#111114] space-y-1">
+            <div className="p-4 rounded-xl border border-[#23262f] bg-[#15171d] space-y-1 sweep-hover">
               <div className="text-zinc-500">Total Memories</div>
-              <div className="text-2xl font-bold text-white">1,842</div>
+              <div className="text-2xl font-bold text-amber-400">1,842</div>
               <div className="text-zinc-500 text-[11px] pt-1">
                 Semantic facts, failure patterns & skills
               </div>
             </div>
 
-            <div className="p-4 rounded-xl border border-zinc-800 bg-[#111114] space-y-1">
+            <div className="p-4 rounded-xl border border-[#23262f] bg-[#15171d] space-y-1 sweep-hover">
               <div className="text-zinc-500">CDC Sequence</div>
               <div className="text-2xl font-bold text-zinc-200">
                 #{status?.total_deltas || 2418}
@@ -65,7 +65,7 @@ export const Dashboard: React.FC<DashboardProps> = ({
               </div>
             </div>
 
-            <div className="p-4 rounded-xl border border-zinc-800 bg-[#111114] space-y-1">
+            <div className="p-4 rounded-xl border border-[#23262f] bg-[#15171d] space-y-1 sweep-hover">
               <div className="text-zinc-500">Connected Agents</div>
               <div className="text-2xl font-bold text-zinc-200">3</div>
               <div className="text-zinc-500 text-[11px] pt-1">
@@ -75,7 +75,7 @@ export const Dashboard: React.FC<DashboardProps> = ({
           </div>
 
           {/* Quick Setup */}
-          <div className="p-5 rounded-xl border border-zinc-800 bg-[#111114] space-y-4">
+          <div className="p-5 rounded-xl border border-[#23262f] bg-[#0f1115] space-y-4">
             <div>
               <h3 className="text-sm font-semibold text-white">Link Local Repository</h3>
               <p className="text-xs text-zinc-400 mt-0.5">

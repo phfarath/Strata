@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { Key, Plus, Trash2, Copy, Check, Shield } from 'lucide-react';
+import { Key, Plus, Trash2, Copy, Check } from 'lucide-react';
 import { ApiKey, ApiKeyCreated, Workspace } from '../types';
 import { api } from '../api';
 import { toast } from './Toast';
@@ -25,7 +25,6 @@ export const ApiKeyManager: React.FC<ApiKeyManagerProps> = ({ workspace }) => {
       const data = await api.listApiKeys(workspace.id);
       setKeys(data);
     } catch (err: any) {
-      // Don't toast error if user simply has no keys or is initializing
       console.warn('API keys fetch:', err.message);
     } finally {
       setLoading(false);
@@ -75,9 +74,9 @@ export const ApiKeyManager: React.FC<ApiKeyManagerProps> = ({ workspace }) => {
   return (
     <div className="space-y-4 max-w-4xl font-sans">
       {/* Create Key Card */}
-      <div className="p-4 rounded-xl border border-zinc-800 bg-[#111114]">
+      <div className="p-4 rounded-xl border border-[#23262f] bg-[#15171d]">
         <div className="flex items-center gap-2 mb-1">
-          <Key className="w-4 h-4 text-zinc-400" />
+          <Key className="w-4 h-4 text-amber-500" />
           <h3 className="text-sm font-semibold text-white">Generate Machine API Key</h3>
         </div>
         <p className="text-xs text-zinc-400 mb-3">
@@ -91,12 +90,12 @@ export const ApiKeyManager: React.FC<ApiKeyManagerProps> = ({ workspace }) => {
             placeholder="Key Description (e.g. Cursor MacBook Pro)"
             value={newKeyName}
             onChange={(e) => setNewKeyName(e.target.value)}
-            className="flex-1 px-3 py-2 rounded-lg bg-zinc-900 border border-zinc-800 text-zinc-100 placeholder:text-zinc-500 focus:outline-none focus:border-zinc-700 text-xs font-mono"
+            className="flex-1 px-3 py-2 rounded-lg bg-[#0f1115] border border-[#23262f] text-zinc-100 placeholder:text-zinc-500 focus:outline-none focus:border-amber-500 text-xs font-mono"
           />
 
           <button
             type="submit"
-            className="px-4 py-2 rounded-lg bg-white text-black font-semibold text-xs flex items-center justify-center gap-1.5 hover:bg-zinc-200 btn-pressable"
+            className="px-4 py-2 rounded-lg bg-amber-500 text-black font-bold text-xs flex items-center justify-center gap-1.5 hover:bg-amber-400 btn-pressable sweep-hover"
           >
             <Plus className="w-3.5 h-3.5" />
             <span>Generate Key</span>
@@ -106,8 +105,8 @@ export const ApiKeyManager: React.FC<ApiKeyManagerProps> = ({ workspace }) => {
 
       {/* Newly Created Key Alert */}
       {createdKey && (
-        <div className="p-4 rounded-xl bg-zinc-900 border border-zinc-700 space-y-2">
-          <div className="flex items-center justify-between text-xs text-zinc-200 font-medium">
+        <div className="p-4 rounded-xl bg-[#1c1913] border border-amber-500/40 space-y-2">
+          <div className="flex items-center justify-between text-xs text-amber-300 font-medium">
             <span>Copy Secret API Key (Shown only once)</span>
             <button
               onClick={() => setCreatedKey(null)}
@@ -117,11 +116,11 @@ export const ApiKeyManager: React.FC<ApiKeyManagerProps> = ({ workspace }) => {
             </button>
           </div>
 
-          <div className="flex items-center gap-2 bg-[#09090c] p-2.5 rounded-lg border border-zinc-800 font-mono text-xs text-zinc-200">
-            <span className="flex-1 truncate">{createdKey.key}</span>
+          <div className="flex items-center gap-2 bg-[#090a0d] p-2.5 rounded-lg border border-[#23262f] font-mono text-xs text-zinc-200">
+            <span className="flex-1 truncate text-amber-300">{createdKey.key}</span>
             <button
               onClick={() => handleCopy(createdKey.key, 'newly-created')}
-              className="p-1 rounded bg-zinc-800 text-zinc-300 hover:text-white btn-pressable"
+              className="p-1.5 rounded bg-[#1f232b] text-zinc-300 hover:text-white btn-pressable sweep-hover"
             >
               {copiedKeyId === 'newly-created' ? <Check className="w-3.5 h-3.5 text-emerald-400" /> : <Copy className="w-3.5 h-3.5" />}
             </button>
@@ -130,10 +129,10 @@ export const ApiKeyManager: React.FC<ApiKeyManagerProps> = ({ workspace }) => {
       )}
 
       {/* Keys Table */}
-      <div className="rounded-xl border border-zinc-800 bg-[#111114] overflow-hidden">
-        <div className="px-4 py-3 border-b border-zinc-800 flex items-center justify-between">
+      <div className="rounded-xl border border-[#23262f] bg-[#15171d] overflow-hidden">
+        <div className="px-4 py-3 border-b border-[#23262f] flex items-center justify-between">
           <h4 className="text-xs font-semibold text-white">Active Keys ({keys.length})</h4>
-          <span className="text-xs text-zinc-500 font-mono">Workspace: {workspace.slug}</span>
+          <span className="text-xs text-amber-500 font-mono">Workspace: {workspace.slug}</span>
         </div>
 
         {loading ? (
@@ -143,13 +142,13 @@ export const ApiKeyManager: React.FC<ApiKeyManagerProps> = ({ workspace }) => {
             No machine keys issued.
           </div>
         ) : (
-          <div className="divide-y divide-zinc-800/80 font-mono text-xs">
+          <div className="divide-y divide-[#23262f] font-mono text-xs">
             {keys.map((k) => (
-              <div key={k.id} className="px-4 py-3 flex items-center justify-between gap-4 hover:bg-zinc-900/40">
+              <div key={k.id} className="px-4 py-3 flex items-center justify-between gap-4 hover:bg-[#1b1e26] transition-colors sweep-hover">
                 <div className="space-y-0.5">
                   <div className="flex items-center gap-2">
                     <span className="font-medium text-zinc-200">{k.name}</span>
-                    <span className="px-1.5 py-0.5 rounded bg-zinc-900 border border-zinc-800 text-[10px] text-zinc-400">
+                    <span className="px-1.5 py-0.5 rounded bg-[#0f1115] border border-[#23262f] text-[10px] text-amber-400">
                       {k.key_prefix}...
                     </span>
                   </div>
@@ -160,7 +159,7 @@ export const ApiKeyManager: React.FC<ApiKeyManagerProps> = ({ workspace }) => {
 
                 <button
                   onClick={() => handleRevoke(k.id)}
-                  className="p-1.5 rounded text-zinc-500 hover:text-rose-400 hover:bg-zinc-900 btn-pressable"
+                  className="p-1.5 rounded text-zinc-500 hover:text-rose-400 hover:bg-[#23262f] btn-pressable"
                   title="Revoke key"
                 >
                   <Trash2 className="w-3.5 h-3.5" />

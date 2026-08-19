@@ -1,0 +1,274 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <title>Strata — Mineral Industrial Visual Identity</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;600;700&display=swap" rel="stylesheet">
+  <style>
+    :root {
+      --basalt-void: #090a0d;
+      --basalt-chassis: #0f1115;
+      --basalt-card: #15171d;
+      --basalt-card-hover: #1b1e26;
+      --basalt-border: #23262f;
+      --basalt-bezel: #343846;
+      
+      --quartz-amber: #f59e0b;
+      --quartz-amber-deep: #d97706;
+      --quartz-amber-text: #fef3c7;
+      
+      --mineral-cyan: #0ea5e9;
+      --mineral-emerald: #10b981;
+      --mineral-ruby: #ef4444;
+      
+      --text-main: #f3f4f6;
+      --text-muted: #717686;
+      --text-dim: #9ca3af;
+    }
+    
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body {
+      background-color: var(--basalt-void);
+      color: var(--text-main);
+      font-family: 'Inter', -apple-system, sans-serif;
+      padding: 48px 24px;
+      line-height: 1.5;
+    }
+    .container { max-width: 960px; margin: 0 auto; }
+    
+    .header-tag {
+      font-family: 'JetBrains Mono', monospace;
+      font-size: 11px;
+      color: var(--quartz-amber);
+      background: rgba(245, 158, 11, 0.1);
+      border: 1px solid rgba(245, 158, 11, 0.2);
+      padding: 3px 8px;
+      border-radius: 4px;
+      display: inline-block;
+      margin-bottom: 12px;
+    }
+    
+    h1 {
+      font-size: 32px;
+      font-weight: 700;
+      letter-spacing: -0.02em;
+      color: #ffffff;
+      margin-bottom: 6px;
+    }
+    .subtitle {
+      color: var(--text-dim);
+      font-size: 14px;
+      margin-bottom: 36px;
+    }
+    
+    .industrial-panel {
+      background: var(--basalt-chassis);
+      border: 1px solid var(--basalt-border);
+      border-radius: 10px;
+      padding: 24px;
+      margin-bottom: 24px;
+      position: relative;
+    }
+    
+    .industrial-panel::before {
+      content: "::";
+      position: absolute;
+      top: 10px;
+      right: 14px;
+      font-family: 'JetBrains Mono', monospace;
+      font-size: 11px;
+      color: var(--basalt-bezel);
+    }
+    
+    h2 {
+      font-size: 15px;
+      font-weight: 600;
+      letter-spacing: -0.01em;
+      margin-bottom: 16px;
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+    
+    .strata-stack {
+      display: grid;
+      gap: 8px;
+      font-family: 'JetBrains Mono', monospace;
+      font-size: 12px;
+    }
+    
+    .layer-item {
+      padding: 16px 20px;
+      border-radius: 8px;
+      border: 1px solid var(--basalt-border);
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      transition: border-color 150ms ease;
+    }
+    
+    .layer-amber {
+      background: #171613;
+      border-color: rgba(245, 158, 11, 0.35);
+      color: var(--quartz-amber-text);
+      font-weight: 600;
+    }
+    
+    .layer-quartz {
+      background: var(--basalt-card);
+      border-color: var(--basalt-bezel);
+      color: var(--text-main);
+    }
+    
+    .layer-basalt {
+      background: #101216;
+      border-color: var(--basalt-border);
+      color: var(--text-dim);
+    }
+    
+    .layer-soil {
+      background: var(--basalt-void);
+      border-color: #1a1c22;
+      color: var(--text-muted);
+    }
+    
+    /* Hardware Swatches */
+    .swatch-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(135px, 1fr));
+      gap: 12px;
+    }
+    .swatch {
+      border-radius: 8px;
+      border: 1px solid var(--basalt-border);
+      overflow: hidden;
+      background: var(--basalt-card);
+      font-family: 'JetBrains Mono', monospace;
+      font-size: 11px;
+    }
+    .swatch-color { height: 44px; }
+    .swatch-body { padding: 10px; }
+    .swatch-name { font-weight: 600; color: var(--text-main); margin-bottom: 2px; }
+    .swatch-hex { color: var(--text-muted); }
+    
+    /* Industrial Buttons */
+    .btn-row {
+      display: flex;
+      gap: 12px;
+      flex-wrap: wrap;
+    }
+    .btn-industrial {
+      font-family: 'JetBrains Mono', monospace;
+      font-size: 12px;
+      font-weight: 600;
+      padding: 10px 18px;
+      border-radius: 6px;
+      border: 1px solid var(--basalt-border);
+      background: var(--basalt-card);
+      color: var(--text-main);
+      cursor: pointer;
+      user-select: none;
+      transition: transform 100ms cubic-bezier(0.16, 1, 0.3, 1), background-color 100ms ease, border-color 100ms ease;
+    }
+    .btn-industrial:hover {
+      background: var(--basalt-card-hover);
+      border-color: var(--basalt-bezel);
+    }
+    .btn-industrial:active {
+      transform: translateY(1px) scale(0.985);
+      border-color: var(--quartz-amber);
+    }
+    
+    .btn-amber {
+      background: var(--quartz-amber);
+      border-color: var(--quartz-amber-deep);
+      color: #090a0d;
+      font-weight: 700;
+    }
+    .btn-amber:hover {
+      background: #fbbf24;
+      border-color: var(--quartz-amber);
+    }
+    .btn-amber:active {
+      transform: translateY(1px) scale(0.985);
+      background: var(--quartz-amber-deep);
+    }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <div class="header-tag">AESTHETIC ARCHETYPE 01</div>
+    <h1>Mineral Industrial (Basalt & Quartz Amber)</h1>
+    <div class="subtitle">Tactile Hardware-grade Interface • Teenage Engineering / Linear Inspired • Geological Knowledge Deposition</div>
+
+    <!-- 1. The Geological Stratification -->
+    <div class="industrial-panel">
+      <h2>Knowledge Deposition Layers</h2>
+      <div class="strata-stack">
+        <div class="layer-item layer-amber">
+          <span>04 :: Semantic Bedrock (Verified Architectural Directives)</span>
+          <span style="color: var(--quartz-amber); font-size: 11px;">CRYSTALLIZED AMBER CORE</span>
+        </div>
+        <div class="layer-item layer-quartz">
+          <span>03 :: Procedural Skills & Anti-Patterns</span>
+          <span style="color: var(--mineral-cyan); font-size: 11px;">JTMS ARBITRATED</span>
+        </div>
+        <div class="layer-item layer-basalt">
+          <span>02 :: Episodic Session Frames (Context Memory)</span>
+          <span style="color: var(--text-dim); font-size: 11px;">COMPRESSED DIFFS</span>
+        </div>
+        <div class="layer-item layer-soil">
+          <span>01 :: Raw Code Delta Stream (Soil)</span>
+          <span style="color: var(--text-muted); font-size: 11px;">CDC INGEST &lt;0.5ms</span>
+        </div>
+      </div>
+    </div>
+
+    <!-- 2. Palettes -->
+    <div class="industrial-panel">
+      <h2>Mineral Material Palette</h2>
+      <div class="swatch-grid">
+        <div class="swatch">
+          <div class="swatch-color" style="background: #090a0d;"></div>
+          <div class="swatch-body"><div class="swatch-name">Basalt Void</div><div class="swatch-hex">#090a0d</div></div>
+        </div>
+        <div class="swatch">
+          <div class="swatch-color" style="background: #0f1115;"></div>
+          <div class="swatch-body"><div class="swatch-name">Chassis</div><div class="swatch-hex">#0f1115</div></div>
+        </div>
+        <div class="swatch">
+          <div class="swatch-color" style="background: #15171d;"></div>
+          <div class="swatch-body"><div class="swatch-name">Card Basalt</div><div class="swatch-hex">#15171d</div></div>
+        </div>
+        <div class="swatch">
+          <div class="swatch-color" style="background: #23262f;"></div>
+          <div class="swatch-body"><div class="swatch-name">Border Cut</div><div class="swatch-hex">#23262f</div></div>
+        </div>
+        <div class="swatch">
+          <div class="swatch-color" style="background: #f59e0b;"></div>
+          <div class="swatch-body"><div class="swatch-name">Quartz Amber</div><div class="swatch-hex">#f59e0b</div></div>
+        </div>
+        <div class="swatch">
+          <div class="swatch-color" style="background: #ef4444;"></div>
+          <div class="swatch-body"><div class="swatch-name">Ruby Fault</div><div class="swatch-hex">#ef4444</div></div>
+        </div>
+      </div>
+    </div>
+
+    <!-- 3. Physical Tactile Controls -->
+    <div class="industrial-panel">
+      <h2>Tactile Hardware Controls</h2>
+      <p style="font-size: 13px; color: var(--text-dim); margin-bottom: 14px;">
+        Click below to feel the 100ms tactile step and physical recede:
+      </p>
+      <div class="btn-row">
+        <button class="btn-industrial btn-amber">strata sync push</button>
+        <button class="btn-industrial">recall memory</button>
+        <button class="btn-industrial">revoke key</button>
+      </div>
+    </div>
+  </div>
+</body>
+</html>
