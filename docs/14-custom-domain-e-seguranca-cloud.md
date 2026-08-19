@@ -100,13 +100,14 @@ curl -s -i https://strata.pedrofarath.me/api/v1/ping
 No seu ambiente local (Cursor / VS Code / Terminal):
 
 ```bash
-# Login direto no navegador via seu domínio próprio:
-strata login --server https://strata.pedrofarath.me
+# Login zero-config com seu domínio oficial pré-configurado:
+strata login
 
-# Ou configurando variáveis de ambiente:
-export STRATA_SYNC_ENDPOINT="https://strata.pedrofarath.me"
-export STRATA_SYNC_TOKEN="strata_live_..."
+# Ou especificando endpoint alternativo se desejar:
+strata login --endpoint https://strata.pedrofarath.me
 
 # Sincronização automática:
 strata sync status
+strata sync push
+strata sync pull
 ```

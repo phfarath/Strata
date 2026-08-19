@@ -3,6 +3,8 @@ use std::path::{Path, PathBuf};
 use anyhow::{Context, Result};
 use serde::{Deserialize, Serialize};
 
+pub const DEFAULT_STRATA_ENDPOINT: &str = "https://strata.pedrofarath.me";
+
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct StrataConfig {
     pub endpoint: Option<String>,
@@ -84,7 +86,7 @@ impl StrataConfig {
                 return ep;
             }
         }
-        "https://cloud.strata.dev".to_string()
+        DEFAULT_STRATA_ENDPOINT.to_string()
     }
 
     /// Resolve the sync token: CLI arg > ENV `STRATA_SYNC_TOKEN` / `STRATA_AUTH_TOKEN` > Config file

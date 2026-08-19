@@ -16,7 +16,7 @@ use crate::config::StrataConfig;
 
 #[derive(Args, Debug, Clone)]
 pub struct LoginArgs {
-    #[arg(long, env = "STRATA_SYNC_ENDPOINT", help = "Strata Cloud Server URL")]
+    #[arg(long, env = "STRATA_SYNC_ENDPOINT", help = "Strata Cloud Server URL (default: https://strata.pedrofarath.me)")]
     pub endpoint: Option<String>,
 
     #[arg(long, help = "Do not open default browser automatically (prints URL for manual copy/paste)")]
