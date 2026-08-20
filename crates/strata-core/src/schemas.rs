@@ -4,7 +4,7 @@ use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
-use crate::state::Scope;
+use crate::state::{MemoryTier, Scope};
 
 fn default_importance() -> f32 {
     0.5
@@ -241,6 +241,8 @@ pub struct SemanticFact {
     pub importance: f32,
     #[serde(default = "default_confidence")]
     pub confidence: f32,
+    #[serde(default)]
+    pub tier: MemoryTier,
     pub created_at: DateTime<Utc>,
     pub last_updated_at: DateTime<Utc>,
     #[serde(default = "default_fact_status")]
@@ -267,6 +269,7 @@ impl SemanticFact {
             evidence: Vec::new(),
             importance: 0.5,
             confidence: 1.0,
+            tier: MemoryTier::Peripheral,
             created_at: now,
             last_updated_at: now,
             status: FactStatus::Active,
@@ -275,6 +278,23 @@ impl SemanticFact {
             tags: Vec::new(),
             code_anchor: None,
         }
+    }
+
+    pub fn with_tier(mut self, tier: MemoryTier) -> Self {
+        self.tier = tier;
+        self
+    }
+
+    pub fn is_core(&self) -> bool {
+        self.tier == MemoryTier::Core
+    }
+
+    pub fn is_working(&self) -> bool {
+        self.tier == MemoryTier::Working
+    }
+
+    pub fn is_peripheral(&self) -> bool {
+        self.tier == MemoryTier::Peripheral
     }
 
     pub fn with_id(mut self, id: Uuid) -> Self {
@@ -288,7 +308,6 @@ impl SemanticFact {
     }
 
     pub fn with_importance(mut self, importance: f32) -> Self {
-
         self.importance = importance.clamp(0.0, 1.0);
         self
     }

@@ -229,6 +229,7 @@ async fn test_bidirectional_multi_device_sync_e2e() {
         evidence: vec![EvidenceRef::new("docker", "railway-test", 1.0)],
         importance: 0.95,
         confidence: 0.98,
+        tier: strata_core::state::MemoryTier::Peripheral,
         created_at: Utc::now(),
         last_updated_at: Utc::now(),
         status: FactStatus::Active,

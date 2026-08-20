@@ -19,8 +19,8 @@ pub use schemas::{
     SymbolType, SyncConfig, SyncDelta, SyncReport,
 };
 pub use state::{
-    DigestOutput, FailurePattern, FailureSeverity, MemoryHandle, MemoryRecord, MemoryType,
-    OutboxEntry, OutboxStatus, Scope, SessionState, SessionStatus,
+    DigestOutput, FailurePattern, FailureSeverity, MemoryHandle, MemoryRecord, MemoryTier,
+    MemoryType, OutboxEntry, OutboxStatus, Scope, SessionState, SessionStatus,
 };
 
 pub use traits::{EventStore, MemoryEngine, ReasoningEngine, Tool, ToolGateway};

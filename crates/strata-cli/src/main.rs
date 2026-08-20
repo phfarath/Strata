@@ -158,6 +158,9 @@ enum Commands {
         #[arg(long, help = "Optional scope filter")]
         scope: Option<String>,
 
+        #[arg(long, help = "Simulate decay without writing changes to the database")]
+        dry_run: bool,
+
         #[arg(long, help = "Output report as raw JSON")]
         json: bool,
     },
@@ -374,9 +377,9 @@ async fn main() -> Result<()> {
             run_consolidate(ConsolidateOptions { session, all, model, json }, store).await?;
         }
 
-        Commands::Prune { threshold, scope, json } => {
+        Commands::Prune { threshold, scope, dry_run, json } => {
             let store = engine.store_arc();
-            run_prune(PruneOptions { threshold, scope, json }, store).await?;
+            run_prune(PruneOptions { threshold, scope, dry_run, json }, store).await?;
         }
 
         Commands::Sync(args) => {

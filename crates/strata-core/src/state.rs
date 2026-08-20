@@ -40,6 +40,61 @@ impl FromStr for MemoryType {
     }
 }
 
+/// Formal cognitive tier defining retention dynamics and budgeting for memory.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum MemoryTier {
+    /// Invariant rules, critical security constraints, project axioms. Frozen decay (R=1.0), never pruned.
+    Core,
+    /// Active task session context, touched files, immediate diffs. FIFO + task saliency.
+    Working,
+    /// Historical facts, conversation context, intermediate decisions. Exponential mathematical decay -> Cold Storage.
+    Peripheral,
+}
+
+impl MemoryTier {
+    pub fn is_core(&self) -> bool {
+        matches!(self, MemoryTier::Core)
+    }
+
+    pub fn is_working(&self) -> bool {
+        matches!(self, MemoryTier::Working)
+    }
+
+    pub fn is_peripheral(&self) -> bool {
+        matches!(self, MemoryTier::Peripheral)
+    }
+}
+
+impl Default for MemoryTier {
+    fn default() -> Self {
+        MemoryTier::Peripheral
+    }
+}
+
+impl fmt::Display for MemoryTier {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            MemoryTier::Core => write!(f, "Core"),
+            MemoryTier::Working => write!(f, "Working"),
+            MemoryTier::Peripheral => write!(f, "Peripheral"),
+        }
+    }
+}
+
+impl FromStr for MemoryTier {
+    type Err = String;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        match s.to_lowercase().as_str() {
+            "core" => Ok(MemoryTier::Core),
+            "working" => Ok(MemoryTier::Working),
+            "peripheral" => Ok(MemoryTier::Peripheral),
+            _ => Err(format!("Unknown memory tier: {s}")),
+        }
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub enum Scope {
     Global,
@@ -104,6 +159,8 @@ pub struct MemoryRecord {
     pub content: String,
     pub summary: Option<String>,
     pub scope: Scope,
+    #[serde(default)]
+    pub tier: MemoryTier,
     pub importance: f32,
     pub confidence: f32,
     #[serde(default)]
@@ -128,6 +185,7 @@ impl MemoryRecord {
             content: content.into(),
             summary: None,
             scope,
+            tier: MemoryTier::Peripheral,
             importance: 0.5,
             confidence: 1.0,
             tags: Vec::new(),
@@ -139,6 +197,23 @@ impl MemoryRecord {
             embedding: None,
             metadata: serde_json::Value::Null,
         }
+    }
+
+    pub fn with_tier(mut self, tier: MemoryTier) -> Self {
+        self.tier = tier;
+        self
+    }
+
+    pub fn is_core(&self) -> bool {
+        self.tier == MemoryTier::Core
+    }
+
+    pub fn is_working(&self) -> bool {
+        self.tier == MemoryTier::Working
+    }
+
+    pub fn is_peripheral(&self) -> bool {
+        self.tier == MemoryTier::Peripheral
     }
 
     pub fn with_summary(mut self, summary: impl Into<String>) -> Self {
@@ -204,6 +279,7 @@ impl MemoryRecord {
             summary,
             memory_type: self.memory_type.clone(),
             scope: self.scope.clone(),
+            tier: self.tier,
             relevance_score: score,
         }
     }
@@ -216,7 +292,23 @@ pub struct MemoryHandle {
     pub summary: String,
     pub memory_type: MemoryType,
     pub scope: Scope,
+    #[serde(default)]
+    pub tier: MemoryTier,
     pub relevance_score: Option<f32>,
+}
+
+impl MemoryHandle {
+    pub fn is_core(&self) -> bool {
+        self.tier.is_core()
+    }
+
+    pub fn is_working(&self) -> bool {
+        self.tier.is_working()
+    }
+
+    pub fn is_peripheral(&self) -> bool {
+        self.tier.is_peripheral()
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -397,5 +489,49 @@ pub struct OutboxStatus {
     pub synced_count: usize,
     pub failed_count: usize,
     pub last_synced_at: Option<DateTime<Utc>>,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_memory_tier_defaults_and_helpers() {
+        let mem = MemoryRecord::new(MemoryType::Semantic, "Architecture constraint", Scope::Global);
+        assert_eq!(mem.tier, MemoryTier::Peripheral);
+        assert!(mem.is_peripheral());
+        assert!(!mem.is_core());
+        assert!(!mem.is_working());
+
+        let core_mem = mem.with_tier(MemoryTier::Core);
+        assert_eq!(core_mem.tier, MemoryTier::Core);
+        assert!(core_mem.is_core());
+        assert!(!core_mem.is_working());
+
+        let working_handle = MemoryHandle {
+            id: Uuid::new_v4(),
+            title: "Task in progress".to_string(),
+            summary: "Refactoring middleware".to_string(),
+            memory_type: MemoryType::Episodic,
+            scope: Scope::Global,
+            tier: MemoryTier::Working,
+            relevance_score: Some(1.0),
+        };
+        assert!(working_handle.is_working());
+        assert!(!working_handle.is_core());
+    }
+
+    #[test]
+    fn test_memory_tier_serde_and_parsing() {
+        assert_eq!("core".parse::<MemoryTier>().unwrap(), MemoryTier::Core);
+        assert_eq!("Core".parse::<MemoryTier>().unwrap(), MemoryTier::Core);
+        assert_eq!("working".parse::<MemoryTier>().unwrap(), MemoryTier::Working);
+        assert_eq!("peripheral".parse::<MemoryTier>().unwrap(), MemoryTier::Peripheral);
+
+        let serialized = serde_json::to_string(&MemoryTier::Core).unwrap();
+        assert_eq!(serialized, "\"core\"");
+        let deserialized: MemoryTier = serde_json::from_str(&serialized).unwrap();
+        assert_eq!(deserialized, MemoryTier::Core);
+    }
 }
 
