@@ -482,4 +482,44 @@ mod tests {
         assert_eq!(failures.len(), 1);
         assert_eq!(failures[0].signature, "cargo_package_not_found");
     }
+
+    #[tokio::test]
+    async fn test_call_graph_tool_execution() {
+        let tool = CallGraphTool::new();
+
+        let code = r#"
+use std::collections::HashMap;
+
+pub fn orchestrate_task(task_id: &str) -> bool {
+    let ok = check_permission(task_id);
+    if ok {
+        execute_step();
+    }
+    ok
+}
+
+fn check_permission(id: &str) -> bool {
+    true
+}
+
+fn execute_step() {}
+"#;
+
+        let res = tool
+            .execute(json!({
+                "code": code,
+                "path": "src/orchestrator.rs",
+                "symbol": "check_permission",
+                "direction": "callers"
+            }))
+            .await
+            .expect("execute call graph tool");
+
+        assert_eq!(res["status"], "success");
+        assert_eq!(res["total_edges"], 3);
+        let callers = res["callers"].as_array().unwrap();
+        assert_eq!(callers.len(), 1);
+        assert_eq!(callers[0]["caller_symbol"], "orchestrate_task");
+        assert!(res["formatted_summary"].as_str().unwrap().contains("Call Graph Analysis"));
+    }
 }

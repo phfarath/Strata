@@ -1,5 +1,6 @@
 pub mod alignment;
 pub mod ast;
+pub mod call_graph;
 pub mod compiler;
 pub mod consolidation;
 pub mod decay;
@@ -27,6 +28,7 @@ pub use alignment::PreferenceMiner;
 pub use ast::{
     AstDiffResult, AstParser, CodeAnchorEngine, ExtractedSymbol, LanguageKind, ReconciliationReport,
 };
+pub use call_graph::{CallEdge, CallGraph, CallGraphAnalyzer, CallType};
 pub use compiler::{
     estimate_tokens, HostCompileResult, MultiHostCompileReport, MultiHostCompiler,
     STRATA_MARKER_END, STRATA_MARKER_START,

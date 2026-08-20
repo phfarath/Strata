@@ -20,6 +20,7 @@ use strata_core::state::{
 
 
 
+use crate::call_graph::{CallEdge, CallType};
 use crate::embedding::{bytes_to_embedding, embedding_to_bytes};
 
 pub struct SqliteStore {
@@ -447,6 +448,23 @@ impl SqliteStore {
 
             CREATE INDEX IF NOT EXISTS idx_pref_pairs_session ON preference_pairs(source_session_id);
             CREATE INDEX IF NOT EXISTS idx_pref_pairs_created ON preference_pairs(created_at);
+
+            -- Native Call Graph Edges Table
+            CREATE TABLE IF NOT EXISTS call_edges (
+                id TEXT PRIMARY KEY,
+                caller_file TEXT NOT NULL,
+                caller_symbol TEXT NOT NULL,
+                callee_symbol TEXT NOT NULL,
+                callee_file_hint TEXT,
+                line_number INTEGER NOT NULL,
+                call_type TEXT NOT NULL,
+                created_at TEXT NOT NULL
+            );
+
+            CREATE INDEX IF NOT EXISTS idx_call_edges_caller ON call_edges(caller_file, caller_symbol);
+            CREATE INDEX IF NOT EXISTS idx_call_edges_callee ON call_edges(callee_symbol);
+            CREATE INDEX IF NOT EXISTS idx_call_edges_file ON call_edges(caller_file);
+            CREATE INDEX IF NOT EXISTS idx_call_edges_type ON call_edges(call_type);
             ",
         )
         .map_err(|e| StrataError::Database(format!("Failed to execute schema migration: {e}")))?;
@@ -3059,6 +3077,201 @@ impl SqliteStore {
         }
 
         Ok(results)
+    }
+
+    // ==========================================
+    // Call Graph Edges CRUD Operations
+    // ==========================================
+
+    /// Inserts a batch of extracted CallGraph edges atomically into SQLite.
+    pub fn insert_call_edges(&self, edges: &[CallEdge]) -> Result<(), StrataError> {
+        let conn = self.conn.lock().map_err(|_| {
+            StrataError::Database("Lock poisoned on SQLite connection".to_string())
+        })?;
+
+        for edge in edges {
+            let id_str = edge.id.to_string();
+            let call_type_str = edge.call_type.to_string();
+            let created_at_str = edge.created_at.to_rfc3339();
+
+            conn.execute(
+                "INSERT INTO call_edges (
+                    id, caller_file, caller_symbol, callee_symbol,
+                    callee_file_hint, line_number, call_type, created_at
+                ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)
+                ON CONFLICT(id) DO UPDATE SET
+                    caller_file = excluded.caller_file,
+                    caller_symbol = excluded.caller_symbol,
+                    callee_symbol = excluded.callee_symbol,
+                    callee_file_hint = excluded.callee_file_hint,
+                    line_number = excluded.line_number,
+                    call_type = excluded.call_type",
+                params![
+                    id_str,
+                    edge.caller_file,
+                    edge.caller_symbol,
+                    edge.callee_symbol,
+                    edge.callee_file_hint,
+                    edge.line_number as i64,
+                    call_type_str,
+                    created_at_str,
+                ],
+            )
+            .map_err(|e| StrataError::Database(format!("Failed to persist call edge: {e}")))?;
+        }
+
+        Ok(())
+    }
+
+    /// Clears all call edges originating from a specific file (used prior to re-indexing).
+    pub fn clear_call_edges_for_file(&self, file_path: &str) -> Result<usize, StrataError> {
+        let conn = self.conn.lock().map_err(|_| {
+            StrataError::Database("Lock poisoned on SQLite connection".to_string())
+        })?;
+
+        let rows = conn
+            .execute("DELETE FROM call_edges WHERE caller_file = ?1", params![file_path])
+            .map_err(|e| StrataError::Database(e.to_string()))?;
+
+        Ok(rows)
+    }
+
+    /// Retrieves all callers that invoke or import a given callee symbol.
+    pub fn get_callers_of_symbol(
+        &self,
+        callee_symbol: &str,
+        limit: usize,
+    ) -> Result<Vec<CallEdge>, StrataError> {
+        let conn = self.conn.lock().map_err(|_| {
+            StrataError::Database("Lock poisoned on SQLite connection".to_string())
+        })?;
+
+        let mut stmt = conn
+            .prepare(
+                "SELECT id, caller_file, caller_symbol, callee_symbol,
+                        callee_file_hint, line_number, call_type, created_at
+                 FROM call_edges
+                 WHERE callee_symbol = ?1 OR callee_symbol LIKE ?2
+                 ORDER BY created_at DESC
+                 LIMIT ?3",
+            )
+            .map_err(|e| StrataError::Database(e.to_string()))?;
+
+        let wildcard = format!("%::{callee_symbol}");
+        let rows = stmt
+            .query_map(params![callee_symbol, wildcard, limit as i64], |row| {
+                Self::row_to_call_edge(row)
+            })
+            .map_err(|e| StrataError::Database(e.to_string()))?;
+
+        let mut results = Vec::new();
+        for r in rows {
+            results.push(r.map_err(|e| StrataError::Database(e.to_string()))?);
+        }
+        Ok(results)
+    }
+
+    /// Retrieves all callees invoked by a specific symbol inside a file.
+    pub fn get_callees_of_symbol(
+        &self,
+        caller_file: &str,
+        caller_symbol: &str,
+    ) -> Result<Vec<CallEdge>, StrataError> {
+        let conn = self.conn.lock().map_err(|_| {
+            StrataError::Database("Lock poisoned on SQLite connection".to_string())
+        })?;
+
+        let mut stmt = conn
+            .prepare(
+                "SELECT id, caller_file, caller_symbol, callee_symbol,
+                        callee_file_hint, line_number, call_type, created_at
+                 FROM call_edges
+                 WHERE caller_file = ?1 AND caller_symbol = ?2
+                 ORDER BY line_number ASC",
+            )
+            .map_err(|e| StrataError::Database(e.to_string()))?;
+
+        let rows = stmt
+            .query_map(params![caller_file, caller_symbol], |row| {
+                Self::row_to_call_edge(row)
+            })
+            .map_err(|e| StrataError::Database(e.to_string()))?;
+
+        let mut results = Vec::new();
+        for r in rows {
+            results.push(r.map_err(|e| StrataError::Database(e.to_string()))?);
+        }
+        Ok(results)
+    }
+
+    /// Retrieves all call and import edges recorded for a given file.
+    pub fn get_file_call_edges(&self, file_path: &str) -> Result<Vec<CallEdge>, StrataError> {
+        let conn = self.conn.lock().map_err(|_| {
+            StrataError::Database("Lock poisoned on SQLite connection".to_string())
+        })?;
+
+        let mut stmt = conn
+            .prepare(
+                "SELECT id, caller_file, caller_symbol, callee_symbol,
+                        callee_file_hint, line_number, call_type, created_at
+                 FROM call_edges
+                 WHERE caller_file = ?1
+                 ORDER BY line_number ASC",
+            )
+            .map_err(|e| StrataError::Database(e.to_string()))?;
+
+        let rows = stmt
+            .query_map(params![file_path], |row| Self::row_to_call_edge(row))
+            .map_err(|e| StrataError::Database(e.to_string()))?;
+
+        let mut results = Vec::new();
+        for r in rows {
+            results.push(r.map_err(|e| StrataError::Database(e.to_string()))?);
+        }
+        Ok(results)
+    }
+
+    /// Returns the total count of call edges indexed in SQLite.
+    pub fn get_call_edges_count(&self) -> Result<usize, StrataError> {
+        let conn = self.conn.lock().map_err(|_| {
+            StrataError::Database("Lock poisoned on SQLite connection".to_string())
+        })?;
+
+        let count: i64 = conn
+            .query_row("SELECT COUNT(*) FROM call_edges", [], |r| r.get(0))
+            .unwrap_or(0);
+
+        Ok(count as usize)
+    }
+
+    fn row_to_call_edge(row: &rusqlite::Row) -> rusqlite::Result<CallEdge> {
+        let id_str: String = row.get(0)?;
+        let caller_file: String = row.get(1)?;
+        let caller_symbol: String = row.get(2)?;
+        let callee_symbol: String = row.get(3)?;
+        let callee_file_hint: Option<String> = row.get(4)?;
+        let line_number: i64 = row.get(5)?;
+        let call_type_str: String = row.get(6)?;
+        let created_at_str: String = row.get(7)?;
+
+        let id = Uuid::parse_str(&id_str).map_err(|_| rusqlite::Error::InvalidQuery)?;
+        let call_type = call_type_str
+            .parse::<CallType>()
+            .map_err(|_| rusqlite::Error::InvalidQuery)?;
+        let created_at = DateTime::parse_from_rfc3339(&created_at_str)
+            .map(|dt| dt.with_timezone(&Utc))
+            .unwrap_or_else(|_| Utc::now());
+
+        Ok(CallEdge {
+            id,
+            caller_file,
+            caller_symbol,
+            callee_symbol,
+            callee_file_hint,
+            line_number: line_number as u32,
+            call_type,
+            created_at,
+        })
     }
 }
 

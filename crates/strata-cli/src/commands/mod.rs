@@ -1,5 +1,6 @@
 pub mod auth;
 pub mod blast_radius;
+pub mod callgraph;
 pub mod consolidate;
 pub mod daemon;
 pub mod doctor;
@@ -19,6 +20,7 @@ pub mod train;
 
 pub use auth::*;
 pub use blast_radius::*;
+pub use callgraph::*;
 pub use consolidate::*;
 pub use daemon::*;
 pub use doctor::*;
