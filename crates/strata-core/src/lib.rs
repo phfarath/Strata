@@ -12,15 +12,15 @@ pub use events::{
     SessionEnded, SessionStarted, TaskCompleted, TaskStarted, ToolInvoked, ToolResultReceived,
 };
 pub use schemas::{
-    ContextBudgetConfig, DecayConfig, DecayMetrics, EvidenceRef, EpisodicMemory, ExportFormat,
-    FactStatus, FeedbackEvent, FeedbackRating, HostTargetConfig, ImplicitSignal, KtoSample,
-    MemoryFeedback, ParameterDef, PreferencePair, ProceduralExample, ProceduralSkill,
-    ProceduralStep, SemanticFact, SftSample, SignalKind, SignalScores, SyncConfig, SyncDelta,
-    SyncReport,
+    CodeAnchor, ContextBudgetConfig, DecayConfig, DecayMetrics, EvidenceRef, EpisodicMemory,
+    ExportFormat, FactStatus, FeedbackEvent, FeedbackRating, HostTargetConfig, ImplicitSignal,
+    KtoSample, MemoryFeedback, ParameterDef, PreferencePair, ProceduralExample,
+    ProceduralSkill, ProceduralStep, SemanticFact, SftSample, SignalKind, SignalScores,
+    SymbolType, SyncConfig, SyncDelta, SyncReport,
 };
 pub use state::{
-    DigestOutput, FailurePattern, FailureSeverity, MemoryHandle, MemoryRecord, MemoryType,
-    OutboxEntry, OutboxStatus, Scope, SessionState, SessionStatus,
+    DigestOutput, FailurePattern, FailureSeverity, MemoryHandle, MemoryRecord, MemoryTier,
+    MemoryType, OutboxEntry, OutboxStatus, Scope, SessionState, SessionStatus,
 };
 
 pub use traits::{EventStore, MemoryEngine, ReasoningEngine, Tool, ToolGateway};

@@ -460,3 +460,444 @@ impl Tool for SafeShellTool {
         }
     }
 }
+
+/// Tool for evaluating the architectural causal blast radius before modifying code.
+pub struct CausalBlastRadiusTool {
+    world_model: Arc<strata_reasoning::WorldModel>,
+}
+
+impl CausalBlastRadiusTool {
+    pub fn new(world_model: Arc<strata_reasoning::WorldModel>) -> Self {
+        Self { world_model }
+    }
+}
+
+#[async_trait]
+impl Tool for CausalBlastRadiusTool {
+    fn name(&self) -> &str {
+        "causal_blast_radius"
+    }
+
+    fn description(&self) -> &str {
+        "Analyze the architectural causal blast radius, downstream ripple effects, and breaking risk before modifying code."
+    }
+
+    fn parameters_schema(&self) -> serde_json::Value {
+        json!({
+            "type": "object",
+            "properties": {
+                "target": {
+                    "type": "string",
+                    "description": "File path, module name, or struct to evaluate (e.g. 'crates/strata-server/src/storage.rs' or 'ServerStorage')"
+                },
+                "depth": {
+                    "type": "integer",
+                    "description": "Maximum traversal depth for transitive dependencies (default 3)"
+                }
+            },
+            "required": ["target"]
+        })
+    }
+
+    async fn execute(&self, params: serde_json::Value) -> Result<serde_json::Value, StrataError> {
+        let target = params
+            .get("target")
+            .and_then(|v| v.as_str())
+            .ok_or_else(|| StrataError::ValidationError("Missing 'target' field".to_string()))?;
+
+        let depth = params.get("depth").and_then(|v| v.as_u64()).unwrap_or(3) as usize;
+
+        let report = self
+            .world_model
+            .predict_impact(target, depth)
+            .await
+            .map_err(|e| StrataError::ReasoningError(e.to_string()))?;
+
+        Ok(json!(report))
+    }
+}
+
+/// Tool for decomposing high-level objectives into an executable Goal DAG.
+pub struct GoalDecomposeTool {
+    decomposer: Arc<strata_reasoning::GoalDecomposer>,
+}
+
+impl Default for GoalDecomposeTool {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl GoalDecomposeTool {
+    pub fn new() -> Self {
+        Self {
+            decomposer: Arc::new(strata_reasoning::GoalDecomposer::new()),
+        }
+    }
+
+    pub fn with_decomposer(decomposer: Arc<strata_reasoning::GoalDecomposer>) -> Self {
+        Self { decomposer }
+    }
+}
+
+#[async_trait]
+impl Tool for GoalDecomposeTool {
+    fn name(&self) -> &str {
+        "goal_decompose"
+    }
+
+    fn description(&self) -> &str {
+        "Decompose high-level objectives into a structured Goal DAG with parallel execution waves and verification gates."
+    }
+
+    fn parameters_schema(&self) -> serde_json::Value {
+        json!({
+            "type": "object",
+            "properties": {
+                "goal": {
+                    "type": "string",
+                    "description": "Natural language long-horizon task or objective to decompose"
+                },
+                "max_depth": {
+                    "type": "integer",
+                    "description": "Maximum decomposition depth (default: 3)"
+                },
+                "include_verification": {
+                    "type": "boolean",
+                    "description": "Whether to include verification gates and invariant checks (default: true)"
+                }
+            },
+            "required": ["goal"]
+        })
+    }
+
+    async fn execute(&self, params: serde_json::Value) -> Result<serde_json::Value, StrataError> {
+        let goal = params
+            .get("goal")
+            .and_then(|v| v.as_str())
+            .ok_or_else(|| StrataError::ValidationError("Missing 'goal' field".to_string()))?;
+
+        let include_verification = params
+            .get("include_verification")
+            .and_then(|v| v.as_bool())
+            .unwrap_or(true);
+
+        let dag = if include_verification {
+            self.decomposer.decompose(goal)
+        } else {
+            strata_reasoning::GoalDecomposer::new()
+                .with_verification_gates(false)
+                .decompose(goal)
+        }
+        .map_err(|e| StrataError::ReasoningError(format!("Goal decomposition error: {e}")))?;
+
+        let waves = dag
+            .compute_waves()
+            .map_err(|e| StrataError::ReasoningError(format!("Wave computation error: {e}")))?;
+
+        let ascii_tree = dag.to_ascii_tree();
+        let export = dag.export();
+
+        Ok(json!({
+            "status": "success",
+            "goal": goal,
+            "total_nodes": dag.node_count(),
+            "total_waves": waves.len(),
+            "waves": waves,
+            "dag": export,
+            "ascii_tree": ascii_tree
+        }))
+    }
+}
+
+/// Tool for executing a Goal DAG plan wave-by-wave asynchronously with dynamic recovery.
+pub struct DagExecuteTool {
+    scheduler: Arc<strata_reasoning::DagScheduler>,
+}
+
+impl Default for DagExecuteTool {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl DagExecuteTool {
+    pub fn new() -> Self {
+        Self {
+            scheduler: Arc::new(strata_reasoning::DagScheduler::new()),
+        }
+    }
+
+    pub fn with_scheduler(scheduler: Arc<strata_reasoning::DagScheduler>) -> Self {
+        Self { scheduler }
+    }
+}
+
+#[async_trait]
+impl Tool for DagExecuteTool {
+    fn name(&self) -> &str {
+        "dag_execute"
+    }
+
+    fn description(&self) -> &str {
+        "Execute a Goal DAG plan wave-by-wave asynchronously with controlled concurrency and dynamic failure recovery."
+    }
+
+    fn parameters_schema(&self) -> serde_json::Value {
+        json!({
+            "type": "object",
+            "properties": {
+                "goal": {
+                    "type": "string",
+                    "description": "Optional natural language goal to decompose and execute"
+                },
+                "dag": {
+                    "type": "object",
+                    "description": "Optional pre-decomposed Goal DAG JSON export to execute"
+                },
+                "max_concurrency": {
+                    "type": "integer",
+                    "description": "Maximum number of parallel tasks to run concurrently (default: 4)"
+                },
+                "auto_recover": {
+                    "type": "boolean",
+                    "description": "Whether to dynamically recover from failures by patching DAG (default: true)"
+                }
+            }
+        })
+    }
+
+    async fn execute(&self, params: serde_json::Value) -> Result<serde_json::Value, StrataError> {
+        let concurrency = params
+            .get("max_concurrency")
+            .and_then(|v| v.as_u64())
+            .unwrap_or(4) as usize;
+
+        let auto_recover = params
+            .get("auto_recover")
+            .and_then(|v| v.as_bool())
+            .unwrap_or(true);
+
+        let dag = if let Some(dag_val) = params.get("dag") {
+            let export: strata_reasoning::GoalDagExport = serde_json::from_value(dag_val.clone())
+                .map_err(|e| StrataError::ValidationError(format!("Invalid Goal DAG export: {e}")))?;
+            strata_reasoning::GoalDag::from_export(export)
+                .map_err(|e| StrataError::ValidationError(format!("Invalid Goal DAG structure: {e}")))?
+        } else if let Some(goal) = params.get("goal").and_then(|v| v.as_str()) {
+            strata_reasoning::GoalDecomposer::new()
+                .decompose(goal)
+                .map_err(|e| StrataError::ReasoningError(format!("Goal decomposition error: {e}")))?
+        } else {
+            return Err(StrataError::ValidationError(
+                "Either 'dag' or 'goal' parameter must be provided".to_string(),
+            ));
+        };
+
+        let (finished_dag, report) = if concurrency == 4 && auto_recover {
+            self.scheduler.execute(dag).await
+        } else {
+            strata_reasoning::DagScheduler::new()
+                .with_concurrency(concurrency)
+                .with_auto_recover(auto_recover)
+                .execute(dag)
+                .await
+        }
+        .map_err(|e| StrataError::ReasoningError(format!("DAG execution error: {e}")))?;
+
+        let ascii_tree = finished_dag.to_ascii_tree();
+
+        Ok(json!({
+            "status": if report.success { "success" } else { "failed" },
+            "report": report,
+            "ascii_tree": ascii_tree
+        }))
+    }
+}
+
+/// Tool for one-click local LoRA fine-tuning via Unsloth and Ollama deployment.
+pub struct TrainPipelineTool {
+    store: Option<Arc<strata_memory::SqliteStore>>,
+}
+
+impl Default for TrainPipelineTool {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl TrainPipelineTool {
+    pub fn new() -> Self {
+        Self { store: None }
+    }
+
+    pub fn with_store(store: Arc<strata_memory::SqliteStore>) -> Self {
+        Self { store: Some(store) }
+    }
+}
+
+#[async_trait]
+impl Tool for TrainPipelineTool {
+    fn name(&self) -> &str {
+        "train_pipeline"
+    }
+
+    fn description(&self) -> &str {
+        "Synthesize one-click Unsloth LoRA fine-tuning scripts, Ollama Modelfile, datasets, and execution artifacts."
+    }
+
+    fn parameters_schema(&self) -> serde_json::Value {
+        json!({
+            "type": "object",
+            "properties": {
+                "base_model": {
+                    "type": "string",
+                    "description": "HuggingFace base model identifier (default: 'unsloth/Llama-3.2-3B-Instruct')"
+                },
+                "method": {
+                    "type": "string",
+                    "enum": ["dpo", "sft", "orpo", "kto"],
+                    "description": "Fine-tuning optimization method (default: 'dpo')"
+                },
+                "quantization": {
+                    "type": "string",
+                    "enum": ["4bit", "8bit", "16bit", "none"],
+                    "description": "Quantization format for base model loading (default: '4bit')"
+                },
+                "lora_r": {
+                    "type": "integer",
+                    "description": "LoRA rank dimension (default: 16)"
+                },
+                "lora_alpha": {
+                    "type": "integer",
+                    "description": "LoRA scaling alpha (default: 32)"
+                },
+                "lora_dropout": {
+                    "type": "number",
+                    "description": "LoRA dropout probability (default: 0.0)"
+                },
+                "learning_rate": {
+                    "type": "number",
+                    "description": "Optimizer learning rate (default: 5e-5)"
+                },
+                "batch_size": {
+                    "type": "integer",
+                    "description": "Per-device training batch size (default: 2)"
+                },
+                "gradient_accumulation_steps": {
+                    "type": "integer",
+                    "description": "Gradient accumulation steps (default: 4)"
+                },
+                "max_steps": {
+                    "type": "integer",
+                    "description": "Maximum training steps (default: 60)"
+                },
+                "max_seq_length": {
+                    "type": "integer",
+                    "description": "Maximum sequence context length (default: 2048)"
+                },
+                "output_dir": {
+                    "type": "string",
+                    "description": "Target directory for synthesized training artifacts (default: './outputs/lora_run')"
+                },
+                "dataset_content": {
+                    "type": "string",
+                    "description": "Optional raw JSONL dataset string"
+                },
+                "ollama_model_name": {
+                    "type": "string",
+                    "description": "Target model identifier for local Ollama registration (default: 'strata-custom-coder')"
+                },
+                "export_gguf": {
+                    "type": "boolean",
+                    "description": "Whether to export GGUF format for Ollama (default: true)"
+                },
+                "dry_run": {
+                    "type": "boolean",
+                    "description": "Whether to run dry-run artifact synthesis without starting Python (default: true)"
+                }
+            }
+        })
+    }
+
+    async fn execute(&self, params: serde_json::Value) -> Result<serde_json::Value, StrataError> {
+        let base_model = params
+            .get("base_model")
+            .and_then(|v| v.as_str())
+            .unwrap_or("unsloth/Llama-3.2-3B-Instruct");
+
+        let method_str = params
+            .get("method")
+            .and_then(|v| v.as_str())
+            .unwrap_or("dpo");
+        let method = method_str.parse::<strata_reasoning::TrainingMethod>()?;
+
+        let quant_str = params
+            .get("quantization")
+            .and_then(|v| v.as_str())
+            .unwrap_or("4bit");
+        let quantization = quant_str.parse::<strata_reasoning::QuantizationType>()?;
+
+        let lora_r = params.get("lora_r").and_then(|v| v.as_u64()).unwrap_or(16) as u32;
+        let lora_alpha = params.get("lora_alpha").and_then(|v| v.as_u64()).unwrap_or(32) as u32;
+        let lora_dropout = params.get("lora_dropout").and_then(|v| v.as_f64()).unwrap_or(0.0) as f32;
+        let learning_rate = params.get("learning_rate").and_then(|v| v.as_f64()).unwrap_or(5e-5);
+        let batch_size = params.get("batch_size").and_then(|v| v.as_u64()).unwrap_or(2) as usize;
+        let grad_accum = params.get("gradient_accumulation_steps").and_then(|v| v.as_u64()).unwrap_or(4) as usize;
+        let max_steps = params.get("max_steps").and_then(|v| v.as_u64()).unwrap_or(60) as usize;
+        let max_seq_length = params.get("max_seq_length").and_then(|v| v.as_u64()).unwrap_or(2048) as usize;
+        let output_dir_str = params.get("output_dir").and_then(|v| v.as_str()).unwrap_or("./outputs/lora_run");
+        let ollama_name = params.get("ollama_model_name").and_then(|v| v.as_str()).unwrap_or("strata-custom-coder");
+        let export_gguf = params.get("export_gguf").and_then(|v| v.as_bool()).unwrap_or(true);
+
+        let mut config = strata_reasoning::TrainingConfig::new(base_model)
+            .with_method(method)
+            .with_quantization(quantization)
+            .with_lora(lora_r, lora_alpha, lora_dropout)
+            .with_learning_rate(learning_rate)
+            .with_batch_size(batch_size, grad_accum)
+            .with_max_steps(max_steps)
+            .with_max_seq_length(max_seq_length)
+            .with_output_dir(output_dir_str)
+            .with_ollama_model(ollama_name);
+        config.export_gguf = export_gguf;
+
+        // Determine dataset content and sample count
+        let (dataset_str, sample_count) = if let Some(content) = params.get("dataset_content").and_then(|v| v.as_str()) {
+            let lines_count = content.lines().filter(|l| !l.trim().is_empty()).count();
+            (Some(content.to_string()), lines_count)
+        } else if let Some(ref store) = self.store {
+            let miner = strata_memory::PreferenceMiner::new(store.clone());
+            let fmt = match method {
+                strata_reasoning::TrainingMethod::Sft => strata_memory::ExportFormat::Sft,
+                strata_reasoning::TrainingMethod::Kto => strata_memory::ExportFormat::Kto,
+                _ => strata_memory::ExportFormat::Dpo,
+            };
+            let mined = miner.export(fmt, None).unwrap_or_default();
+            let lines_count = mined.lines().filter(|l| !l.trim().is_empty()).count();
+            (Some(mined), lines_count)
+        } else {
+            let default_dpo = "{\"prompt\":\"Context: Agent encountered borrow error\",\"chosen\":\"Use Arc and Clone properly\",\"rejected\":\"Force unsafe raw pointers\"}\n";
+            (Some(default_dpo.to_string()), 1)
+        };
+
+        let pipeline = strata_reasoning::TrainingPipeline::new(config);
+        let out_path = std::path::Path::new(output_dir_str);
+        let result = pipeline.generate_artifacts(out_path, dataset_str.as_deref(), sample_count)?;
+        let summary_table = pipeline.format_summary_table(sample_count);
+
+        Ok(json!({
+            "status": "success",
+            "manifest": result.manifest,
+            "script_path": result.script_path,
+            "dataset_path": result.dataset_path,
+            "modelfile_path": result.modelfile_path,
+            "run_script_path": result.run_script_path,
+            "summary": result.summary,
+            "summary_table": summary_table,
+            "total_samples": sample_count
+        }))
+    }
+}
+
+
+

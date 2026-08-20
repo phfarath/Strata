@@ -7,6 +7,7 @@ use strata_core::{
     traits::MemoryEngine,
 };
 use strata_memory::{ConsolidationPipeline, SqliteMemoryEngine};
+use strata_tools::{AntiPatternParser, CommandInterceptor};
 use crate::commands::consolidate::resolve_reasoning_engine;
 
 #[derive(Subcommand, Debug, Clone)]
@@ -66,6 +67,25 @@ pub enum HookCommand {
 
         #[arg(long)]
         context: Option<String>,
+    },
+
+    /// Intercepts shell command execution, captures compiler/test errors out-of-band and persists AntiPatterns
+    Wrap {
+        /// Working directory
+        #[arg(long)]
+        cwd: Option<String>,
+
+        /// Context hint or trigger description
+        #[arg(long)]
+        context: Option<String>,
+
+        /// Scope filter
+        #[arg(long)]
+        scope: Option<String>,
+
+        /// Command and arguments to execute
+        #[arg(trailing_var_arg = true, required = true)]
+        command: Vec<String>,
     },
 }
 
@@ -148,9 +168,10 @@ pub async fn handle_hook(command: HookCommand, engine: Arc<SqliteMemoryEngine>) 
                 let mut sections = Vec::new();
 
                 if !failures.is_empty() {
-                    let mut fail_text = String::from("⚠️ [Strata Pre-emptive Warning: Known Failures]\n");
+                    let mut fail_text = String::from("⚠️ [Strata Pre-emptive Guardrails: Known Anti-Patterns]\n");
                     for f in &failures {
-                        fail_text.push_str(&format!("  - Action/Tool '{}': {}\n    Remedy: {}\n", f.signature, f.description, f.mitigation));
+                        let surgical = AntiPatternParser::format_surgical_guardrail(f);
+                        fail_text.push_str(&format!("  • {surgical}\n"));
                     }
                     sections.push(fail_text);
                 }
@@ -159,7 +180,7 @@ pub async fn handle_hook(command: HookCommand, engine: Arc<SqliteMemoryEngine>) 
                     let mut mem_text = String::from("🧠 [Strata Relevant Context]\n");
                     for m in &memories {
                         let handle = m.to_handle(None);
-                        mem_text.push_str(&format!("  - [{}] {}: {}\n", handle.memory_type, handle.title, handle.summary));
+                        mem_text.push_str(&format!("  • [{}] {}: {}\n", handle.memory_type, handle.title, handle.summary));
                     }
                     sections.push(mem_text);
                 }
@@ -215,27 +236,69 @@ pub async fn handle_hook(command: HookCommand, engine: Arc<SqliteMemoryEngine>) 
             });
         }
 
-
         HookCommand::PostTool { tool, error, params, context } => {
             if let Some(err_msg) = error {
                 if !err_msg.trim().is_empty() {
                     debug!("Out-of-band capturing silent tool failure: tool='{tool}', error='{err_msg}'");
-                    let mut failure = FailurePattern::new(
-                        format!("{tool}_failure"),
-                        format!("{tool} execution error"),
-                        err_msg.clone(),
-                        "Avoid repeating identical invalid parameters or unverified flags",
-                    );
-                    failure.error_type = "ToolExecutionError".to_string();
-                    failure.trigger_condition = params.unwrap_or_default();
-                    failure.severity = FailureSeverity::High;
-                    if let Some(ctx) = context {
-                        failure.metadata = serde_json::json!({ "context": ctx });
-                    }
+                    let failure = AntiPatternParser::parse(
+                        &tool,
+                        "",
+                        &err_msg,
+                        1,
+                        context.as_deref(),
+                        None,
+                    )
+                    .unwrap_or_else(|| {
+                        let mut f = FailurePattern::new(
+                            format!("{tool}_failure"),
+                            format!("{tool} execution error"),
+                            err_msg.clone(),
+                            "Avoid repeating identical invalid parameters or unverified flags",
+                        );
+                        f.error_type = "ToolExecutionError".to_string();
+                        f.trigger_condition = params.unwrap_or_default();
+                        f.severity = FailureSeverity::High;
+                        if let Some(ctx) = context {
+                            f.metadata = serde_json::json!({ "context": ctx });
+                        }
+                        f
+                    });
 
                     if let Err(e) = engine.record_failure(&failure).await {
                         error!("Failed to silently record tool failure: {e}");
                     }
+                }
+            }
+        }
+
+        HookCommand::Wrap { cwd, context, scope, command } => {
+            let parsed_scope = scope.as_deref().and_then(|s| s.parse::<Scope>().ok());
+            let interceptor = CommandInterceptor::with_engine(Arc::clone(&engine) as Arc<dyn MemoryEngine>);
+
+            let res = interceptor
+                .execute_and_intercept(
+                    &command,
+                    cwd.as_deref(),
+                    None,
+                    context.as_deref(),
+                    parsed_scope,
+                )
+                .await?;
+
+            if !res.stdout.is_empty() {
+                print!("{}", res.stdout);
+            }
+            if !res.stderr.is_empty() {
+                eprint!("{}", res.stderr);
+            }
+
+            if let Some(guardrail) = res.surgical_guardrail {
+                eprintln!("\n🧠 [Strata AntiPattern Captured]: {guardrail}");
+            }
+
+            if let Some(code) = res.exit_code {
+                if code != 0 {
+                    std::process::exit(code);
                 }
             }
         }

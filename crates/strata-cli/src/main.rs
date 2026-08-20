@@ -14,6 +14,7 @@ use strata_memory::SqliteMemoryEngine;
 use strata_cli::{
     commands::{
         auth::{run_auth, AuthArgs},
+        blast_radius::{run_blast_radius, BlastRadiusArgs},
         consolidate::{run_consolidate, ConsolidateOptions},
         daemon::{run_daemon, DaemonArgs},
         doctor::run_doctor,
@@ -23,10 +24,13 @@ use strata_cli::{
         init::{run_init, InitOptions},
         key::{run_key, KeyArgs},
         login::{run_login, run_logout, LoginArgs},
+        observe::{run_observe, ObserveArgs},
+        plan::{run_plan, PlanArgs},
         prune::{run_prune, PruneOptions},
         search::{run_search, SearchOptions},
         sync::{run_sync, SyncArgs},
         sync_hosts::{run_sync_hosts, SyncHostsArgs},
+        train::{run_train, TrainArgs},
     },
     mcp::server::McpServer,
 };
@@ -154,6 +158,9 @@ enum Commands {
         #[arg(long, help = "Optional scope filter")]
         scope: Option<String>,
 
+        #[arg(long, help = "Simulate decay without writing changes to the database")]
+        dry_run: bool,
+
         #[arg(long, help = "Output report as raw JSON")]
         json: bool,
     },
@@ -174,6 +181,18 @@ enum Commands {
     /// Provide explicit reinforcement feedback on a persistent memory record
     Feedback(FeedbackArgs),
 
+    /// View cognitive observability dashboard, Ebbinghaus decay curves, ACT-R activations, and anti-patterns
+    #[command(name = "observe", alias = "stats", alias = "decay", alias = "dashboard", alias = "tui")]
+    Observe(ObserveArgs),
+
+    /// Analyze architectural causal blast radius, ripple effects, and breaking risk before editing code
+    #[command(name = "blast-radius", alias = "causal", alias = "impact", alias = "world-model")]
+    BlastRadius(BlastRadiusArgs),
+
+    /// Hierarchical goal planning, topological wave decomposition, and DAG execution scheduler
+    #[command(name = "plan", alias = "dag", alias = "schedule")]
+    Plan(PlanArgs),
+
     /// Manage Strata Cloud developer accounts and authentication
     Auth(AuthArgs),
 
@@ -185,6 +204,10 @@ enum Commands {
 
     /// Log out from Strata Cloud and clear stored credentials
     Logout,
+
+    /// One-click local LoRA fine-tuning via Unsloth and Ollama deployment
+    #[command(name = "train", alias = "lora", alias = "finetune")]
+    Train(TrainArgs),
 }
 
 
@@ -213,6 +236,11 @@ async fn main() -> Result<()> {
         });
     }
 
+    // Fast-path for Plan (can execute standalone or with scheduler)
+    if let Commands::Plan(args) = cli.command {
+        return run_plan(args).await;
+    }
+
     // Fast-path for Auth, Key & Login commands (communicate over HTTP with Strata Cloud)
     if let Commands::Login(args) = cli.command {
         return run_login(args).await;
@@ -239,7 +267,7 @@ async fn main() -> Result<()> {
     );
 
     match cli.command {
-        Commands::Init { .. } | Commands::Auth(_) | Commands::Key(_) | Commands::Login(_) | Commands::Logout => unreachable!(),
+        Commands::Init { .. } | Commands::Plan(_) | Commands::Auth(_) | Commands::Key(_) | Commands::Login(_) | Commands::Logout => unreachable!(),
 
         Commands::Mcp => {
             let server = McpServer::new(engine);
@@ -349,9 +377,9 @@ async fn main() -> Result<()> {
             run_consolidate(ConsolidateOptions { session, all, model, json }, store).await?;
         }
 
-        Commands::Prune { threshold, scope, json } => {
+        Commands::Prune { threshold, scope, dry_run, json } => {
             let store = engine.store_arc();
-            run_prune(PruneOptions { threshold, scope, json }, store).await?;
+            run_prune(PruneOptions { threshold, scope, dry_run, json }, store).await?;
         }
 
         Commands::Sync(args) => {
@@ -377,6 +405,21 @@ async fn main() -> Result<()> {
         Commands::Feedback(args) => {
             let store = engine.store_arc();
             run_feedback(args, store).await?;
+        }
+
+        Commands::Observe(args) => {
+            let store = engine.store_arc();
+            run_observe(args, store).await?;
+        }
+
+        Commands::BlastRadius(args) => {
+            let store = engine.store_arc();
+            run_blast_radius(args, store.as_ref()).await?;
+        }
+
+        Commands::Train(args) => {
+            let store = engine.store_arc();
+            run_train(args, store).await?;
         }
     }
 

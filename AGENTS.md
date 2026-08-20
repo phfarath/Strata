@@ -15,6 +15,10 @@
 - Radical Simplicity Principle
 - Mecanismo Out-of-Band de Captura Silenciosa de Erros
 - Arquitetura dos 3 Pontos de Ancoragem do Strata
+- Arquitetura Tri-Tier Cognitiva (Core, Working, Peripheral)
+- Ancoragem AST Tree-Sitter com Merkle Tree Git
+- JTMS Bi-Temporal com Truth Maintenance Determinístico
+- Mineração Autônoma de Datasets DPO/KTO a partir de Trajetórias de Código
 <!-- STRATA_MEMORY_END -->
 
 

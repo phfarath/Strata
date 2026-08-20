@@ -1,8 +1,10 @@
 pub mod builtin;
 pub mod gateway;
+pub mod interceptor;
 
 pub use builtin::*;
 pub use gateway::*;
+pub use interceptor::*;
 
 #[cfg(test)]
 mod tests {
@@ -10,13 +12,14 @@ mod tests {
     use async_trait::async_trait;
     use serde_json::json;
     use std::sync::Arc;
+    use std::time::Duration;
     use tokio::sync::Mutex;
     use uuid::Uuid;
 
     use strata_core::{
         errors::StrataError,
         events::{Event, EventId, EventPayload},
-        state::{DigestOutput, FailurePattern, MemoryHandle, MemoryRecord, Scope},
+        state::{DigestOutput, FailurePattern, FailureSeverity, MemoryHandle, MemoryRecord, Scope},
         traits::{EventStore, MemoryEngine, Tool},
     };
 
@@ -322,5 +325,161 @@ mod tests {
             }
             _ => panic!("Expected PermissionDenied"),
         }
+    }
+
+    #[tokio::test]
+    async fn test_goal_decompose_and_execute_tools() {
+        let decompose_tool = GoalDecomposeTool::new();
+        let decompose_res = decompose_tool
+            .execute(json!({
+                "goal": "Refactor database engine to async"
+            }))
+            .await
+            .unwrap();
+
+        assert_eq!(decompose_res["status"], "success");
+        assert!(decompose_res["total_waves"].as_u64().unwrap() >= 3);
+        assert!(decompose_res["ascii_tree"].as_str().unwrap().contains("WAVE 0"));
+
+        let dag_val = decompose_res["dag"].clone();
+
+        let execute_tool = DagExecuteTool::new();
+        let exec_res = execute_tool
+            .execute(json!({
+                "dag": dag_val,
+                "max_concurrency": 2
+            }))
+            .await
+            .unwrap();
+
+        assert_eq!(exec_res["status"], "success");
+        assert!(exec_res["report"]["success"].as_bool().unwrap());
+        assert!(exec_res["report"]["completed_nodes"].as_u64().unwrap() > 0);
+    }
+
+    #[tokio::test]
+    async fn test_train_pipeline_tool() {
+        let temp_dir = std::env::temp_dir().join("strata_tool_test_lora_run");
+        let tool = TrainPipelineTool::new();
+
+        let res = tool
+            .execute(json!({
+                "base_model": "unsloth/Llama-3.2-1B-Instruct",
+                "method": "dpo",
+                "output_dir": temp_dir.to_string_lossy(),
+                "dataset_content": "{\"prompt\":\"test prompt\",\"chosen\":\"test chosen\",\"rejected\":\"test rejected\"}\n",
+                "ollama_model_name": "strata-test-model",
+                "dry_run": true
+            }))
+            .await
+            .unwrap();
+
+        assert_eq!(res["status"], "success");
+        assert_eq!(res["total_samples"], 1);
+        assert!(res["script_path"].as_str().unwrap().contains("train_lora.py"));
+        assert!(res["modelfile_path"].as_str().unwrap().contains("Modelfile"));
+
+        let _ = std::fs::remove_dir_all(&temp_dir);
+    }
+
+    #[test]
+    fn test_antipattern_parser_rust_compiler_and_test_errors() {
+        // 1. Cargo package ID mismatch
+        let cargo_pkg_err = "error: package ID specification 'strata-wrong-package' did not match any packages";
+        let fp1 = AntiPatternParser::parse("cargo test -p strata-wrong-package", "", cargo_pkg_err, 101, None, None)
+            .expect("parse cargo package mismatch");
+        assert_eq!(fp1.signature, "cargo_package_not_found");
+        assert!(fp1.mitigation.contains("exact package name"));
+        let guardrail1 = AntiPatternParser::format_surgical_guardrail(&fp1);
+        assert!(guardrail1.contains("[KNOWN ANTI-PATTERN]:"));
+        assert!(guardrail1.len() < 250);
+
+        // 2. Borrow checker error
+        let borrow_err = "error[E0502]: cannot borrow `data` as mutable because it is also borrowed as immutable\n  --> src/main.rs:14:5";
+        let fp2 = AntiPatternParser::parse("cargo build", "", borrow_err, 1, None, None)
+            .expect("parse borrow checker error");
+        assert_eq!(fp2.signature, "rust_borrow_checker_conflict");
+        assert_eq!(fp2.severity, FailureSeverity::High);
+
+        // 3. Missing struct field
+        let struct_err = "error[E0063]: missing field `code_anchor` in initializer of `SemanticFact`";
+        let fp3 = AntiPatternParser::parse("cargo check", "", struct_err, 1, None, None)
+            .expect("parse missing struct field");
+        assert_eq!(fp3.signature, "rust_missing_struct_field");
+        assert!(fp3.mitigation.contains("Initialize all required struct fields"));
+
+        // 4. Undeclared symbol
+        let sym_err = "error[E0433]: cannot find type `CodeAnchorEngine` in this scope\nuse of undeclared type `CodeAnchorEngine`";
+        let fp4 = AntiPatternParser::parse("cargo check", "", sym_err, 1, None, None)
+            .expect("parse undeclared symbol");
+        assert_eq!(fp4.signature, "rust_undeclared_symbol");
+
+        // 5. Cargo test assertion failure
+        let test_fail = "running 1 test\ntest test_decay ... FAILED\npanicked at 'assertion `left == right` failed', src/decay.rs:42:5";
+        let fp5 = AntiPatternParser::parse("cargo test --package strata-memory", test_fail, "", 101, None, None)
+            .expect("parse cargo test failure");
+        assert_eq!(fp5.signature, "cargo_test_failure");
+    }
+
+    #[test]
+    fn test_antipattern_parser_npm_python_and_network_errors() {
+        // 1. NPM Module Not Found
+        let npm_err = "Error: Cannot find module '@strata/memory-core' or its corresponding type declarations.";
+        let fp1 = AntiPatternParser::parse("npm test", "", npm_err, 1, None, None)
+            .expect("parse npm module not found");
+        assert_eq!(fp1.signature, "npm_module_not_found");
+
+        // 2. TypeScript error
+        let tsc_err = "src/index.ts(12,5): error TS2322: Type 'string' is not assignable to type 'number'.";
+        let fp2 = AntiPatternParser::parse("tsc --noEmit", "", tsc_err, 2, None, None)
+            .expect("parse tsc error");
+        assert_eq!(fp2.signature, "tsc_type_error");
+
+        // 3. Python ModuleNotFoundError
+        let py_err = "Traceback (most recent call last):\n  File \"app.py\", line 1\nModuleNotFoundError: No module named 'fastembed'";
+        let fp3 = AntiPatternParser::parse("pytest tests/", "", py_err, 1, None, None)
+            .expect("parse python module error");
+        assert_eq!(fp3.signature, "python_module_not_found");
+
+        // 4. Pytest failure
+        let pytest_err = "FAILED tests/test_memory.py::test_decay - AssertionError: assert 0.42 == 0.50";
+        let fp4 = AntiPatternParser::parse("pytest tests/test_memory.py", "", pytest_err, 1, None, None)
+            .expect("parse pytest assertion failure");
+        assert_eq!(fp4.signature, "pytest_failure");
+
+        // 5. Port collision
+        let port_err = "Error: listen EADDRINUSE: address already in use :::8080";
+        let fp5 = AntiPatternParser::parse("cargo run --bin strata-server", "", port_err, 1, None, None)
+            .expect("parse port collision");
+        assert_eq!(fp5.signature, "network_port_collision");
+        assert!(fp5.mitigation.contains("DO NOT hardcode static PORT"));
+    }
+
+    #[tokio::test]
+    async fn test_command_interceptor_and_out_of_band_recording() {
+        let mock_engine = Arc::new(MockMemoryEngine::new());
+        let interceptor = CommandInterceptor::with_engine(Arc::clone(&mock_engine) as Arc<dyn MemoryEngine>);
+
+        // Intercept a failed command (e.g. invalid cargo flag)
+        let cmd = vec![
+            "cargo".to_string(),
+            "test".to_string(),
+            "--package".to_string(),
+            "nonexistent-crate-strata-xyz".to_string(),
+        ];
+
+        let result = interceptor
+            .execute_and_intercept(&cmd, None, Some(Duration::from_secs(10)), Some("test_context"), None)
+            .await
+            .expect("execute and intercept");
+
+        assert_ne!(result.exit_code, Some(0));
+        assert!(result.anti_pattern.is_some());
+        assert!(result.surgical_guardrail.is_some());
+
+        // Verify out-of-band failure recording in engine
+        let failures = mock_engine.get_known_failures(None, None, 10).await.unwrap();
+        assert_eq!(failures.len(), 1);
+        assert_eq!(failures[0].signature, "cargo_package_not_found");
     }
 }

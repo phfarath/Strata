@@ -12,4 +12,6 @@ Thumbs.db
 node_modules
 dist
 .vercel
+/training_artifacts
+output/
 

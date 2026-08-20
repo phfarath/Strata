@@ -19,3 +19,9 @@ tracing = { workspace = true }
 thiserror = { workspace = true }
 async-trait = { workspace = true }
 reqwest = { workspace = true }
+sha2 = { workspace = true }
+hex = { workspace = true }
+tree-sitter = { workspace = true }
+tree-sitter-rust = { workspace = true }
+tree-sitter-typescript = { workspace = true }
+tree-sitter-python = { workspace = true }

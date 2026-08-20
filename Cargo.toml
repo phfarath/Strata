@@ -62,6 +62,7 @@ anyhow = "1.0.96"
 dirs = "6.0.0"
 opener = "0.7.2"
 toml = "0.8.19"
+petgraph = { version = "0.7", features = ["serde-1"] }
 
 # Auth & Security
 argon2 = "0.5.3"
@@ -69,6 +70,12 @@ jsonwebtoken = "9.3.0"
 sha2 = "0.10.8"
 rand = "0.8.5"
 hex = "0.4.3"
+
+# AST Parsing & Tree-Sitter
+tree-sitter = "0.24"
+tree-sitter-rust = "0.23"
+tree-sitter-typescript = "0.23"
+tree-sitter-python = "0.23"
 
 # Networking & HTTP
 reqwest = { version = "0.12", features = ["json"] }

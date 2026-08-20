@@ -9,13 +9,13 @@ use strata_core::events::{
     DataClassification, Event, EventId, EventPayload, Provenance, RetentionPolicy,
 };
 use strata_core::schemas::{
-    EpisodicMemory, EvidenceRef, FactStatus, FeedbackEvent, FeedbackRating, ImplicitSignal,
+    CodeAnchor, EpisodicMemory, EvidenceRef, FactStatus, FeedbackEvent, FeedbackRating, ImplicitSignal,
     MemoryFeedback, ParameterDef, PreferencePair, ProceduralExample,
     ProceduralSkill, ProceduralStep, SemanticFact, SignalKind, SignalScores, SyncDelta,
 };
 
 use strata_core::state::{
-    FailurePattern, FailureSeverity, MemoryRecord, MemoryType, Scope,
+    FailurePattern, FailureSeverity, MemoryRecord, MemoryTier, MemoryType, Scope,
 };
 
 
@@ -93,6 +93,7 @@ impl SqliteStore {
                 content TEXT NOT NULL,
                 summary TEXT,
                 scope TEXT NOT NULL,
+                tier TEXT NOT NULL DEFAULT 'peripheral',
                 importance REAL NOT NULL DEFAULT 0.5,
                 confidence REAL NOT NULL DEFAULT 1.0,
                 tags_json TEXT NOT NULL DEFAULT '[]',
@@ -107,6 +108,7 @@ impl SqliteStore {
 
             CREATE INDEX IF NOT EXISTS idx_memories_scope ON memories(scope);
             CREATE INDEX IF NOT EXISTS idx_memories_type ON memories(memory_type);
+            CREATE INDEX IF NOT EXISTS idx_memories_tier ON memories(tier);
             CREATE INDEX IF NOT EXISTS idx_memories_created ON memories(created_at);
 
             -- Full-text search virtual table for memories
@@ -132,6 +134,46 @@ impl SqliteStore {
                 DELETE FROM memories_fts WHERE id = old.id;
                 INSERT INTO memories_fts(id, content, summary, tags)
                 VALUES (new.id, new.content, COALESCE(new.summary, ''), new.tags_json);
+            END;
+
+            -- Cold Storage Memories table for archived peripheral memories
+            CREATE TABLE IF NOT EXISTS cold_storage_memories (
+                id TEXT PRIMARY KEY,
+                memory_type TEXT NOT NULL,
+                content TEXT NOT NULL,
+                summary TEXT,
+                scope TEXT NOT NULL,
+                tier TEXT NOT NULL DEFAULT 'peripheral',
+                importance REAL NOT NULL DEFAULT 0.5,
+                confidence REAL NOT NULL DEFAULT 1.0,
+                tags_json TEXT NOT NULL DEFAULT '[]',
+                created_at TEXT NOT NULL,
+                updated_at TEXT NOT NULL,
+                archived_at TEXT NOT NULL,
+                access_count INTEGER NOT NULL DEFAULT 0,
+                last_accessed_at TEXT,
+                evidence_ids_json TEXT NOT NULL DEFAULT '[]',
+                metadata_json TEXT NOT NULL DEFAULT '{}'
+            );
+
+            CREATE INDEX IF NOT EXISTS idx_cold_scope ON cold_storage_memories(scope);
+            CREATE INDEX IF NOT EXISTS idx_cold_archived ON cold_storage_memories(archived_at);
+
+            CREATE VIRTUAL TABLE IF NOT EXISTS cold_storage_memories_fts USING fts5(
+                id UNINDEXED,
+                content,
+                summary,
+                tags,
+                tokenize = 'porter unicode61'
+            );
+
+            CREATE TRIGGER IF NOT EXISTS trg_cold_ai AFTER INSERT ON cold_storage_memories BEGIN
+                INSERT INTO cold_storage_memories_fts(id, content, summary, tags)
+                VALUES (new.id, new.content, COALESCE(new.summary, ''), new.tags_json);
+            END;
+
+            CREATE TRIGGER IF NOT EXISTS trg_cold_ad AFTER DELETE ON cold_storage_memories BEGIN
+                DELETE FROM cold_storage_memories_fts WHERE id = old.id;
             END;
 
             -- Failure Patterns table
@@ -244,17 +286,20 @@ impl SqliteStore {
                 evidence_json TEXT NOT NULL DEFAULT '[]',
                 importance REAL NOT NULL DEFAULT 0.5,
                 confidence REAL NOT NULL DEFAULT 1.0,
+                tier TEXT NOT NULL DEFAULT 'peripheral',
                 created_at TEXT NOT NULL,
                 last_updated_at TEXT NOT NULL,
                 status TEXT NOT NULL DEFAULT 'active',
                 version INTEGER NOT NULL DEFAULT 1,
                 replaced_by TEXT,
                 tags_json TEXT NOT NULL DEFAULT '[]',
+                code_anchor_json TEXT DEFAULT NULL,
                 embedding BLOB
             );
 
             CREATE INDEX IF NOT EXISTS idx_facts_scope ON semantic_facts(scope);
             CREATE INDEX IF NOT EXISTS idx_facts_category ON semantic_facts(category);
+            CREATE INDEX IF NOT EXISTS idx_facts_tier ON semantic_facts(tier);
             CREATE INDEX IF NOT EXISTS idx_facts_status ON semantic_facts(status);
             CREATE INDEX IF NOT EXISTS idx_facts_project ON semantic_facts(project);
 
@@ -405,6 +450,11 @@ impl SqliteStore {
             ",
         )
         .map_err(|e| StrataError::Database(format!("Failed to execute schema migration: {e}")))?;
+
+        // Safe migration for existing databases: add code_anchor_json and tier if not exists
+        let _ = conn.execute("ALTER TABLE semantic_facts ADD COLUMN code_anchor_json TEXT DEFAULT NULL", []);
+        let _ = conn.execute("ALTER TABLE memories ADD COLUMN tier TEXT NOT NULL DEFAULT 'peripheral'", []);
+        let _ = conn.execute("ALTER TABLE semantic_facts ADD COLUMN tier TEXT NOT NULL DEFAULT 'peripheral'", []);
 
         Ok(())
     }
@@ -678,6 +728,7 @@ impl SqliteStore {
         let id_str = memory.id.to_string();
         let mem_type_str = memory.memory_type.to_string();
         let scope_str = memory.scope.to_string();
+        let tier_str = memory.tier.to_string();
         let tags_json = serde_json::to_string(&memory.tags)?;
         let evidence_json = serde_json::to_string(&memory.evidence_ids)?;
         let metadata_json = serde_json::to_string(&memory.metadata)?;
@@ -688,15 +739,16 @@ impl SqliteStore {
 
         conn.execute(
             "INSERT INTO memories (
-                id, memory_type, content, summary, scope, importance, confidence,
+                id, memory_type, content, summary, scope, tier, importance, confidence,
                 tags_json, created_at, updated_at, access_count, last_accessed_at,
                 evidence_ids_json, embedding, metadata_json
-            ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15)
+            ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16)
             ON CONFLICT(id) DO UPDATE SET
                 memory_type = excluded.memory_type,
                 content = excluded.content,
                 summary = excluded.summary,
                 scope = excluded.scope,
+                tier = excluded.tier,
                 importance = excluded.importance,
                 confidence = excluded.confidence,
                 tags_json = excluded.tags_json,
@@ -712,6 +764,7 @@ impl SqliteStore {
                 memory.content,
                 memory.summary,
                 scope_str,
+                tier_str,
                 memory.importance,
                 memory.confidence,
                 tags_json,
@@ -737,7 +790,7 @@ impl SqliteStore {
 
         let mut stmt = conn
             .prepare(
-                "SELECT id, memory_type, content, summary, scope, importance,
+                "SELECT id, memory_type, content, summary, scope, tier, importance,
                         confidence, tags_json, created_at, updated_at, access_count,
                         last_accessed_at, evidence_ids_json, embedding, metadata_json
                  FROM memories
@@ -779,7 +832,7 @@ impl SqliteStore {
             StrataError::Database("Lock poisoned on SQLite connection".to_string())
         })?;
 
-        let mut query = "SELECT id, memory_type, content, summary, scope, importance,
+        let mut query = "SELECT id, memory_type, content, summary, scope, tier, importance,
                                 confidence, tags_json, created_at, updated_at, access_count,
                                 last_accessed_at, evidence_ids_json, embedding, metadata_json
                          FROM memories WHERE 1=1".to_string();
@@ -843,7 +896,7 @@ impl SqliteStore {
         }
 
         let mut sql = "
-            SELECT m.id, m.memory_type, m.content, m.summary, m.scope, m.importance,
+            SELECT m.id, m.memory_type, m.content, m.summary, m.scope, m.tier, m.importance,
                    m.confidence, m.tags_json, m.created_at, m.updated_at, m.access_count,
                    m.last_accessed_at, m.evidence_ids_json, m.embedding, m.metadata_json,
                    bm25(memories_fts) as rank
@@ -875,7 +928,7 @@ impl SqliteStore {
         let rows = stmt
             .query_map(params_slice.as_slice(), |row| {
                 let mem = Self::row_to_memory(row)?;
-                let rank: f64 = row.get(15)?;
+                let rank: f64 = row.get(16)?;
                 Ok((mem, rank as f32))
             })
             .map_err(|e| StrataError::Database(e.to_string()))?;
@@ -885,6 +938,207 @@ impl SqliteStore {
             results.push(r.map_err(|e| StrataError::Database(e.to_string()))?);
         }
         Ok(results)
+    }
+
+    // ==========================================
+    // Cold Storage Memory Operations
+    // ==========================================
+
+    /// Archives a memory record to cold storage, removing it from active memory and FTS index.
+    pub fn archive_to_cold_storage(&self, record_id: &Uuid) -> Result<bool, StrataError> {
+        let conn = self.conn.lock().map_err(|_| {
+            StrataError::Database("Lock poisoned on SQLite connection".to_string())
+        })?;
+
+        let id_str = record_id.to_string();
+        let now_str = Utc::now().to_rfc3339();
+
+        // 1. Fetch memory from active table
+        let mut stmt = conn
+            .prepare(
+                "SELECT id, memory_type, content, summary, scope, tier, importance,
+                        confidence, tags_json, created_at, updated_at, access_count,
+                        last_accessed_at, evidence_ids_json, metadata_json
+                 FROM memories WHERE id = ?1",
+            )
+            .map_err(|e| StrataError::Database(e.to_string()))?;
+
+        let row_opt = stmt
+            .query_row(params![id_str], |row| {
+                Ok((
+                    row.get::<_, String>(0)?,
+                    row.get::<_, String>(1)?,
+                    row.get::<_, String>(2)?,
+                    row.get::<_, Option<String>>(3)?,
+                    row.get::<_, String>(4)?,
+                    row.get::<_, String>(5)?,
+                    row.get::<_, f64>(6)?,
+                    row.get::<_, f64>(7)?,
+                    row.get::<_, String>(8)?,
+                    row.get::<_, String>(9)?,
+                    row.get::<_, String>(10)?,
+                    row.get::<_, i64>(11)?,
+                    row.get::<_, Option<String>>(12)?,
+                    row.get::<_, String>(13)?,
+                    row.get::<_, String>(14)?,
+                ))
+            })
+            .optional()
+            .map_err(|e| StrataError::Database(e.to_string()))?;
+
+        let Some((id, m_type, content, summary, scope, tier, imp, conf, tags, created, updated, count, last_acc, ev_ids, meta)) = row_opt else {
+            return Ok(false);
+        };
+
+        // 2. Insert into cold_storage_memories
+        conn.execute(
+            "INSERT INTO cold_storage_memories (
+                id, memory_type, content, summary, scope, tier, importance, confidence,
+                tags_json, created_at, updated_at, archived_at, access_count,
+                last_accessed_at, evidence_ids_json, metadata_json
+            ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16)
+            ON CONFLICT(id) DO UPDATE SET
+                archived_at = excluded.archived_at,
+                updated_at = excluded.updated_at,
+                access_count = excluded.access_count",
+            params![
+                id, m_type, content, summary, scope, tier, imp, conf,
+                tags, created, updated, now_str, count, last_acc, ev_ids, meta
+            ],
+        )
+        .map_err(|e| StrataError::Database(format!("Failed to archive memory to cold storage: {e}")))?;
+
+        // 3. Delete from active memories (FTS trigger handles deletion from index)
+        conn.execute("DELETE FROM memories WHERE id = ?1", params![id_str])
+            .map_err(|e| StrataError::Database(e.to_string()))?;
+
+        Ok(true)
+    }
+
+    /// Queries cold storage memories directly (deep historical search).
+    pub fn get_cold_storage_memories(
+        &self,
+        query: Option<&str>,
+        scope: Option<&Scope>,
+        limit: usize,
+    ) -> Result<Vec<MemoryRecord>, StrataError> {
+        let conn = self.conn.lock().map_err(|_| {
+            StrataError::Database("Lock poisoned on SQLite connection".to_string())
+        })?;
+
+        if let Some(q) = query {
+            let sanitized = sanitize_fts5_query(q);
+            if !sanitized.is_empty() {
+                let sql = "
+                    SELECT c.id, c.memory_type, c.content, c.summary, c.scope, c.tier, c.importance,
+                           c.confidence, c.tags_json, c.created_at, c.updated_at, c.access_count,
+                           c.last_accessed_at, c.evidence_ids_json, NULL as embedding, c.metadata_json
+                    FROM cold_storage_memories_fts f
+                    JOIN cold_storage_memories c ON c.id = f.id
+                    WHERE cold_storage_memories_fts MATCH ?1
+                    LIMIT ?2
+                ";
+                let mut stmt = conn.prepare(sql).map_err(|e| StrataError::Database(e.to_string()))?;
+                let rows = stmt
+                    .query_map(params![sanitized, limit as i64], |row| Self::row_to_memory(row))
+                    .map_err(|e| StrataError::Database(e.to_string()))?;
+
+                let mut results = Vec::new();
+                for r in rows {
+                    results.push(r.map_err(|e| StrataError::Database(e.to_string()))?);
+                }
+                return Ok(results);
+            }
+        }
+
+        let mut sql = "SELECT id, memory_type, content, summary, scope, tier, importance,
+                              confidence, tags_json, created_at, updated_at, access_count,
+                              last_accessed_at, evidence_ids_json, NULL as embedding, metadata_json
+                       FROM cold_storage_memories WHERE 1=1".to_string();
+
+        let mut params_vec: Vec<Box<dyn rusqlite::ToSql>> = Vec::new();
+        if let Some(sc) = scope {
+            if *sc != Scope::Global {
+                sql.push_str(" AND (scope = ? OR scope = 'global')");
+                params_vec.push(Box::new(sc.to_string()));
+            }
+        }
+
+        sql.push_str(" ORDER BY archived_at DESC LIMIT ?");
+        params_vec.push(Box::new(limit as i64));
+
+        let mut stmt = conn.prepare(&sql).map_err(|e| StrataError::Database(e.to_string()))?;
+        let params_slice: Vec<&dyn rusqlite::ToSql> = params_vec.iter().map(|b| b.as_ref()).collect();
+
+        let rows = stmt
+            .query_map(params_slice.as_slice(), |row| Self::row_to_memory(row))
+            .map_err(|e| StrataError::Database(e.to_string()))?;
+
+        let mut results = Vec::new();
+        for r in rows {
+            results.push(r.map_err(|e| StrataError::Database(e.to_string()))?);
+        }
+        Ok(results)
+    }
+
+    /// Restores an archived memory from cold storage back into active memory with target tier.
+    pub fn restore_from_cold_storage(
+        &self,
+        record_id: &Uuid,
+        target_tier: Option<MemoryTier>,
+    ) -> Result<bool, StrataError> {
+        let conn = self.conn.lock().map_err(|_| {
+            StrataError::Database("Lock poisoned on SQLite connection".to_string())
+        })?;
+
+        let id_str = record_id.to_string();
+
+        // 1. Fetch from cold storage
+        let mut stmt = conn
+            .prepare(
+                "SELECT id, memory_type, content, summary, scope, tier, importance,
+                        confidence, tags_json, created_at, updated_at, access_count,
+                        last_accessed_at, evidence_ids_json, NULL as embedding, metadata_json
+                 FROM cold_storage_memories WHERE id = ?1",
+            )
+            .map_err(|e| StrataError::Database(e.to_string()))?;
+
+        let mem_opt = stmt
+            .query_row(params![id_str], |row| Self::row_to_memory(row))
+            .optional()
+            .map_err(|e| StrataError::Database(e.to_string()))?;
+
+        let Some(mut mem) = mem_opt else {
+            return Ok(false);
+        };
+
+        // 2. Adjust tier and access timestamp
+        mem.tier = target_tier.unwrap_or(MemoryTier::Working);
+        mem.mark_accessed();
+
+        // 3. Delete from cold storage
+        drop(stmt);
+        conn.execute("DELETE FROM cold_storage_memories WHERE id = ?1", params![id_str])
+            .map_err(|e| StrataError::Database(e.to_string()))?;
+
+        // 4. Insert into active memories (unlocking conn before calling insert_or_update_memory)
+        drop(conn);
+        self.insert_or_update_memory(&mem)?;
+
+        Ok(true)
+    }
+
+    /// Returns the total number of memories archived in cold storage.
+    pub fn get_cold_storage_count(&self) -> Result<usize, StrataError> {
+        let conn = self.conn.lock().map_err(|_| {
+            StrataError::Database("Lock poisoned on SQLite connection".to_string())
+        })?;
+
+        let count: i64 = conn
+            .query_row("SELECT COUNT(*) FROM cold_storage_memories", [], |r| r.get(0))
+            .unwrap_or(0);
+
+        Ok(count as usize)
     }
 
     // ==========================================
@@ -1285,19 +1539,24 @@ impl SqliteStore {
 
         let id_str = fact.id.to_string();
         let scope_str = fact.scope.to_string();
+        let tier_str = fact.tier.to_string();
         let evidence_json = serde_json::to_string(&fact.evidence)?;
         let created_at_str = fact.created_at.to_rfc3339();
         let updated_at_str = fact.last_updated_at.to_rfc3339();
         let status_str = fact.status.to_string();
         let replaced_str = fact.replaced_by.map(|u| u.to_string());
         let tags_json = serde_json::to_string(&fact.tags)?;
+        let code_anchor_json = match &fact.code_anchor {
+            Some(anchor) => Some(serde_json::to_string(anchor)?),
+            None => None,
+        };
 
         conn.execute(
             "INSERT INTO semantic_facts (
                 id, project, scope, statement, category, evidence_json,
-                importance, confidence, created_at, last_updated_at, status,
-                version, replaced_by, tags_json
-            ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14)
+                importance, confidence, tier, created_at, last_updated_at, status,
+                version, replaced_by, tags_json, code_anchor_json
+            ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16)
             ON CONFLICT(id) DO UPDATE SET
                 project = excluded.project,
                 scope = excluded.scope,
@@ -1306,11 +1565,13 @@ impl SqliteStore {
                 evidence_json = excluded.evidence_json,
                 importance = excluded.importance,
                 confidence = excluded.confidence,
+                tier = excluded.tier,
                 last_updated_at = excluded.last_updated_at,
                 status = excluded.status,
                 version = excluded.version,
                 replaced_by = excluded.replaced_by,
-                tags_json = excluded.tags_json",
+                tags_json = excluded.tags_json,
+                code_anchor_json = excluded.code_anchor_json",
             params![
                 id_str,
                 fact.project,
@@ -1320,12 +1581,14 @@ impl SqliteStore {
                 evidence_json,
                 fact.importance,
                 fact.confidence,
+                tier_str,
                 created_at_str,
                 updated_at_str,
                 status_str,
                 fact.version as i64,
                 replaced_str,
                 tags_json,
+                code_anchor_json,
             ],
         )
         .map_err(|e| StrataError::Database(format!("Failed to persist semantic fact: {e}")))?;
@@ -1342,8 +1605,8 @@ impl SqliteStore {
         let mut stmt = conn
             .prepare(
                 "SELECT id, project, scope, statement, category, evidence_json,
-                        importance, confidence, created_at, last_updated_at, status,
-                        version, replaced_by, tags_json
+                        importance, confidence, tier, created_at, last_updated_at, status,
+                        version, replaced_by, tags_json, code_anchor_json
                  FROM semantic_facts
                  WHERE id = ?1",
             )
@@ -1365,12 +1628,13 @@ impl SqliteStore {
         let conn = self.conn.lock().map_err(|_| {
             StrataError::Database("Lock poisoned on SQLite connection".to_string())
         })?;
-        let blob = embedding_to_bytes(embedding);
+
         conn.execute(
             "UPDATE semantic_facts SET embedding = ?1 WHERE id = ?2",
-            params![blob, id.to_string()],
+            params![embedding_to_bytes(embedding), id.to_string()],
         )
-        .map_err(|e| StrataError::Database(format!("Failed to update embedding: {e}")))?;
+        .map_err(|e| StrataError::Database(format!("Failed to update fact embedding: {e}")))?;
+
         Ok(())
     }
 
@@ -1385,8 +1649,8 @@ impl SqliteStore {
         })?;
 
         let mut sql = "SELECT id, project, scope, statement, category, evidence_json,
-                              importance, confidence, created_at, last_updated_at, status,
-                              version, replaced_by, tags_json
+                              importance, confidence, tier, created_at, last_updated_at, status,
+                              version, replaced_by, tags_json, code_anchor_json
                        FROM semantic_facts WHERE 1=1".to_string();
 
         let mut params_vec: Vec<Box<dyn rusqlite::ToSql>> = Vec::new();
@@ -1428,8 +1692,8 @@ impl SqliteStore {
         })?;
 
         let mut sql = "SELECT id, project, scope, statement, category, evidence_json,
-                              importance, confidence, created_at, last_updated_at, status,
-                              version, replaced_by, tags_json, embedding
+                              importance, confidence, tier, created_at, last_updated_at, status,
+                              version, replaced_by, tags_json, code_anchor_json, embedding
                        FROM semantic_facts WHERE 1=1".to_string();
 
         let mut params_vec: Vec<Box<dyn rusqlite::ToSql>> = Vec::new();
@@ -1450,7 +1714,7 @@ impl SqliteStore {
         let rows = stmt
             .query_map(params_slice.as_slice(), |row| {
                 let fact = Self::row_to_fact(row)?;
-                let blob_opt: Option<Vec<u8>> = row.get(14)?;
+                let blob_opt: Option<Vec<u8>> = row.get(16)?;
                 let emb = blob_opt.and_then(|b| bytes_to_embedding(&b).ok());
                 Ok((fact, emb))
             })
@@ -1479,8 +1743,8 @@ impl SqliteStore {
 
         let sql = "
             SELECT m.id, m.project, m.scope, m.statement, m.category, m.evidence_json,
-                   m.importance, m.confidence, m.created_at, m.last_updated_at, m.status,
-                   m.version, m.replaced_by, m.tags_json,
+                   m.importance, m.confidence, m.tier, m.created_at, m.last_updated_at, m.status,
+                   m.version, m.replaced_by, m.tags_json, m.code_anchor_json,
                    bm25(semantic_facts_fts) as rank
             FROM semantic_facts_fts f
             JOIN semantic_facts m ON m.id = f.id
@@ -1492,7 +1756,7 @@ impl SqliteStore {
         let rows = stmt
             .query_map(params![sanitized, limit as i64], |row| {
                 let fact = Self::row_to_fact(row)?;
-                let rank: f64 = row.get(14)?;
+                let rank: f64 = row.get(16)?;
                 Ok((fact, rank as f32))
             })
             .map_err(|e| StrataError::Database(e.to_string()))?;
@@ -1502,6 +1766,19 @@ impl SqliteStore {
             results.push(r.map_err(|e| StrataError::Database(e.to_string()))?);
         }
         Ok(results)
+    }
+
+    pub fn get_facts_by_file_anchor(&self, file_path: &str) -> Result<Vec<SemanticFact>, StrataError> {
+        let all_facts = self.get_all_semantic_facts(None, None, 1000)?;
+        Ok(all_facts
+            .into_iter()
+            .filter(|f| {
+                f.code_anchor
+                    .as_ref()
+                    .map(|a| a.file_path == file_path)
+                    .unwrap_or(false)
+            })
+            .collect())
     }
 
     pub fn delete_semantic_fact(&self, id: &Uuid) -> Result<bool, StrataError> {
@@ -1815,16 +2092,17 @@ impl SqliteStore {
         let content: String = row.get(2)?;
         let summary: Option<String> = row.get(3)?;
         let scope_str: String = row.get(4)?;
-        let importance: f64 = row.get(5)?;
-        let confidence: f64 = row.get(6)?;
-        let tags_json: String = row.get(7)?;
-        let created_at_str: String = row.get(8)?;
-        let updated_at_str: String = row.get(9)?;
-        let access_count: i64 = row.get(10)?;
-        let last_accessed_str: Option<String> = row.get(11)?;
-        let evidence_json: String = row.get(12)?;
-        let embedding_bytes: Option<Vec<u8>> = row.get(13)?;
-        let metadata_json: String = row.get(14)?;
+        let tier_str: String = row.get(5).unwrap_or_else(|_| "peripheral".to_string());
+        let importance: f64 = row.get(6)?;
+        let confidence: f64 = row.get(7)?;
+        let tags_json: String = row.get(8)?;
+        let created_at_str: String = row.get(9)?;
+        let updated_at_str: String = row.get(10)?;
+        let access_count: i64 = row.get(11)?;
+        let last_accessed_str: Option<String> = row.get(12)?;
+        let evidence_json: String = row.get(13)?;
+        let embedding_bytes: Option<Vec<u8>> = row.get(14)?;
+        let metadata_json: String = row.get(15)?;
 
         let id = Uuid::parse_str(&id_str).map_err(|_| rusqlite::Error::InvalidQuery)?;
         let memory_type = mem_type_str
@@ -1833,6 +2111,9 @@ impl SqliteStore {
         let scope = scope_str
             .parse::<Scope>()
             .map_err(|_| rusqlite::Error::InvalidQuery)?;
+        let tier = tier_str
+            .parse::<MemoryTier>()
+            .unwrap_or(MemoryTier::Peripheral);
         let tags: Vec<String> = serde_json::from_str(&tags_json).unwrap_or_default();
         let evidence_ids: Vec<Uuid> = serde_json::from_str(&evidence_json).unwrap_or_default();
         let metadata: serde_json::Value =
@@ -1856,6 +2137,7 @@ impl SqliteStore {
             content,
             summary,
             scope,
+            tier,
             importance: importance as f32,
             confidence: confidence as f32,
             tags,
@@ -1984,15 +2266,18 @@ impl SqliteStore {
         let evidence_json: String = row.get(5)?;
         let importance: f64 = row.get(6)?;
         let confidence: f64 = row.get(7)?;
-        let created_at_str: String = row.get(8)?;
-        let updated_at_str: String = row.get(9)?;
-        let status_str: String = row.get(10)?;
-        let version: i64 = row.get(11)?;
-        let replaced_str: Option<String> = row.get(12)?;
-        let tags_json: String = row.get(13)?;
+        let tier_str: String = row.get(8).unwrap_or_else(|_| "peripheral".to_string());
+        let created_at_str: String = row.get(9)?;
+        let updated_at_str: String = row.get(10)?;
+        let status_str: String = row.get(11)?;
+        let version: i64 = row.get(12)?;
+        let replaced_str: Option<String> = row.get(13)?;
+        let tags_json: String = row.get(14)?;
+        let code_anchor_json: Option<String> = row.get(15).ok().flatten();
 
         let id = Uuid::parse_str(&id_str).map_err(|_| rusqlite::Error::InvalidQuery)?;
         let scope = scope_str.parse::<Scope>().map_err(|_| rusqlite::Error::InvalidQuery)?;
+        let tier = tier_str.parse::<MemoryTier>().unwrap_or(MemoryTier::Peripheral);
         let evidence: Vec<EvidenceRef> = serde_json::from_str(&evidence_json).unwrap_or_default();
         let created_at = DateTime::parse_from_rfc3339(&created_at_str)
             .map(|dt| dt.with_timezone(&Utc))
@@ -2003,6 +2288,7 @@ impl SqliteStore {
         let status = status_str.parse::<FactStatus>().map_err(|_| rusqlite::Error::InvalidQuery)?;
         let replaced_by = replaced_str.and_then(|s| Uuid::parse_str(&s).ok());
         let tags: Vec<String> = serde_json::from_str(&tags_json).unwrap_or_default();
+        let code_anchor: Option<CodeAnchor> = code_anchor_json.and_then(|s| serde_json::from_str(&s).ok());
 
         Ok(SemanticFact {
             id,
@@ -2013,12 +2299,14 @@ impl SqliteStore {
             evidence,
             importance: importance as f32,
             confidence: confidence as f32,
+            tier,
             created_at,
             last_updated_at,
             status,
             version: version as u32,
             replaced_by,
             tags,
+            code_anchor,
         })
     }
 

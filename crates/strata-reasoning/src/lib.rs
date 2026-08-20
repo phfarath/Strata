@@ -1,12 +1,25 @@
 pub mod adapters;
+pub mod causal;
 pub mod engine;
 pub mod mock;
+pub mod planning;
 pub mod prompts;
+pub mod training;
 
 pub use adapters::*;
+pub use causal::{
+    BlastRadiusReport, CausalEdge, CausalEdgeKind, CausalGraph, CausalNode, CausalNodeKind,
+    CodebaseCausalIndexer, ImpactedNode, PatchSimulationResult, WorldModel,
+};
 pub use engine::*;
 pub use mock::*;
+pub use planning::{
+    DagExecutionReport, DagScheduler, DynamicReplanner, ExecutionWave, GoalDag, GoalDagExport,
+    GoalDecomposer, GoalEdge, GoalEdgeKind, GoalNode, GoalNodeKind, GoalStatus, RecoveryAction,
+    SerializedGoalEdge, TaskExecutor,
+};
 pub use prompts::*;
+pub use training::*;
 
 #[cfg(test)]
 mod tests {
@@ -175,5 +188,144 @@ mod tests {
 
         let openai_router = OpenAiAdapter::new_openrouter("test_key", "openrouter/free");
         assert_eq!(openai_router.base_url(), "https://openrouter.ai/api/v1");
+    }
+
+    #[test]
+    fn test_goal_dag_wave_computation_and_ascii() {
+        let mut dag = GoalDag::new();
+
+        let root = GoalNode::root("root", "Master Plan");
+        let task_a = GoalNode::task("task_a", "Analyze dependencies");
+        let task_b = GoalNode::task("task_b", "Prepare sandbox");
+        let task_c = GoalNode::task("task_c", "Apply refactoring");
+        let verify = GoalNode::verification("verify_tests", "Run full test suite");
+
+        dag.add_node(root);
+        dag.add_node(task_a);
+        dag.add_node(task_b);
+        dag.add_node(task_c);
+        dag.add_node(verify);
+
+        dag.add_dependency("task_c", "task_a").unwrap();
+        dag.add_dependency("task_c", "task_b").unwrap();
+        dag.add_dependency("verify_tests", "task_c").unwrap();
+
+        assert!(!dag.contains_cycle());
+        dag.validate().unwrap();
+
+        let waves = dag.compute_waves().unwrap();
+        assert_eq!(waves.len(), 3);
+        assert!(waves[0].node_ids.contains(&"root".to_string()));
+        assert!(waves[0].node_ids.contains(&"task_a".to_string()));
+        assert!(waves[0].node_ids.contains(&"task_b".to_string()));
+        assert_eq!(waves[1].node_ids, vec!["task_c".to_string()]);
+        assert_eq!(waves[2].node_ids, vec!["verify_tests".to_string()]);
+
+        let tree = dag.to_ascii_tree();
+        assert!(tree.contains("WAVE 0"));
+        assert!(tree.contains("WAVE 1"));
+        assert!(tree.contains("WAVE 2"));
+        assert!(tree.contains("task_c"));
+    }
+
+    #[test]
+    fn test_goal_dag_cycle_detection() {
+        let mut dag = GoalDag::new();
+        dag.add_node(GoalNode::task("n1", "Node 1"));
+        dag.add_node(GoalNode::task("n2", "Node 2"));
+
+        dag.add_dependency("n2", "n1").unwrap();
+        dag.add_dependency("n1", "n2").unwrap();
+
+        assert!(dag.contains_cycle());
+        assert!(dag.validate().is_err());
+        assert!(dag.compute_waves().is_err());
+    }
+
+    #[test]
+    fn test_goal_decomposer_templates() {
+        let decomposer = GoalDecomposer::new();
+        let dag = decomposer.decompose("Refactor memory engine and add Redis sync").unwrap();
+
+        assert!(dag.node_count() >= 5);
+        assert!(dag.contains_node("analyze_architecture"));
+        assert!(dag.contains_node("implement_core_logic"));
+        assert!(dag.contains_node("verify_contract_invariants"));
+        assert!(dag.contains_node("consolidate_documentation"));
+
+        let waves = dag.compute_waves().unwrap();
+        assert!(waves.len() >= 3);
+    }
+
+    #[tokio::test]
+    async fn test_dag_scheduler_execution() {
+        let decomposer = GoalDecomposer::new();
+        let dag = decomposer.decompose("Build distributed sync layer").unwrap();
+
+        let scheduler = DagScheduler::new().with_concurrency(2);
+        let (finished_dag, report) = scheduler.execute(dag).await.unwrap();
+
+        assert!(report.success);
+        assert_eq!(report.failed_nodes, 0);
+        assert!(report.completed_nodes > 0);
+        assert!(report.total_waves >= 3);
+
+        for node in finished_dag.all_nodes() {
+            if node.kind != GoalNodeKind::Root {
+                assert_eq!(node.status, GoalStatus::Completed);
+            }
+        }
+    }
+
+    #[test]
+    fn test_training_config_validation() {
+        let mut config = TrainingConfig::default();
+        assert!(config.validate().is_ok());
+
+        config.lora_r = 0;
+        assert!(config.validate().is_err());
+
+        config.lora_r = 16;
+        config.learning_rate = -1.0;
+        assert!(config.validate().is_err());
+    }
+
+    #[test]
+    fn test_training_generator_python_and_modelfile() {
+        let config = TrainingConfig::new("unsloth/Qwen2.5-Coder-7B-Instruct")
+            .with_method(TrainingMethod::Dpo)
+            .with_lora(32, 64, 0.05)
+            .with_learning_rate(2e-5)
+            .with_max_steps(100);
+
+        let script = generate_unsloth_training_script(&config, "data/dpo.jsonl");
+        assert!(script.contains("FastLanguageModel.from_pretrained"));
+        assert!(script.contains("unsloth/Qwen2.5-Coder-7B-Instruct"));
+        assert!(script.contains("load_in_4bit = True"));
+        assert!(script.contains("DPOTrainer"));
+        assert!(script.contains("r = 32"));
+        assert!(script.contains("lora_alpha = 64"));
+
+        let modelfile = generate_ollama_modelfile(&config, "outputs/lora_adapter");
+        assert!(modelfile.contains("FROM unsloth/Qwen2.5-Coder-7B-Instruct"));
+        assert!(modelfile.contains("ADAPTER outputs/lora_adapter"));
+        assert!(modelfile.contains("SYSTEM"));
+
+        let temp_dir = std::env::temp_dir().join("strata_test_pipeline_artifacts");
+        let pipeline = TrainingPipeline::new(config);
+        let res = pipeline
+            .generate_artifacts(&temp_dir, Some("{\"prompt\":\"p\",\"chosen\":\"c\",\"rejected\":\"r\"}\n"), 1)
+            .unwrap();
+
+        assert!(res.success);
+        assert!(std::path::Path::new(&res.script_path).exists());
+        assert!(std::path::Path::new(&res.dataset_path).exists());
+        assert!(res.modelfile_path.is_some());
+
+        let table = pipeline.format_summary_table(1);
+        assert!(table.contains("STRATA LORA FINE-TUNING PIPELINE"));
+        assert!(table.contains("unsloth/Qwen2.5-Coder-7B-Instruct"));
+
+        let _ = std::fs::remove_dir_all(&temp_dir);
     }
 }
