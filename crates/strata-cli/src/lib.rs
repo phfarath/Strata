@@ -48,5 +48,37 @@ mod tests {
 
         let _ = std::fs::remove_dir_all(&temp_dir);
     }
+
+    #[tokio::test]
+    async fn test_cli_hook_wrap_and_user_prompt_guardrails() {
+        use strata_memory::SqliteMemoryEngine;
+        use strata_core::state::Scope;
+        use strata_core::traits::MemoryEngine;
+
+        let engine = Arc::new(SqliteMemoryEngine::open_in_memory(None).unwrap());
+
+        // 1. Test PostTool with compilation error
+        let post_tool = HookCommand::PostTool {
+            tool: "cargo_test".to_string(),
+            error: Some("error: package ID specification 'strata-xyz' did not match any packages".to_string()),
+            params: Some("--package strata-xyz".to_string()),
+            context: Some("build_step".to_string()),
+        };
+        handle_hook(post_tool, Arc::clone(&engine)).await.expect("handle post-tool");
+
+        // 2. Test UserPrompt retrieves the preemptive guardrail
+        let user_prompt = HookCommand::UserPrompt {
+            query: "cargo test --package strata-xyz".to_string(),
+            limit: 3,
+            scope: Some(Scope::Global.to_string()),
+            json: true,
+        };
+        handle_hook(user_prompt, Arc::clone(&engine)).await.expect("handle user-prompt");
+
+        let failures = engine.get_known_failures(None, None, 5).await.unwrap();
+        assert_eq!(failures.len(), 1);
+        assert_eq!(failures[0].signature, "cargo_package_not_found");
+    }
 }
+
 

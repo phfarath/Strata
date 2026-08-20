@@ -73,7 +73,7 @@ alwaysApply: true
 ---
 # Strata Memory Rules
 - Before starting complex tasks or refactorings, run `memory_search` to check prior architectural decisions and known failure anti-patterns.
-- When an approach encounters unexpected obstacles or fails, record the anti-pattern via `memory_write` (type: negative_pattern).
+- When an approach encounters unexpected obstacles or fails, record the anti-pattern via `memory_write` (type: negative_pattern) or execute via `strata hook wrap -- <cmd>`.
 - After validating key architectural solutions or decisions, persist durable insights using `memory_write`.
 - Dereference memory handles only when deep context is required.
 "#;
@@ -127,7 +127,7 @@ fn configure_claude_code(root: &Path, _force: bool) -> Result<bool> {
     // 2. CLAUDE.md instruction block
     let claude_md = root.join("CLAUDE.md");
     let instruction_block = format!(
-        "{STRATA_MARKER_START}\n## Strata Persistent Memory\n- Contextual memory and known anti-patterns are automatically injected via hooks on session start and prompt submit.\n- Use the MCP tools (`memory_search`, `memory_get`, `memory_write`, `memory_digest`) when exploring context or persisting verified architectural decisions.\n- Record negative patterns immediately upon encountering dead-ends or tool errors.\n{STRATA_MARKER_END}\n"
+        "{STRATA_MARKER_START}\n## Strata Persistent Memory\n- Contextual memory and known anti-patterns are automatically injected via hooks on session start and prompt submit.\n- Use the MCP tools (`memory_search`, `memory_get`, `memory_write`, `memory_digest`) when exploring context or persisting verified architectural decisions.\n- Execute build/test commands via `strata hook wrap -- <cmd>` to automatically synthesize failure anti-patterns out-of-band.\n- Record negative patterns immediately upon encountering dead-ends or tool errors.\n{STRATA_MARKER_END}\n"
     );
     inject_instruction_block(&claude_md, &instruction_block)?;
 
@@ -149,7 +149,7 @@ args = ["mcp"]
     // 2. AGENTS.md instruction block
     let agents_md = root.join("AGENTS.md");
     let instruction_block = format!(
-        "{STRATA_MARKER_START}\n## Strata Memory Protocol\n- Consult Strata memory tools (`memory_search`, `memory_get`) before planning non-trivial tasks.\n- Check known failure anti-patterns before running destructive or complex operations.\n- Record durable takeaways via `memory_write`.\n{STRATA_MARKER_END}\n"
+        "{STRATA_MARKER_START}\n## Strata Memory Protocol\n- Consult Strata memory tools (`memory_search`, `memory_get`) before planning non-trivial tasks.\n- Check known failure anti-patterns before running destructive or complex operations.\n- Wrap test/build commands with `strata hook wrap -- <cmd>` to capture compiler failures out-of-band.\n- Record durable takeaways via `memory_write`.\n{STRATA_MARKER_END}\n"
     );
     inject_instruction_block(&agents_md, &instruction_block)?;
 
@@ -162,7 +162,7 @@ fn configure_gemini(root: &Path, _force: bool) -> Result<bool> {
 
     let gemini_md = gemini_dir.join("GEMINI.md");
     let instruction_block = format!(
-        "{STRATA_MARKER_START}\n## Strata Memory Protocol\n- Check Strata memory pointers and known anti-patterns before complex tasks.\n- Persist verified solutions and architectural guidelines with `memory_write`.\n{STRATA_MARKER_END}\n"
+        "{STRATA_MARKER_START}\n## Strata Memory Protocol\n- Check Strata memory pointers and known anti-patterns before complex tasks.\n- Wrap build/test runs with `strata hook wrap -- <cmd>` to automatically learn failure guardrails.\n- Persist verified solutions and architectural guidelines with `memory_write`.\n{STRATA_MARKER_END}\n"
     );
     inject_instruction_block(&gemini_md, &instruction_block)?;
 
