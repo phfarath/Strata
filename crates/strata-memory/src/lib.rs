@@ -1,4 +1,5 @@
 pub mod alignment;
+pub mod ast;
 pub mod compiler;
 pub mod consolidation;
 pub mod decay;
@@ -23,6 +24,9 @@ use strata_core::state::{DigestOutput, FailurePattern, MemoryHandle, MemoryRecor
 use strata_core::traits::{EventStore, MemoryEngine};
 
 pub use alignment::PreferenceMiner;
+pub use ast::{
+    AstDiffResult, AstParser, CodeAnchorEngine, ExtractedSymbol, LanguageKind, ReconciliationReport,
+};
 pub use compiler::{
     estimate_tokens, HostCompileResult, MultiHostCompileReport, MultiHostCompiler,
     STRATA_MARKER_END, STRATA_MARKER_START,
@@ -39,8 +43,8 @@ pub use retrieval::{HybridRanker, HybridRankerConfig};
 pub use store::SqliteStore;
 pub use sync::{calculate_exponential_backoff, compute_version_hash, SyncEngine};
 pub use strata_core::schemas::{
-    ContextBudgetConfig, ExportFormat, FeedbackEvent, FeedbackRating, HostTargetConfig,
-    ImplicitSignal, KtoSample, MemoryFeedback, PreferencePair, SftSample, SignalKind,
+    CodeAnchor, ContextBudgetConfig, ExportFormat, FeedbackEvent, FeedbackRating, HostTargetConfig,
+    ImplicitSignal, KtoSample, MemoryFeedback, PreferencePair, SftSample, SignalKind, SymbolType,
 };
 pub type DpoPair = PreferencePair;
 

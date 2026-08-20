@@ -71,5 +71,11 @@ sha2 = "0.10.8"
 rand = "0.8.5"
 hex = "0.4.3"
 
+# AST Parsing & Tree-Sitter
+tree-sitter = "0.24"
+tree-sitter-rust = "0.23"
+tree-sitter-typescript = "0.23"
+tree-sitter-python = "0.23"
+
 # Networking & HTTP
 reqwest = { version = "0.12", features = ["json"] }

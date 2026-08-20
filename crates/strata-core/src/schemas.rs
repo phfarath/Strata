@@ -251,6 +251,8 @@ pub struct SemanticFact {
     pub replaced_by: Option<Uuid>,
     #[serde(default)]
     pub tags: Vec<String>,
+    #[serde(default)]
+    pub code_anchor: Option<CodeAnchor>,
 }
 
 impl SemanticFact {
@@ -271,6 +273,7 @@ impl SemanticFact {
             version: 1,
             replaced_by: None,
             tags: Vec::new(),
+            code_anchor: None,
         }
     }
 
@@ -305,10 +308,18 @@ impl SemanticFact {
         self
     }
 
+    pub fn with_code_anchor(mut self, anchor: CodeAnchor) -> Self {
+        self.code_anchor = Some(anchor);
+        self
+    }
+
     pub fn deprecate_and_replace(&mut self, replacement_id: Uuid) {
         self.status = FactStatus::Deprecated;
         self.replaced_by = Some(replacement_id);
         self.last_updated_at = Utc::now();
+        if let Some(ref mut anchor) = self.code_anchor {
+            anchor.invalidate();
+        }
     }
 }
 
@@ -1163,4 +1174,153 @@ impl HostTargetConfig {
         }
     }
 }
+
+fn default_true() -> bool {
+    true
+}
+
+/// Type of code symbol extracted from AST.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum SymbolType {
+    Function,
+    Method,
+    Struct,
+    Class,
+    Interface,
+    Trait,
+    Enum,
+    TypeAlias,
+    Module,
+    Constant,
+    Variable,
+    Other,
+}
+
+impl fmt::Display for SymbolType {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            SymbolType::Function => write!(f, "function"),
+            SymbolType::Method => write!(f, "method"),
+            SymbolType::Struct => write!(f, "struct"),
+            SymbolType::Class => write!(f, "class"),
+            SymbolType::Interface => write!(f, "interface"),
+            SymbolType::Trait => write!(f, "trait"),
+            SymbolType::Enum => write!(f, "enum"),
+            SymbolType::TypeAlias => write!(f, "type_alias"),
+            SymbolType::Module => write!(f, "module"),
+            SymbolType::Constant => write!(f, "constant"),
+            SymbolType::Variable => write!(f, "variable"),
+            SymbolType::Other => write!(f, "other"),
+        }
+    }
+}
+
+impl FromStr for SymbolType {
+    type Err = String;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        match s.to_lowercase().as_str() {
+            "function" | "fn" => Ok(SymbolType::Function),
+            "method" => Ok(SymbolType::Method),
+            "struct" => Ok(SymbolType::Struct),
+            "class" => Ok(SymbolType::Class),
+            "interface" => Ok(SymbolType::Interface),
+            "trait" => Ok(SymbolType::Trait),
+            "enum" => Ok(SymbolType::Enum),
+            "type_alias" | "type" => Ok(SymbolType::TypeAlias),
+            "module" | "mod" => Ok(SymbolType::Module),
+            "constant" | "const" => Ok(SymbolType::Constant),
+            "variable" | "var" | "let" => Ok(SymbolType::Variable),
+            "other" => Ok(SymbolType::Other),
+            _ => Err(format!("Unknown SymbolType: {s}")),
+        }
+    }
+}
+
+/// Structural AST anchor pinning a memory to a code symbol with bi-temporal validity.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct CodeAnchor {
+    pub file_path: String,
+    pub symbol_path: String,
+    pub symbol_type: SymbolType,
+    #[serde(default)]
+    pub git_commit_hash: Option<String>,
+    pub ast_node_hash: String,
+    pub start_line: u32,
+    pub end_line: u32,
+    pub valid_from: DateTime<Utc>,
+    #[serde(default)]
+    pub valid_until: Option<DateTime<Utc>>,
+    #[serde(default = "default_true")]
+    pub is_valid: bool,
+}
+
+impl CodeAnchor {
+    pub fn new(
+        file_path: impl Into<String>,
+        symbol_path: impl Into<String>,
+        symbol_type: SymbolType,
+        ast_node_hash: impl Into<String>,
+        start_line: u32,
+        end_line: u32,
+    ) -> Self {
+        Self {
+            file_path: file_path.into(),
+            symbol_path: symbol_path.into(),
+            symbol_type,
+            git_commit_hash: None,
+            ast_node_hash: ast_node_hash.into(),
+            start_line,
+            end_line,
+            valid_from: Utc::now(),
+            valid_until: None,
+            is_valid: true,
+        }
+    }
+
+    pub fn with_git_commit(mut self, commit_hash: impl Into<String>) -> Self {
+        self.git_commit_hash = Some(commit_hash.into());
+        self
+    }
+
+    pub fn with_validity(
+        mut self,
+        valid_from: DateTime<Utc>,
+        valid_until: Option<DateTime<Utc>>,
+    ) -> Self {
+        let is_valid = match valid_until {
+            Some(until) => until > Utc::now(),
+            None => true,
+        };
+        self.valid_from = valid_from;
+        self.valid_until = valid_until;
+        self.is_valid = is_valid;
+        self
+    }
+
+    pub fn invalidate(&mut self) {
+        self.valid_until = Some(Utc::now());
+        self.is_valid = false;
+    }
+
+    pub fn is_active_at(&self, time: DateTime<Utc>) -> bool {
+        if !self.is_valid {
+            return false;
+        }
+        if time < self.valid_from {
+            return false;
+        }
+        if let Some(until) = self.valid_until {
+            time <= until
+        } else {
+            true
+        }
+    }
+
+    pub fn is_active(&self) -> bool {
+        self.is_active_at(Utc::now())
+    }
+}
+
 

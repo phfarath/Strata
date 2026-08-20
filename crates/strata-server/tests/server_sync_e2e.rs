@@ -235,6 +235,7 @@ async fn test_bidirectional_multi_device_sync_e2e() {
         version: 1,
         replaced_by: None,
         tags: vec!["railway".to_string(), "deployment".to_string()],
+        code_anchor: None,
     };
     store_a.insert_or_update_semantic_fact(&fact).expect("Store A fact insert failed");
 

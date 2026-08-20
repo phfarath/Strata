@@ -9,7 +9,7 @@ use strata_core::events::{
     DataClassification, Event, EventId, EventPayload, Provenance, RetentionPolicy,
 };
 use strata_core::schemas::{
-    EpisodicMemory, EvidenceRef, FactStatus, FeedbackEvent, FeedbackRating, ImplicitSignal,
+    CodeAnchor, EpisodicMemory, EvidenceRef, FactStatus, FeedbackEvent, FeedbackRating, ImplicitSignal,
     MemoryFeedback, ParameterDef, PreferencePair, ProceduralExample,
     ProceduralSkill, ProceduralStep, SemanticFact, SignalKind, SignalScores, SyncDelta,
 };
@@ -250,6 +250,7 @@ impl SqliteStore {
                 version INTEGER NOT NULL DEFAULT 1,
                 replaced_by TEXT,
                 tags_json TEXT NOT NULL DEFAULT '[]',
+                code_anchor_json TEXT DEFAULT NULL,
                 embedding BLOB
             );
 
@@ -405,6 +406,9 @@ impl SqliteStore {
             ",
         )
         .map_err(|e| StrataError::Database(format!("Failed to execute schema migration: {e}")))?;
+
+        // Safe migration for existing databases: add code_anchor_json if not exists
+        let _ = conn.execute("ALTER TABLE semantic_facts ADD COLUMN code_anchor_json TEXT DEFAULT NULL", []);
 
         Ok(())
     }
@@ -1291,13 +1295,17 @@ impl SqliteStore {
         let status_str = fact.status.to_string();
         let replaced_str = fact.replaced_by.map(|u| u.to_string());
         let tags_json = serde_json::to_string(&fact.tags)?;
+        let code_anchor_json = match &fact.code_anchor {
+            Some(anchor) => Some(serde_json::to_string(anchor)?),
+            None => None,
+        };
 
         conn.execute(
             "INSERT INTO semantic_facts (
                 id, project, scope, statement, category, evidence_json,
                 importance, confidence, created_at, last_updated_at, status,
-                version, replaced_by, tags_json
-            ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14)
+                version, replaced_by, tags_json, code_anchor_json
+            ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15)
             ON CONFLICT(id) DO UPDATE SET
                 project = excluded.project,
                 scope = excluded.scope,
@@ -1310,7 +1318,8 @@ impl SqliteStore {
                 status = excluded.status,
                 version = excluded.version,
                 replaced_by = excluded.replaced_by,
-                tags_json = excluded.tags_json",
+                tags_json = excluded.tags_json,
+                code_anchor_json = excluded.code_anchor_json",
             params![
                 id_str,
                 fact.project,
@@ -1326,6 +1335,7 @@ impl SqliteStore {
                 fact.version as i64,
                 replaced_str,
                 tags_json,
+                code_anchor_json,
             ],
         )
         .map_err(|e| StrataError::Database(format!("Failed to persist semantic fact: {e}")))?;
@@ -1343,7 +1353,7 @@ impl SqliteStore {
             .prepare(
                 "SELECT id, project, scope, statement, category, evidence_json,
                         importance, confidence, created_at, last_updated_at, status,
-                        version, replaced_by, tags_json
+                        version, replaced_by, tags_json, code_anchor_json
                  FROM semantic_facts
                  WHERE id = ?1",
             )
@@ -1365,12 +1375,13 @@ impl SqliteStore {
         let conn = self.conn.lock().map_err(|_| {
             StrataError::Database("Lock poisoned on SQLite connection".to_string())
         })?;
-        let blob = embedding_to_bytes(embedding);
+
         conn.execute(
             "UPDATE semantic_facts SET embedding = ?1 WHERE id = ?2",
-            params![blob, id.to_string()],
+            params![embedding_to_bytes(embedding), id.to_string()],
         )
-        .map_err(|e| StrataError::Database(format!("Failed to update embedding: {e}")))?;
+        .map_err(|e| StrataError::Database(format!("Failed to update fact embedding: {e}")))?;
+
         Ok(())
     }
 
@@ -1386,7 +1397,7 @@ impl SqliteStore {
 
         let mut sql = "SELECT id, project, scope, statement, category, evidence_json,
                               importance, confidence, created_at, last_updated_at, status,
-                              version, replaced_by, tags_json
+                              version, replaced_by, tags_json, code_anchor_json
                        FROM semantic_facts WHERE 1=1".to_string();
 
         let mut params_vec: Vec<Box<dyn rusqlite::ToSql>> = Vec::new();
@@ -1429,7 +1440,7 @@ impl SqliteStore {
 
         let mut sql = "SELECT id, project, scope, statement, category, evidence_json,
                               importance, confidence, created_at, last_updated_at, status,
-                              version, replaced_by, tags_json, embedding
+                              version, replaced_by, tags_json, code_anchor_json, embedding
                        FROM semantic_facts WHERE 1=1".to_string();
 
         let mut params_vec: Vec<Box<dyn rusqlite::ToSql>> = Vec::new();
@@ -1450,7 +1461,7 @@ impl SqliteStore {
         let rows = stmt
             .query_map(params_slice.as_slice(), |row| {
                 let fact = Self::row_to_fact(row)?;
-                let blob_opt: Option<Vec<u8>> = row.get(14)?;
+                let blob_opt: Option<Vec<u8>> = row.get(15)?;
                 let emb = blob_opt.and_then(|b| bytes_to_embedding(&b).ok());
                 Ok((fact, emb))
             })
@@ -1480,7 +1491,7 @@ impl SqliteStore {
         let sql = "
             SELECT m.id, m.project, m.scope, m.statement, m.category, m.evidence_json,
                    m.importance, m.confidence, m.created_at, m.last_updated_at, m.status,
-                   m.version, m.replaced_by, m.tags_json,
+                   m.version, m.replaced_by, m.tags_json, m.code_anchor_json,
                    bm25(semantic_facts_fts) as rank
             FROM semantic_facts_fts f
             JOIN semantic_facts m ON m.id = f.id
@@ -1492,7 +1503,7 @@ impl SqliteStore {
         let rows = stmt
             .query_map(params![sanitized, limit as i64], |row| {
                 let fact = Self::row_to_fact(row)?;
-                let rank: f64 = row.get(14)?;
+                let rank: f64 = row.get(15)?;
                 Ok((fact, rank as f32))
             })
             .map_err(|e| StrataError::Database(e.to_string()))?;
@@ -1502,6 +1513,19 @@ impl SqliteStore {
             results.push(r.map_err(|e| StrataError::Database(e.to_string()))?);
         }
         Ok(results)
+    }
+
+    pub fn get_facts_by_file_anchor(&self, file_path: &str) -> Result<Vec<SemanticFact>, StrataError> {
+        let all_facts = self.get_all_semantic_facts(None, None, 1000)?;
+        Ok(all_facts
+            .into_iter()
+            .filter(|f| {
+                f.code_anchor
+                    .as_ref()
+                    .map(|a| a.file_path == file_path)
+                    .unwrap_or(false)
+            })
+            .collect())
     }
 
     pub fn delete_semantic_fact(&self, id: &Uuid) -> Result<bool, StrataError> {
@@ -1990,6 +2014,7 @@ impl SqliteStore {
         let version: i64 = row.get(11)?;
         let replaced_str: Option<String> = row.get(12)?;
         let tags_json: String = row.get(13)?;
+        let code_anchor_json: Option<String> = row.get(14).ok().flatten();
 
         let id = Uuid::parse_str(&id_str).map_err(|_| rusqlite::Error::InvalidQuery)?;
         let scope = scope_str.parse::<Scope>().map_err(|_| rusqlite::Error::InvalidQuery)?;
@@ -2003,6 +2028,7 @@ impl SqliteStore {
         let status = status_str.parse::<FactStatus>().map_err(|_| rusqlite::Error::InvalidQuery)?;
         let replaced_by = replaced_str.and_then(|s| Uuid::parse_str(&s).ok());
         let tags: Vec<String> = serde_json::from_str(&tags_json).unwrap_or_default();
+        let code_anchor: Option<CodeAnchor> = code_anchor_json.and_then(|s| serde_json::from_str(&s).ok());
 
         Ok(SemanticFact {
             id,
@@ -2019,6 +2045,7 @@ impl SqliteStore {
             version: version as u32,
             replaced_by,
             tags,
+            code_anchor,
         })
     }
 

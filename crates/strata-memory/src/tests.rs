@@ -6,10 +6,10 @@ use strata_core::events::{
     TaskStarted, ToolInvoked, ToolResultReceived,
 };
 use strata_core::schemas::{
-    ContextBudgetConfig, DecayConfig, EpisodicMemory, ExportFormat, FactStatus, FeedbackEvent,
+    CodeAnchor, ContextBudgetConfig, DecayConfig, EpisodicMemory, ExportFormat, FactStatus, FeedbackEvent,
     FeedbackRating, HostTargetConfig, ImplicitSignal, MemoryFeedback, ParameterDef,
     PreferencePair, ProceduralExample, ProceduralSkill, ProceduralStep, SemanticFact,
-    SignalKind, SignalScores, SyncConfig, SyncDelta,
+    SignalKind, SignalScores, SymbolType, SyncConfig, SyncDelta,
 };
 
 use strata_core::state::{
@@ -18,6 +18,7 @@ use strata_core::state::{
 use strata_core::traits::{EventStore, MemoryEngine};
 
 use crate::alignment::PreferenceMiner;
+use crate::ast::{AstParser, CodeAnchorEngine};
 use crate::compiler::MultiHostCompiler;
 use crate::decay::DecayCalculator;
 use crate::embedding::{
@@ -1021,5 +1022,234 @@ async fn test_multi_host_compiler_context_and_sync() {
     // Cleanup
     let _ = fs::remove_dir_all(&temp_workspace);
 }
+
+#[test]
+fn test_ast_parser_multi_language() {
+    let parser = AstParser::new();
+
+    // 1. Rust parsing
+    let rust_code = r#"
+        pub struct MemoryStore {
+            capacity: usize,
+        }
+
+        pub trait SearchEngine {
+            fn search(&self, query: &str) -> Vec<String>;
+        }
+
+        impl MemoryStore {
+            pub fn new(capacity: usize) -> Self {
+                Self { capacity }
+            }
+
+            pub fn get_capacity(&self) -> usize {
+                self.capacity
+            }
+        }
+
+        pub fn helper_function(x: u32) -> u32 {
+            x * 2
+        }
+    "#;
+
+    let rust_symbols = parser.parse_file("src/store.rs", rust_code).expect("parse rust");
+    assert!(!rust_symbols.is_empty());
+    assert!(rust_symbols.iter().any(|s| s.name == "MemoryStore" && s.symbol_type == SymbolType::Struct));
+    assert!(rust_symbols.iter().any(|s| s.name == "SearchEngine" && s.symbol_type == SymbolType::Trait));
+    assert!(rust_symbols.iter().any(|s| s.symbol_path == "MemoryStore::new" && s.symbol_type == SymbolType::Method));
+    assert!(rust_symbols.iter().any(|s| s.symbol_path == "MemoryStore::get_capacity" && s.symbol_type == SymbolType::Method));
+    assert!(rust_symbols.iter().any(|s| s.name == "helper_function" && s.symbol_type == SymbolType::Function));
+
+    // 2. TypeScript parsing
+    let ts_code = r#"
+        export interface UserProfile {
+            id: string;
+            name: string;
+        }
+
+        export type Status = "active" | "inactive";
+
+        export class AgentEngine {
+            private ready: boolean = true;
+
+            public async executeTask(taskId: string): Promise<boolean> {
+                return true;
+            }
+        }
+
+        export function createEngine(): AgentEngine {
+            return new AgentEngine();
+        }
+    "#;
+
+    let ts_symbols = parser.parse_file("src/engine.ts", ts_code).expect("parse typescript");
+    assert!(!ts_symbols.is_empty());
+    assert!(ts_symbols.iter().any(|s| s.name == "UserProfile" && s.symbol_type == SymbolType::Interface));
+    assert!(ts_symbols.iter().any(|s| s.name == "Status" && s.symbol_type == SymbolType::TypeAlias));
+    assert!(ts_symbols.iter().any(|s| s.name == "AgentEngine" && s.symbol_type == SymbolType::Class));
+    assert!(ts_symbols.iter().any(|s| s.symbol_path == "AgentEngine.executeTask" && s.symbol_type == SymbolType::Method));
+    assert!(ts_symbols.iter().any(|s| s.name == "createEngine" && s.symbol_type == SymbolType::Function));
+
+    // 3. Python parsing
+    let py_code = r#"
+class CognitiveRuntime:
+    def __init__(self, name: str):
+        self.name = name
+
+    def run_step(self, step_idx: int) -> bool:
+        return True
+
+def top_level_bootstrap():
+    pass
+    "#;
+
+    let py_symbols = parser.parse_file("runtime.py", py_code).expect("parse python");
+    assert!(!py_symbols.is_empty());
+    assert!(py_symbols.iter().any(|s| s.name == "CognitiveRuntime" && s.symbol_type == SymbolType::Class));
+    assert!(py_symbols.iter().any(|s| s.symbol_path == "CognitiveRuntime.run_step" && s.symbol_type == SymbolType::Method));
+    assert!(py_symbols.iter().any(|s| s.name == "top_level_bootstrap" && s.symbol_type == SymbolType::Function));
+}
+
+#[test]
+fn test_merkle_tree_hashing_and_diff() {
+    let engine = CodeAnchorEngine::new();
+    let parser = AstParser::new();
+
+    let v1_source = r#"
+        pub fn calculate_decay(time_delta: f32) -> f32 {
+            (-time_delta).exp()
+        }
+
+        pub fn stable_feature() -> bool {
+            true
+        }
+    "#;
+
+    let symbols_v1 = parser.parse_file("decay.rs", v1_source).expect("parse v1");
+    let merkle_root_v1 = CodeAnchorEngine::compute_merkle_tree_hash(&symbols_v1);
+    assert!(!merkle_root_v1.is_empty());
+
+    let anchors_v1: Vec<CodeAnchor> = symbols_v1
+        .iter()
+        .map(|s| engine.create_anchor("decay.rs", s, Some("commit-v1")))
+        .collect();
+
+    // v2: calculate_decay is modified, stable_feature is untouched, new_feature is added
+    let v2_source = r#"
+        pub fn calculate_decay(time_delta: f32) -> f32 {
+            // Modified decay algorithm with power-law parameter
+            let exponent = 0.5;
+            (-time_delta * exponent).exp()
+        }
+
+        pub fn stable_feature() -> bool {
+            true
+        }
+
+        pub fn new_feature() -> &'static str {
+            "v2"
+        }
+    "#;
+
+    let symbols_v2 = parser.parse_file("decay.rs", v2_source).expect("parse v2");
+    let merkle_root_v2 = CodeAnchorEngine::compute_merkle_tree_hash(&symbols_v2);
+    assert_ne!(merkle_root_v1, merkle_root_v2);
+
+    let diff = engine
+        .diff_anchors("decay.rs", &anchors_v1, v2_source, Some("commit-v2"))
+        .expect("diff anchors");
+
+    // stable_feature should be unchanged
+    assert_eq!(diff.unchanged.len(), 1);
+    assert_eq!(diff.unchanged[0].symbol_path, "stable_feature");
+
+    // calculate_decay should be modified
+    assert_eq!(diff.modified.len(), 1);
+    let (old_a, new_a) = &diff.modified[0];
+    assert_eq!(old_a.symbol_path, "calculate_decay");
+    assert_eq!(new_a.symbol_path, "calculate_decay");
+    assert_ne!(old_a.ast_node_hash, new_a.ast_node_hash);
+    assert_eq!(new_a.git_commit_hash.as_deref(), Some("commit-v2"));
+
+    // new_feature should be in added
+    assert_eq!(diff.added.len(), 1);
+    assert_eq!(diff.added[0].name, "new_feature");
+}
+
+#[tokio::test]
+async fn test_bitemporal_code_anchor_reconciliation_and_store_persistence() {
+    let store = SqliteStore::open_in_memory().expect("init store");
+    let engine = CodeAnchorEngine::new();
+    let parser = AstParser::new();
+
+    let initial_source = r#"
+        pub fn execute_transaction(tx_id: &str) -> Result<(), String> {
+            Ok(())
+        }
+    "#;
+
+    let symbols = parser.parse_file("tx.rs", initial_source).expect("parse initial");
+    let tx_symbol = symbols.iter().find(|s| s.name == "execute_transaction").unwrap();
+    let anchor = engine.create_anchor("tx.rs", tx_symbol, Some("commit-abc"));
+
+    assert!(anchor.is_valid);
+    assert!(anchor.is_active());
+    assert_eq!(anchor.git_commit_hash.as_deref(), Some("commit-abc"));
+
+    // Create a SemanticFact anchored to this symbol
+    let fact = SemanticFact::new(
+        "execute_transaction is synchronous and returns Result<(), String>",
+        "architecture",
+        Scope::Project("strata".to_string()),
+    )
+    .with_importance(0.85)
+    .with_code_anchor(anchor);
+
+    store.insert_or_update_semantic_fact(&fact).expect("insert fact");
+
+    // Verify retrieval from SQLite preserves CodeAnchor
+    let retrieved = store.get_semantic_fact(&fact.id).expect("get fact").expect("fact exists");
+    assert!(retrieved.code_anchor.is_some());
+    let ret_anchor = retrieved.code_anchor.as_ref().unwrap();
+    assert_eq!(ret_anchor.file_path, "tx.rs");
+    assert_eq!(ret_anchor.symbol_path, "execute_transaction");
+    assert_eq!(ret_anchor.git_commit_hash.as_deref(), Some("commit-abc"));
+    assert!(ret_anchor.is_valid);
+
+    // Verify filter by file anchor
+    let file_facts = store.get_facts_by_file_anchor("tx.rs").expect("get facts by file");
+    assert_eq!(file_facts.len(), 1);
+    assert_eq!(file_facts[0].id, fact.id);
+
+    // Now simulate code modification: execute_transaction signature changes to async with custom Error enum
+    let modified_source = r#"
+        pub async fn execute_transaction(tx_id: &str) -> Result<(), TransactionError> {
+            Err(TransactionError::Aborted)
+        }
+    "#;
+
+    let mut facts_to_reconcile = vec![retrieved];
+    let report = engine
+        .reconcile_facts_bi_temporal(&mut facts_to_reconcile, modified_source, "tx.rs")
+        .expect("reconcile facts");
+
+    // Invalidation check
+    assert_eq!(report.invalidated_facts.len(), 1);
+    assert_eq!(report.invalidated_facts[0], fact.id);
+
+    let invalidated_fact = &facts_to_reconcile[0];
+    assert_eq!(invalidated_fact.status, FactStatus::Deprecated);
+    assert!(invalidated_fact.code_anchor.is_some());
+    let inv_anchor = invalidated_fact.code_anchor.as_ref().unwrap();
+    assert!(!inv_anchor.is_valid);
+    assert!(inv_anchor.valid_until.is_some());
+
+    // Update store with invalidated fact and verify persistent bi-temporal state
+    store.insert_or_update_semantic_fact(invalidated_fact).expect("update invalidated fact");
+    let re_retrieved = store.get_semantic_fact(&fact.id).expect("get updated fact").unwrap();
+    assert_eq!(re_retrieved.status, FactStatus::Deprecated);
+    assert!(!re_retrieved.code_anchor.unwrap().is_valid);
+}
+
 
 
