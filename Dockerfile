@@ -1,6 +1,14 @@
-# Multi-stage Dockerfile for Strata Cloud Sync Server on Railway
+# Multi-stage Dockerfile for Strata Cloud Sync Server
 # Build Stage
 FROM rust:bookworm AS builder
+
+# Install build dependencies for C/C++ bindings (aws-lc-sys, onig_sys, tree-sitter, sqlite3)
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    cmake \
+    pkg-config \
+    libssl-dev \
+    clang \
+    && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /app
 
@@ -27,6 +35,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     ca-certificates \
     libssl3 \
     sqlite3 \
+    curl \
     && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /app
@@ -34,7 +43,7 @@ WORKDIR /app
 # Copy binary from builder
 COPY --from=builder /app/target/release/strata-server /usr/local/bin/strata-server
 
-# Create data directory for SQLite persistence
+# Create data directory for SQLite persistence fallback
 RUN mkdir -p /data && chmod 777 /data
 
 ENV HOST=0.0.0.0 \
@@ -43,5 +52,8 @@ ENV HOST=0.0.0.0 \
     RUST_LOG=strata_server=info,tower_http=info
 
 EXPOSE 8080
+
+HEALTHCHECK --interval=5s --timeout=3s --start-period=5s --retries=5 \
+    CMD curl -f http://localhost:8080/health || exit 1
 
 ENTRYPOINT ["/usr/local/bin/strata-server"]
