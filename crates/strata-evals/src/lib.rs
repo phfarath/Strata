@@ -24,9 +24,10 @@ pub async fn run_all_scenarios() -> Result<()> {
     run_lora_finetuning_pipeline_scenario().await?;
     NativeCallGraphEval::run_eval().await?;
     WorkspaceMonorepoEval::run_eval().await?;
+    ArchitectureClusteringEval::run_eval().await?;
 
     println!("\n========================================================");
-    println!("🎉 ALL EVAL SCENARIOS PASSED (14/14)");
+    println!("🎉 ALL EVAL SCENARIOS PASSED (15/15)");
     println!("========================================================\n");
 
     Ok(())
@@ -136,6 +137,16 @@ mod tests {
             .expect("Workspace monorepo eval failed");
         assert!(res.isolation_passed);
         assert!(res.is_sub_50ms);
+    }
+
+    #[tokio::test]
+    async fn test_eval_architecture_clustering() {
+        let res = ArchitectureClusteringEval::run_eval()
+            .await
+            .expect("Architecture clustering eval failed");
+        assert!(res.accuracy_passed);
+        assert!(res.cache_roundtrip_passed);
+        assert!(res.is_latency_sub_20ms);
     }
 }
 

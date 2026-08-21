@@ -1,6 +1,7 @@
 pub mod alignment;
 pub mod ast;
 pub mod call_graph;
+pub mod community;
 pub mod compiler;
 pub mod consolidation;
 pub mod decay;
@@ -30,6 +31,10 @@ pub use ast::{
     AstDiffResult, AstParser, CodeAnchorEngine, ExtractedSymbol, LanguageKind, ReconciliationReport,
 };
 pub use call_graph::{CallEdge, CallGraph, CallGraphAnalyzer, CallType};
+pub use community::{
+    ArchitectureCluster, ArchitectureGraphSummary, ClusterDependency, ClusterMember,
+    ClusteringConfig, CommunityDetector, MemberType,
+};
 pub use compiler::{
     estimate_tokens, HostCompileResult, MultiHostCompileReport, MultiHostCompiler,
     STRATA_MARKER_END, STRATA_MARKER_START,
@@ -51,6 +56,7 @@ pub use strata_core::schemas::{
     ImplicitSignal, KtoSample, MemoryFeedback, PreferencePair, SftSample, SignalKind, SymbolType,
 };
 pub type DpoPair = PreferencePair;
+
 
 
 

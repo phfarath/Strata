@@ -290,6 +290,31 @@ impl McpServer {
                     }
                 }),
             },
+            ToolDefinition {
+                name: "strata_architecture_map".to_string(),
+                description: "Extract graph communities and high-level architectural clusters from codebase call graphs, imports, and AST symbols to understand macro software architecture.".to_string(),
+                input_schema: serde_json::json!({
+                    "type": "object",
+                    "properties": {
+                        "path": {
+                            "type": "string",
+                            "description": "Root workspace or directory path to analyze (default: '.')"
+                        },
+                        "workspace_id": {
+                            "type": "string",
+                            "description": "Workspace identifier (default: 'default')"
+                        },
+                        "min_cluster_size": {
+                            "type": "integer",
+                            "description": "Minimum member symbols/files required per cluster (default: 1)"
+                        },
+                        "max_iterations": {
+                            "type": "integer",
+                            "description": "Maximum LPA convergence iterations (default: 25)"
+                        }
+                    }
+                }),
+            },
         ]
     }
 
@@ -762,6 +787,20 @@ impl McpServer {
                         CallToolResult::structured(summary.to_string(), val)
                     }
                     Err(e) => CallToolResult::error(format!("Workspace detect error: {e}")),
+                }
+            }
+            "strata_architecture_map" | "architecture_map" | "strata_graph_communities" | "graph_communities" => {
+                use strata_core::traits::Tool;
+                let tool = strata_tools::ArchitectureMapTool::new();
+                match tool.execute(args).await {
+                    Ok(val) => {
+                        let summary = val
+                            .get("formatted_summary")
+                            .and_then(|v| v.as_str())
+                            .unwrap_or("Architecture map generated.");
+                        CallToolResult::structured(summary.to_string(), val)
+                    }
+                    Err(e) => CallToolResult::error(format!("Architecture map error: {e}")),
                 }
             }
             unknown_tool => CallToolResult::error(format!("Unknown tool: '{unknown_tool}'")),
