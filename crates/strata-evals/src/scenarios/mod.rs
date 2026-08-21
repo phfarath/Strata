@@ -10,6 +10,7 @@ pub mod native_call_graph;
 pub mod offline_first_cdc_sync;
 pub mod procedural_skill_distillation;
 pub mod silent_failure_avoidance;
+pub mod workspace_monorepo;
 pub mod world_model_causal;
 
 pub use cognitive_feedback_and_alignment::*;
@@ -24,5 +25,6 @@ pub use native_call_graph::*;
 pub use offline_first_cdc_sync::*;
 pub use procedural_skill_distillation::*;
 pub use silent_failure_avoidance::*;
+pub use workspace_monorepo::*;
 pub use world_model_causal::*;
 

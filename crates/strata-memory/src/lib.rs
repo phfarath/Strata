@@ -10,6 +10,7 @@ pub mod pipeline;
 pub mod retrieval;
 pub mod store;
 pub mod sync;
+pub mod workspace;
 
 #[cfg(test)]
 mod tests;
@@ -43,6 +44,7 @@ pub use jtms::{ConflictMatch, ConflictResolution, TruthMaintenanceSystem};
 pub use pipeline::{ConsolidationPipeline, ConsolidationResult, PipelineConfig};
 pub use retrieval::{HybridRanker, HybridRankerConfig};
 pub use store::SqliteStore;
+pub use workspace::{MonorepoPackage, PackageType, WorkspaceBoundary, WorkspaceBoundaryDetector};
 pub use sync::{calculate_exponential_backoff, compute_version_hash, SyncEngine};
 pub use strata_core::schemas::{
     CodeAnchor, ContextBudgetConfig, ExportFormat, FeedbackEvent, FeedbackRating, HostTargetConfig,
@@ -119,6 +121,47 @@ impl SqliteMemoryEngine {
     ) -> Result<FailurePattern, StrataError> {
         self.consolidator
             .record_tool_failure(&self.store, tool_name, error_msg, context, scope)
+    }
+
+    /// Automatically detects monorepo workspace boundaries in the repository.
+    pub fn detect_workspace_boundaries(&self, root_dir: &Path) -> Result<WorkspaceBoundary, StrataError> {
+        WorkspaceBoundaryDetector::detect(root_dir)
+    }
+
+    /// Performs hierarchical, package-isolated memory search for a specific file.
+    pub async fn search_scoped_to_file(
+        &self,
+        query: &str,
+        file_path: &str,
+        boundary: Option<&WorkspaceBoundary>,
+        limit: usize,
+    ) -> Result<Vec<MemoryRecord>, StrataError> {
+        let hierarchical_scopes = if let Some(b) = boundary {
+            b.get_hierarchical_scopes(file_path)
+        } else {
+            vec![Scope::Global]
+        };
+
+        let mut combined_results = Vec::new();
+        let mut seen_ids = std::collections::HashSet::new();
+
+        // Search in hierarchical order (package scope first, then internal deps, then global)
+        for scope in &hierarchical_scopes {
+            let res = self.search(query, Some(scope), limit).await?;
+            for r in res {
+                if seen_ids.insert(r.id) {
+                    combined_results.push(r);
+                    if combined_results.len() >= limit {
+                        break;
+                    }
+                }
+            }
+            if combined_results.len() >= limit {
+                break;
+            }
+        }
+
+        Ok(combined_results)
     }
 }
 

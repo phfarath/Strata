@@ -17,6 +17,7 @@ pub mod search;
 pub mod sync;
 pub mod sync_hosts;
 pub mod train;
+pub mod workspace;
 
 pub use auth::*;
 pub use blast_radius::*;
@@ -37,3 +38,4 @@ pub use search::*;
 pub use sync::*;
 pub use sync_hosts::*;
 pub use train::*;
+pub use workspace::*;

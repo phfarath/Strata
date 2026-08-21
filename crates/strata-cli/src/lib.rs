@@ -120,6 +120,20 @@ pub fn process_data(msg: &str) {
 
         let _ = std::fs::remove_dir_all(&temp_dir);
     }
+
+    #[tokio::test]
+    async fn test_cli_workspace_command() {
+        let current_dir = std::env::current_dir().unwrap();
+
+        let args = crate::commands::workspace::WorkspaceArgs {
+            path: current_dir.to_str().unwrap().to_string(),
+            file: Some("crates/strata-memory/src/workspace.rs".to_string()),
+            json: true,
+        };
+
+        let res = crate::commands::workspace::run_workspace(args).await;
+        assert!(res.is_ok());
+    }
 }
 
 

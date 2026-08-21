@@ -23,9 +23,10 @@ pub async fn run_all_scenarios() -> Result<()> {
     run_hierarchical_planning_dag_scenario().await?;
     run_lora_finetuning_pipeline_scenario().await?;
     NativeCallGraphEval::run_eval().await?;
+    WorkspaceMonorepoEval::run_eval().await?;
 
     println!("\n========================================================");
-    println!("🎉 ALL EVAL SCENARIOS PASSED (13/13)");
+    println!("🎉 ALL EVAL SCENARIOS PASSED (14/14)");
     println!("========================================================\n");
 
     Ok(())
@@ -126,6 +127,15 @@ mod tests {
             .expect("Native call graph eval failed");
         assert!(res.accuracy_passed);
         assert!(res.is_latency_sub_5ms);
+    }
+
+    #[tokio::test]
+    async fn test_eval_workspace_monorepo() {
+        let res = WorkspaceMonorepoEval::run_eval()
+            .await
+            .expect("Workspace monorepo eval failed");
+        assert!(res.isolation_passed);
+        assert!(res.is_sub_50ms);
     }
 }
 

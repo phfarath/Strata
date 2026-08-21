@@ -522,4 +522,24 @@ fn execute_step() {}
         assert_eq!(callers[0]["caller_symbol"], "orchestrate_task");
         assert!(res["formatted_summary"].as_str().unwrap().contains("Call Graph Analysis"));
     }
+
+    #[tokio::test]
+    async fn test_workspace_detect_tool_execution() {
+        let tool = WorkspaceDetectTool::new();
+        let current_dir = std::env::current_dir().unwrap();
+
+        let res = tool
+            .execute(json!({
+                "root_path": current_dir.to_str().unwrap(),
+                "file_path": "crates/strata-core/src/state.rs"
+            }))
+            .await
+            .expect("execute workspace detect tool");
+
+        assert_eq!(res["status"], "success");
+        assert_eq!(res["workspace_type"], "cargo_workspace");
+        assert!(res["packages_count"].as_u64().unwrap() >= 5);
+        assert_eq!(res["resolved_package"]["name"], "strata-core");
+        assert!(res["formatted_summary"].as_str().unwrap().contains("Workspace Boundary Report"));
+    }
 }

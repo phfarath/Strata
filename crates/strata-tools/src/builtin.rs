@@ -1093,6 +1093,113 @@ impl Tool for CallGraphTool {
     }
 }
 
+// =========================================================================
+// Workspace Boundary Detection Tool
+// =========================================================================
+
+pub struct WorkspaceDetectTool;
+
+impl WorkspaceDetectTool {
+    pub fn new() -> Self {
+        Self
+    }
+}
+
+impl Default for WorkspaceDetectTool {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+#[async_trait]
+impl Tool for WorkspaceDetectTool {
+    fn name(&self) -> &str {
+        "strata_workspace_detect"
+    }
+
+    fn description(&self) -> &str {
+        "Detect monorepo workspace boundaries, member packages/crates, internal dependencies, and isolate file scopes."
+    }
+
+    fn parameters_schema(&self) -> serde_json::Value {
+        json!({
+            "type": "object",
+            "properties": {
+                "root_path": {
+                    "type": "string",
+                    "description": "Root repository or workspace directory to inspect (default: current directory '.')"
+                },
+                "file_path": {
+                    "type": "string",
+                    "description": "Optional file path to resolve against detected package boundaries and get hierarchical scopes"
+                }
+            }
+        })
+    }
+
+    async fn execute(&self, params: serde_json::Value) -> Result<serde_json::Value, StrataError> {
+        let root_str = params
+            .get("root_path")
+            .and_then(|v| v.as_str())
+            .unwrap_or(".");
+        let file_path_opt = params.get("file_path").and_then(|v| v.as_str());
+
+        let root_path = std::path::Path::new(root_str);
+        let boundary = strata_memory::WorkspaceBoundaryDetector::detect(root_path)?;
+
+        let mut resolved_pkg = None;
+        let mut hierarchical_scopes = Vec::new();
+
+        if let Some(f_path) = file_path_opt {
+            resolved_pkg = boundary.find_package_for_file(f_path).cloned();
+            hierarchical_scopes = boundary
+                .get_hierarchical_scopes(f_path)
+                .into_iter()
+                .map(|s| s.to_string())
+                .collect();
+        }
+
+        // Formatted Markdown summary for coding agents
+        let mut summary_lines = Vec::new();
+        summary_lines.push(format!("### 🏢 Workspace Boundary Report ({})", boundary.workspace_type));
+        summary_lines.push(format!("- **Root Directory**: `{}`", boundary.root_path));
+        summary_lines.push(format!("- **Member Packages ({} found)**:", boundary.packages.len()));
+
+        for pkg in &boundary.packages {
+            let deps_str = if pkg.internal_dependencies.is_empty() {
+                "".to_string()
+            } else {
+                format!(" (depends on: {})", pkg.internal_dependencies.join(", "))
+            };
+            summary_lines.push(format!(
+                "  - **`{}`** [{}] @ `{}`{}",
+                pkg.name, pkg.package_type, pkg.root_path, deps_str
+            ));
+        }
+
+        if let Some(ref pkg) = resolved_pkg {
+            summary_lines.push(format!("\n#### 🎯 Resolved Target File Context:"));
+            summary_lines.push(format!("- **File**: `{}`", file_path_opt.unwrap_or("")));
+            summary_lines.push(format!("- **Owning Package**: `{}`", pkg.name));
+            summary_lines.push(format!("- **Hierarchical Search Scopes**: `{}`", hierarchical_scopes.join(" -> ")));
+        }
+
+        let formatted_summary = summary_lines.join("\n");
+
+        Ok(json!({
+            "status": "success",
+            "root_path": boundary.root_path,
+            "workspace_type": boundary.workspace_type.to_string(),
+            "packages_count": boundary.packages.len(),
+            "packages": boundary.packages,
+            "resolved_package": resolved_pkg,
+            "hierarchical_scopes": hierarchical_scopes,
+            "formatted_summary": formatted_summary
+        }))
+    }
+}
+
+
 
 
 
