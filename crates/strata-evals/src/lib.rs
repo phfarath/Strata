@@ -25,9 +25,10 @@ pub async fn run_all_scenarios() -> Result<()> {
     NativeCallGraphEval::run_eval().await?;
     WorkspaceMonorepoEval::run_eval().await?;
     ArchitectureClusteringEval::run_eval().await?;
+    HitlCoreApprovalEval::run_eval().await?;
 
     println!("\n========================================================");
-    println!("🎉 ALL EVAL SCENARIOS PASSED (15/15)");
+    println!("🎉 ALL EVAL SCENARIOS PASSED (16/16)");
     println!("========================================================\n");
 
     Ok(())
@@ -147,6 +148,19 @@ mod tests {
         assert!(res.accuracy_passed);
         assert!(res.cache_roundtrip_passed);
         assert!(res.is_latency_sub_20ms);
+    }
+
+    #[tokio::test]
+    async fn test_eval_hitl_core_approval() {
+        let res = HitlCoreApprovalEval::run_eval()
+            .await
+            .expect("HITL Core Approval eval failed");
+        assert!(res.unapproved_write_rejected);
+        assert!(res.unapproved_promote_rejected);
+        assert!(res.approved_promote_succeeded);
+        assert!(res.core_retention_frozen);
+        assert!(res.immune_to_pruning);
+        assert!(res.is_sub_50ms);
     }
 }
 

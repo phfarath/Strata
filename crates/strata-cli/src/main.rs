@@ -28,6 +28,7 @@ use strata_cli::{
         login::{run_login, run_logout, LoginArgs},
         observe::{run_observe, ObserveArgs},
         plan::{run_plan, PlanArgs},
+        promote::{run_promote, PromoteArgs},
         prune::{run_prune, PruneOptions},
         search::{run_search, SearchOptions},
         sync::{run_sync, SyncArgs},
@@ -242,6 +243,10 @@ enum Commands {
     /// Graph community extraction and high-level architectural clustering
     #[command(name = "architecture", alias = "cluster", alias = "communities", alias = "macro")]
     Architecture(ArchitectureArgs),
+
+    /// Human-in-the-loop approval and promotion of memories/facts to permanent Core Tier (frozen retention, R=1.0)
+    #[command(name = "promote", alias = "memory-promote", alias = "approve", alias = "freeze")]
+    Promote(PromoteArgs),
 }
 
 
@@ -472,6 +477,10 @@ async fn main() -> Result<()> {
         Commands::Train(args) => {
             let store = engine.store_arc();
             run_train(args, store).await?;
+        }
+
+        Commands::Promote(args) => {
+            run_promote(args, engine).await?;
         }
     }
 

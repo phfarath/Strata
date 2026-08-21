@@ -134,6 +134,84 @@ pub fn process_data(msg: &str) {
         let res = crate::commands::workspace::run_workspace(args).await;
         assert!(res.is_ok());
     }
+
+    #[tokio::test]
+    async fn test_cli_promote_command_and_mcp_integration() {
+        use strata_core::state::{MemoryRecord, MemoryTier, MemoryType, Scope};
+        use strata_core::schemas::SemanticFact;
+        use strata_core::traits::MemoryEngine;
+        use strata_memory::SqliteMemoryEngine;
+        use crate::commands::promote::{run_promote, PromoteArgs};
+        use crate::mcp::server::McpServer;
+
+        let engine = Arc::new(SqliteMemoryEngine::open_in_memory(None).unwrap());
+
+        // 1. Write working memory record
+        let mem = MemoryRecord::new(
+            MemoryType::Semantic,
+            "Security rule: all auth tokens must be rotated every 24 hours",
+            Scope::Global,
+        ).with_tier(MemoryTier::Working);
+
+        let handle = engine.write(&mem).await.expect("write memory");
+
+        // 2. Test CLI promote command with `--yes` (bypass modal)
+        let promote_args = PromoteArgs {
+            id: handle.id.to_string(),
+            entity_type: "memory".to_string(),
+            reason: Some("ADR-099 Security audit approval".to_string()),
+            yes: true,
+            json: true,
+        };
+
+        let cli_res = run_promote(promote_args, Arc::clone(&engine)).await;
+        assert!(cli_res.is_ok(), "CLI promotion with --yes must succeed");
+
+        // Verify persisted state
+        let fetched = engine.get(&handle.id).await.unwrap().expect("memory exists");
+        assert_eq!(fetched.tier, MemoryTier::Core);
+        assert!(fetched.approved_by_human);
+        assert_eq!(fetched.importance, 1.0);
+
+        // 3. Test MCP `strata_promote` tool
+        let fact = SemanticFact::new("Database connections must use SSL/TLS", "security", Scope::Global)
+            .with_tier(MemoryTier::Working);
+        engine.store().insert_or_update_semantic_fact(&fact).expect("insert fact");
+
+        let mcp_server = McpServer::new(Arc::clone(&engine) as Arc<dyn strata_core::traits::MemoryEngine>);
+
+        // Attempt without approved_by_human
+        let unapproved_call = mcp_server.execute_tool(
+            "strata_promote",
+            serde_json::json!({
+                "id": fact.id.to_string(),
+                "approved_by_human": false,
+            }),
+        ).await;
+        assert!(unapproved_call.is_error.unwrap_or(false), "MCP promote without approval must fail");
+
+        // Call with approved_by_human = true for memory
+        let approved_mem = MemoryRecord::new(
+            MemoryType::Procedural,
+            "Always run migration scripts in a transaction",
+            Scope::Global,
+        ).with_tier(MemoryTier::Working);
+        let mem_handle = engine.write(&approved_mem).await.expect("write mem");
+
+        let approved_call = mcp_server.execute_tool(
+            "strata_promote",
+            serde_json::json!({
+                "id": mem_handle.id.to_string(),
+                "approved_by_human": true,
+                "reason": "Production reliability policy",
+            }),
+        ).await;
+        assert!(!approved_call.is_error.unwrap_or(false), "MCP promote with approval must succeed");
+
+        let fetched_mem = engine.get(&mem_handle.id).await.unwrap().expect("mem exists");
+        assert_eq!(fetched_mem.tier, MemoryTier::Core);
+        assert!(fetched_mem.approved_by_human);
+    }
 }
 
 

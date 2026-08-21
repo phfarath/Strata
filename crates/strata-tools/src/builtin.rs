@@ -1281,6 +1281,109 @@ impl Tool for ArchitectureMapTool {
     }
 }
 
+// =========================================================================
+// Human-in-the-Loop Core Tier Promotion Tool
+// =========================================================================
+
+pub struct CoreTierPromoteTool {
+    engine: Arc<strata_memory::SqliteMemoryEngine>,
+}
+
+impl CoreTierPromoteTool {
+    pub fn new(engine: Arc<strata_memory::SqliteMemoryEngine>) -> Self {
+        Self { engine }
+    }
+}
+
+#[async_trait]
+impl Tool for CoreTierPromoteTool {
+    fn name(&self) -> &str {
+        "strata_promote"
+    }
+
+    fn description(&self) -> &str {
+        "Promote a memory record or semantic fact to permanent Core Tier (frozen retention, R=1.0). Requires explicit human approval confirmation."
+    }
+
+    fn parameters_schema(&self) -> serde_json::Value {
+        json!({
+            "type": "object",
+            "properties": {
+                "id": {
+                    "type": "string",
+                    "description": "The UUID of the memory record or semantic fact to promote"
+                },
+                "entity_type": {
+                    "type": "string",
+                    "enum": ["memory", "fact"],
+                    "description": "Entity type: 'memory' (default) or 'fact'"
+                },
+                "approved_by_human": {
+                    "type": "boolean",
+                    "description": "Explicit human confirmation flag (must be true to complete promotion)"
+                },
+                "reason": {
+                    "type": "string",
+                    "description": "Optional policy rationale or justification for permanent Core Tier promotion"
+                }
+            },
+            "required": ["id", "approved_by_human"]
+        })
+    }
+
+    async fn execute(&self, params: serde_json::Value) -> Result<serde_json::Value, StrataError> {
+        let id_str = params
+            .get("id")
+            .and_then(|v| v.as_str())
+            .ok_or_else(|| StrataError::ValidationError("Missing 'id' parameter".to_string()))?;
+
+        let id = Uuid::parse_str(id_str)
+            .map_err(|e| StrataError::ValidationError(format!("Invalid UUID format: {e}")))?;
+
+        let approved = params
+            .get("approved_by_human")
+            .and_then(|v| v.as_bool())
+            .unwrap_or(false);
+
+        let entity_type = params
+            .get("entity_type")
+            .and_then(|v| v.as_str())
+            .unwrap_or("memory");
+
+        let reason = params.get("reason").and_then(|v| v.as_str());
+
+        if !approved {
+            return Err(StrataError::Validation(
+                "Promotion to Core Tier was rejected: 'approved_by_human' must be explicitly set to true by developer/human approval.".to_string(),
+            ));
+        }
+
+        if entity_type == "fact" || entity_type == "semantic" {
+            let promoted = self.engine.promote_fact_to_core(&id, true, reason).await?;
+            Ok(json!({
+                "status": "success",
+                "id": promoted.id.to_string(),
+                "tier": "core",
+                "approved_by_human": true,
+                "importance": promoted.importance,
+                "statement": promoted.statement,
+                "reason": reason,
+            }))
+        } else {
+            let promoted = self.engine.promote_to_core(&id, true, reason).await?;
+            Ok(json!({
+                "status": "success",
+                "id": promoted.id.to_string(),
+                "tier": "core",
+                "approved_by_human": true,
+                "importance": promoted.importance,
+                "content": promoted.content,
+                "reason": reason,
+            }))
+        }
+    }
+}
+
 
 
 

@@ -315,6 +315,33 @@ impl McpServer {
                     }
                 }),
             },
+            ToolDefinition {
+                name: "strata_promote".to_string(),
+                description: "Promote a memory record or semantic fact to permanent Core Tier (frozen retention, R=1.0). Requires explicit human approval confirmation.".to_string(),
+                input_schema: serde_json::json!({
+                    "type": "object",
+                    "properties": {
+                        "id": {
+                            "type": "string",
+                            "description": "The UUID of the memory record or semantic fact to promote"
+                        },
+                        "entity_type": {
+                            "type": "string",
+                            "enum": ["memory", "fact"],
+                            "description": "Entity type: 'memory' (default) or 'fact'"
+                        },
+                        "approved_by_human": {
+                            "type": "boolean",
+                            "description": "Explicit human confirmation flag (must be true to complete promotion)"
+                        },
+                        "reason": {
+                            "type": "string",
+                            "description": "Optional policy rationale or justification for permanent Core Tier promotion"
+                        }
+                    },
+                    "required": ["id", "approved_by_human"]
+                }),
+            },
         ]
     }
 
@@ -801,6 +828,69 @@ impl McpServer {
                         CallToolResult::structured(summary.to_string(), val)
                     }
                     Err(e) => CallToolResult::error(format!("Architecture map error: {e}")),
+                }
+            }
+            "strata_promote" | "promote" => {
+                let id_str = match args.get("id").and_then(|v| v.as_str()) {
+                    Some(id) => id,
+                    None => return CallToolResult::error("Missing required parameter: id"),
+                };
+
+                let id = match Uuid::parse_str(id_str) {
+                    Ok(u) => u,
+                    Err(e) => return CallToolResult::error(format!("Invalid UUID format: {e}")),
+                };
+
+                let approved = args
+                    .get("approved_by_human")
+                    .and_then(|v| v.as_bool())
+                    .unwrap_or(false);
+
+                if !approved {
+                    return CallToolResult::error(
+                        "Core Tier Promotion rejected: 'approved_by_human' must be explicitly true. Developer confirmation required."
+                    );
+                }
+
+                let reason = args.get("reason").and_then(|v| v.as_str());
+
+                match self.memory_engine.get(&id).await {
+                    Ok(Some(mut mem)) => {
+                        mem.tier = strata_core::state::MemoryTier::Core;
+                        mem.approved_by_human = true;
+                        mem.importance = 1.0;
+                        if let Some(r) = reason {
+                            if let serde_json::Value::Object(ref mut map) = mem.metadata {
+                                map.insert("promotion_reason".to_string(), serde_json::Value::String(r.to_string()));
+                                map.insert("promoted_at".to_string(), serde_json::Value::String(chrono::Utc::now().to_rfc3339()));
+                            } else {
+                                mem.metadata = serde_json::json!({
+                                    "promotion_reason": r,
+                                    "promoted_at": chrono::Utc::now().to_rfc3339(),
+                                });
+                            }
+                        }
+
+                        match self.memory_engine.write(&mem).await {
+                            Ok(handle) => {
+                                let structured = serde_json::json!({
+                                    "status": "success",
+                                    "id": handle.id.to_string(),
+                                    "tier": "core",
+                                    "approved_by_human": true,
+                                    "importance": 1.0,
+                                    "reason": reason,
+                                });
+                                CallToolResult::structured(
+                                    format!("Memory '{}' successfully promoted to permanent Core Tier (frozen retention, R=1.0).", handle.id),
+                                    structured,
+                                )
+                            }
+                            Err(e) => CallToolResult::error(format!("Failed to write promoted memory: {e}")),
+                        }
+                    }
+                    Ok(None) => CallToolResult::error(format!("Memory record with ID '{id}' not found")),
+                    Err(e) => CallToolResult::error(format!("Failed to fetch memory: {e}")),
                 }
             }
             unknown_tool => CallToolResult::error(format!("Unknown tool: '{unknown_tool}'")),

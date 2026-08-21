@@ -243,6 +243,8 @@ pub struct SemanticFact {
     pub confidence: f32,
     #[serde(default)]
     pub tier: MemoryTier,
+    #[serde(default)]
+    pub approved_by_human: bool,
     pub created_at: DateTime<Utc>,
     pub last_updated_at: DateTime<Utc>,
     #[serde(default = "default_fact_status")]
@@ -270,6 +272,7 @@ impl SemanticFact {
             importance: 0.5,
             confidence: 1.0,
             tier: MemoryTier::Peripheral,
+            approved_by_human: false,
             created_at: now,
             last_updated_at: now,
             status: FactStatus::Active,
@@ -283,6 +286,15 @@ impl SemanticFact {
     pub fn with_tier(mut self, tier: MemoryTier) -> Self {
         self.tier = tier;
         self
+    }
+
+    pub fn with_human_approval(mut self, approved: bool) -> Self {
+        self.approved_by_human = approved;
+        self
+    }
+
+    pub fn is_approved_by_human(&self) -> bool {
+        self.approved_by_human
     }
 
     pub fn is_core(&self) -> bool {

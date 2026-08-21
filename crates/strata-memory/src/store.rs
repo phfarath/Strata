@@ -96,6 +96,7 @@ impl SqliteStore {
                 summary TEXT,
                 scope TEXT NOT NULL,
                 tier TEXT NOT NULL DEFAULT 'peripheral',
+                approved_by_human INTEGER NOT NULL DEFAULT 0,
                 importance REAL NOT NULL DEFAULT 0.5,
                 confidence REAL NOT NULL DEFAULT 1.0,
                 tags_json TEXT NOT NULL DEFAULT '[]',
@@ -111,6 +112,7 @@ impl SqliteStore {
             CREATE INDEX IF NOT EXISTS idx_memories_scope ON memories(scope);
             CREATE INDEX IF NOT EXISTS idx_memories_type ON memories(memory_type);
             CREATE INDEX IF NOT EXISTS idx_memories_tier ON memories(tier);
+            CREATE INDEX IF NOT EXISTS idx_memories_approved ON memories(approved_by_human);
             CREATE INDEX IF NOT EXISTS idx_memories_created ON memories(created_at);
 
             -- Full-text search virtual table for memories
@@ -146,6 +148,7 @@ impl SqliteStore {
                 summary TEXT,
                 scope TEXT NOT NULL,
                 tier TEXT NOT NULL DEFAULT 'peripheral',
+                approved_by_human INTEGER NOT NULL DEFAULT 0,
                 importance REAL NOT NULL DEFAULT 0.5,
                 confidence REAL NOT NULL DEFAULT 1.0,
                 tags_json TEXT NOT NULL DEFAULT '[]',
@@ -289,6 +292,7 @@ impl SqliteStore {
                 importance REAL NOT NULL DEFAULT 0.5,
                 confidence REAL NOT NULL DEFAULT 1.0,
                 tier TEXT NOT NULL DEFAULT 'peripheral',
+                approved_by_human INTEGER NOT NULL DEFAULT 0,
                 created_at TEXT NOT NULL,
                 last_updated_at TEXT NOT NULL,
                 status TEXT NOT NULL DEFAULT 'active',
@@ -302,6 +306,7 @@ impl SqliteStore {
             CREATE INDEX IF NOT EXISTS idx_facts_scope ON semantic_facts(scope);
             CREATE INDEX IF NOT EXISTS idx_facts_category ON semantic_facts(category);
             CREATE INDEX IF NOT EXISTS idx_facts_tier ON semantic_facts(tier);
+            CREATE INDEX IF NOT EXISTS idx_facts_approved ON semantic_facts(approved_by_human);
             CREATE INDEX IF NOT EXISTS idx_facts_status ON semantic_facts(status);
             CREATE INDEX IF NOT EXISTS idx_facts_project ON semantic_facts(project);
 
@@ -481,10 +486,13 @@ impl SqliteStore {
         )
         .map_err(|e| StrataError::Database(format!("Failed to execute schema migration: {e}")))?;
 
-        // Safe migration for existing databases: add code_anchor_json and tier if not exists
+        // Safe migration for existing databases: add code_anchor_json, tier, and approved_by_human if not exists
         let _ = conn.execute("ALTER TABLE semantic_facts ADD COLUMN code_anchor_json TEXT DEFAULT NULL", []);
         let _ = conn.execute("ALTER TABLE memories ADD COLUMN tier TEXT NOT NULL DEFAULT 'peripheral'", []);
         let _ = conn.execute("ALTER TABLE semantic_facts ADD COLUMN tier TEXT NOT NULL DEFAULT 'peripheral'", []);
+        let _ = conn.execute("ALTER TABLE memories ADD COLUMN approved_by_human INTEGER NOT NULL DEFAULT 0", []);
+        let _ = conn.execute("ALTER TABLE semantic_facts ADD COLUMN approved_by_human INTEGER NOT NULL DEFAULT 0", []);
+        let _ = conn.execute("ALTER TABLE cold_storage_memories ADD COLUMN approved_by_human INTEGER NOT NULL DEFAULT 0", []);
 
         Ok(())
     }
@@ -766,19 +774,21 @@ impl SqliteStore {
         let updated_at_str = memory.updated_at.to_rfc3339();
         let last_accessed_str = memory.last_accessed_at.map(|t| t.to_rfc3339());
         let embedding_blob = memory.embedding.as_ref().map(|e| embedding_to_bytes(e));
+        let approved_int = if memory.approved_by_human { 1i64 } else { 0i64 };
 
         conn.execute(
             "INSERT INTO memories (
-                id, memory_type, content, summary, scope, tier, importance, confidence,
+                id, memory_type, content, summary, scope, tier, approved_by_human, importance, confidence,
                 tags_json, created_at, updated_at, access_count, last_accessed_at,
                 evidence_ids_json, embedding, metadata_json
-            ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16)
+            ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17)
             ON CONFLICT(id) DO UPDATE SET
                 memory_type = excluded.memory_type,
                 content = excluded.content,
                 summary = excluded.summary,
                 scope = excluded.scope,
                 tier = excluded.tier,
+                approved_by_human = excluded.approved_by_human,
                 importance = excluded.importance,
                 confidence = excluded.confidence,
                 tags_json = excluded.tags_json,
@@ -795,6 +805,7 @@ impl SqliteStore {
                 memory.summary,
                 scope_str,
                 tier_str,
+                approved_int,
                 memory.importance,
                 memory.confidence,
                 tags_json,
@@ -820,7 +831,7 @@ impl SqliteStore {
 
         let mut stmt = conn
             .prepare(
-                "SELECT id, memory_type, content, summary, scope, tier, importance,
+                "SELECT id, memory_type, content, summary, scope, tier, approved_by_human, importance,
                         confidence, tags_json, created_at, updated_at, access_count,
                         last_accessed_at, evidence_ids_json, embedding, metadata_json
                  FROM memories
@@ -862,7 +873,7 @@ impl SqliteStore {
             StrataError::Database("Lock poisoned on SQLite connection".to_string())
         })?;
 
-        let mut query = "SELECT id, memory_type, content, summary, scope, tier, importance,
+        let mut query = "SELECT id, memory_type, content, summary, scope, tier, approved_by_human, importance,
                                 confidence, tags_json, created_at, updated_at, access_count,
                                 last_accessed_at, evidence_ids_json, embedding, metadata_json
                          FROM memories WHERE 1=1".to_string();
@@ -926,7 +937,7 @@ impl SqliteStore {
         }
 
         let mut sql = "
-            SELECT m.id, m.memory_type, m.content, m.summary, m.scope, m.tier, m.importance,
+            SELECT m.id, m.memory_type, m.content, m.summary, m.scope, m.tier, m.approved_by_human, m.importance,
                    m.confidence, m.tags_json, m.created_at, m.updated_at, m.access_count,
                    m.last_accessed_at, m.evidence_ids_json, m.embedding, m.metadata_json,
                    bm25(memories_fts) as rank
@@ -958,7 +969,7 @@ impl SqliteStore {
         let rows = stmt
             .query_map(params_slice.as_slice(), |row| {
                 let mem = Self::row_to_memory(row)?;
-                let rank: f64 = row.get(16)?;
+                let rank: f64 = row.get(17)?;
                 Ok((mem, rank as f32))
             })
             .map_err(|e| StrataError::Database(e.to_string()))?;
@@ -968,6 +979,45 @@ impl SqliteStore {
             results.push(r.map_err(|e| StrataError::Database(e.to_string()))?);
         }
         Ok(results)
+    }
+
+    /// Promotes a memory record to permanent Core Tier (frozen retention, R=1.0).
+    /// Enforces strict requirement for explicit human approval (`approved_by_human == true`).
+    pub fn promote_memory_to_core(
+        &self,
+        id: &Uuid,
+        approved_by_human: bool,
+        reason: Option<&str>,
+    ) -> Result<MemoryRecord, StrataError> {
+        if !approved_by_human {
+            return Err(StrataError::Validation(
+                "Cannot promote memory to Core Tier without explicit human approval (approved_by_human=true)".to_string(),
+            ));
+        }
+
+        let mut mem = self
+            .get_memory(id)?
+            .ok_or_else(|| StrataError::NotFound(format!("Memory record with ID '{id}' not found")))?;
+
+        mem.tier = MemoryTier::Core;
+        mem.approved_by_human = true;
+        mem.importance = 1.0;
+        mem.updated_at = Utc::now();
+
+        if let Some(r) = reason {
+            if let serde_json::Value::Object(ref mut map) = mem.metadata {
+                map.insert("promotion_reason".to_string(), serde_json::Value::String(r.to_string()));
+                map.insert("promoted_at".to_string(), serde_json::Value::String(Utc::now().to_rfc3339()));
+            } else {
+                mem.metadata = serde_json::json!({
+                    "promotion_reason": r,
+                    "promoted_at": Utc::now().to_rfc3339(),
+                });
+            }
+        }
+
+        self.insert_or_update_memory(&mem)?;
+        Ok(mem)
     }
 
     // ==========================================
@@ -986,7 +1036,7 @@ impl SqliteStore {
         // 1. Fetch memory from active table
         let mut stmt = conn
             .prepare(
-                "SELECT id, memory_type, content, summary, scope, tier, importance,
+                "SELECT id, memory_type, content, summary, scope, tier, approved_by_human, importance,
                         confidence, tags_json, created_at, updated_at, access_count,
                         last_accessed_at, evidence_ids_json, metadata_json
                  FROM memories WHERE id = ?1",
@@ -1002,37 +1052,38 @@ impl SqliteStore {
                     row.get::<_, Option<String>>(3)?,
                     row.get::<_, String>(4)?,
                     row.get::<_, String>(5)?,
-                    row.get::<_, f64>(6)?,
+                    row.get::<_, i64>(6).unwrap_or(0),
                     row.get::<_, f64>(7)?,
-                    row.get::<_, String>(8)?,
+                    row.get::<_, f64>(8)?,
                     row.get::<_, String>(9)?,
                     row.get::<_, String>(10)?,
-                    row.get::<_, i64>(11)?,
-                    row.get::<_, Option<String>>(12)?,
-                    row.get::<_, String>(13)?,
+                    row.get::<_, String>(11)?,
+                    row.get::<_, i64>(12)?,
+                    row.get::<_, Option<String>>(13)?,
                     row.get::<_, String>(14)?,
+                    row.get::<_, String>(15)?,
                 ))
             })
             .optional()
             .map_err(|e| StrataError::Database(e.to_string()))?;
 
-        let Some((id, m_type, content, summary, scope, tier, imp, conf, tags, created, updated, count, last_acc, ev_ids, meta)) = row_opt else {
+        let Some((id, m_type, content, summary, scope, tier, approved_by_human, imp, conf, tags, created, updated, count, last_acc, ev_ids, meta)) = row_opt else {
             return Ok(false);
         };
 
         // 2. Insert into cold_storage_memories
         conn.execute(
             "INSERT INTO cold_storage_memories (
-                id, memory_type, content, summary, scope, tier, importance, confidence,
+                id, memory_type, content, summary, scope, tier, approved_by_human, importance, confidence,
                 tags_json, created_at, updated_at, archived_at, access_count,
                 last_accessed_at, evidence_ids_json, metadata_json
-            ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16)
+            ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17)
             ON CONFLICT(id) DO UPDATE SET
                 archived_at = excluded.archived_at,
                 updated_at = excluded.updated_at,
                 access_count = excluded.access_count",
             params![
-                id, m_type, content, summary, scope, tier, imp, conf,
+                id, m_type, content, summary, scope, tier, approved_by_human, imp, conf,
                 tags, created, updated, now_str, count, last_acc, ev_ids, meta
             ],
         )
@@ -1060,7 +1111,7 @@ impl SqliteStore {
             let sanitized = sanitize_fts5_query(q);
             if !sanitized.is_empty() {
                 let sql = "
-                    SELECT c.id, c.memory_type, c.content, c.summary, c.scope, c.tier, c.importance,
+                    SELECT c.id, c.memory_type, c.content, c.summary, c.scope, c.tier, c.approved_by_human, c.importance,
                            c.confidence, c.tags_json, c.created_at, c.updated_at, c.access_count,
                            c.last_accessed_at, c.evidence_ids_json, NULL as embedding, c.metadata_json
                     FROM cold_storage_memories_fts f
@@ -1081,7 +1132,7 @@ impl SqliteStore {
             }
         }
 
-        let mut sql = "SELECT id, memory_type, content, summary, scope, tier, importance,
+        let mut sql = "SELECT id, memory_type, content, summary, scope, tier, approved_by_human, importance,
                               confidence, tags_json, created_at, updated_at, access_count,
                               last_accessed_at, evidence_ids_json, NULL as embedding, metadata_json
                        FROM cold_storage_memories WHERE 1=1".to_string();
@@ -1126,7 +1177,7 @@ impl SqliteStore {
         // 1. Fetch from cold storage
         let mut stmt = conn
             .prepare(
-                "SELECT id, memory_type, content, summary, scope, tier, importance,
+                "SELECT id, memory_type, content, summary, scope, tier, approved_by_human, importance,
                         confidence, tags_json, created_at, updated_at, access_count,
                         last_accessed_at, evidence_ids_json, NULL as embedding, metadata_json
                  FROM cold_storage_memories WHERE id = ?1",
@@ -1570,6 +1621,7 @@ impl SqliteStore {
         let id_str = fact.id.to_string();
         let scope_str = fact.scope.to_string();
         let tier_str = fact.tier.to_string();
+        let approved_int = if fact.approved_by_human { 1i64 } else { 0i64 };
         let evidence_json = serde_json::to_string(&fact.evidence)?;
         let created_at_str = fact.created_at.to_rfc3339();
         let updated_at_str = fact.last_updated_at.to_rfc3339();
@@ -1584,9 +1636,9 @@ impl SqliteStore {
         conn.execute(
             "INSERT INTO semantic_facts (
                 id, project, scope, statement, category, evidence_json,
-                importance, confidence, tier, created_at, last_updated_at, status,
+                importance, confidence, tier, approved_by_human, created_at, last_updated_at, status,
                 version, replaced_by, tags_json, code_anchor_json
-            ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16)
+            ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17)
             ON CONFLICT(id) DO UPDATE SET
                 project = excluded.project,
                 scope = excluded.scope,
@@ -1596,6 +1648,7 @@ impl SqliteStore {
                 importance = excluded.importance,
                 confidence = excluded.confidence,
                 tier = excluded.tier,
+                approved_by_human = excluded.approved_by_human,
                 last_updated_at = excluded.last_updated_at,
                 status = excluded.status,
                 version = excluded.version,
@@ -1612,6 +1665,7 @@ impl SqliteStore {
                 fact.importance,
                 fact.confidence,
                 tier_str,
+                approved_int,
                 created_at_str,
                 updated_at_str,
                 status_str,
@@ -1635,7 +1689,7 @@ impl SqliteStore {
         let mut stmt = conn
             .prepare(
                 "SELECT id, project, scope, statement, category, evidence_json,
-                        importance, confidence, tier, created_at, last_updated_at, status,
+                        importance, confidence, tier, approved_by_human, created_at, last_updated_at, status,
                         version, replaced_by, tags_json, code_anchor_json
                  FROM semantic_facts
                  WHERE id = ?1",
@@ -1679,7 +1733,7 @@ impl SqliteStore {
         })?;
 
         let mut sql = "SELECT id, project, scope, statement, category, evidence_json,
-                              importance, confidence, tier, created_at, last_updated_at, status,
+                              importance, confidence, tier, approved_by_human, created_at, last_updated_at, status,
                               version, replaced_by, tags_json, code_anchor_json
                        FROM semantic_facts WHERE 1=1".to_string();
 
@@ -1722,7 +1776,7 @@ impl SqliteStore {
         })?;
 
         let mut sql = "SELECT id, project, scope, statement, category, evidence_json,
-                              importance, confidence, tier, created_at, last_updated_at, status,
+                              importance, confidence, tier, approved_by_human, created_at, last_updated_at, status,
                               version, replaced_by, tags_json, code_anchor_json, embedding
                        FROM semantic_facts WHERE 1=1".to_string();
 
@@ -1744,7 +1798,7 @@ impl SqliteStore {
         let rows = stmt
             .query_map(params_slice.as_slice(), |row| {
                 let fact = Self::row_to_fact(row)?;
-                let blob_opt: Option<Vec<u8>> = row.get(16)?;
+                let blob_opt: Option<Vec<u8>> = row.get(17)?;
                 let emb = blob_opt.and_then(|b| bytes_to_embedding(&b).ok());
                 Ok((fact, emb))
             })
@@ -1773,7 +1827,7 @@ impl SqliteStore {
 
         let sql = "
             SELECT m.id, m.project, m.scope, m.statement, m.category, m.evidence_json,
-                   m.importance, m.confidence, m.tier, m.created_at, m.last_updated_at, m.status,
+                   m.importance, m.confidence, m.tier, m.approved_by_human, m.created_at, m.last_updated_at, m.status,
                    m.version, m.replaced_by, m.tags_json, m.code_anchor_json,
                    bm25(semantic_facts_fts) as rank
             FROM semantic_facts_fts f
@@ -1786,7 +1840,7 @@ impl SqliteStore {
         let rows = stmt
             .query_map(params![sanitized, limit as i64], |row| {
                 let fact = Self::row_to_fact(row)?;
-                let rank: f64 = row.get(16)?;
+                let rank: f64 = row.get(17)?;
                 Ok((fact, rank as f32))
             })
             .map_err(|e| StrataError::Database(e.to_string()))?;
@@ -1796,6 +1850,37 @@ impl SqliteStore {
             results.push(r.map_err(|e| StrataError::Database(e.to_string()))?);
         }
         Ok(results)
+    }
+
+    /// Promotes a semantic fact to permanent Core Tier (frozen retention, R=1.0).
+    /// Enforces strict requirement for explicit human approval (`approved_by_human == true`).
+    pub fn promote_semantic_fact_to_core(
+        &self,
+        id: &Uuid,
+        approved_by_human: bool,
+        reason: Option<&str>,
+    ) -> Result<SemanticFact, StrataError> {
+        if !approved_by_human {
+            return Err(StrataError::Validation(
+                "Cannot promote semantic fact to Core Tier without explicit human approval (approved_by_human=true)".to_string(),
+            ));
+        }
+
+        let mut fact = self
+            .get_semantic_fact(id)?
+            .ok_or_else(|| StrataError::NotFound(format!("Semantic fact with ID '{id}' not found")))?;
+
+        fact.tier = MemoryTier::Core;
+        fact.approved_by_human = true;
+        fact.importance = 1.0;
+        fact.last_updated_at = Utc::now();
+
+        if let Some(r) = reason {
+            fact.tags.push(format!("reason:{r}"));
+        }
+
+        self.insert_or_update_semantic_fact(&fact)?;
+        Ok(fact)
     }
 
     pub fn get_facts_by_file_anchor(&self, file_path: &str) -> Result<Vec<SemanticFact>, StrataError> {
@@ -2123,16 +2208,17 @@ impl SqliteStore {
         let summary: Option<String> = row.get(3)?;
         let scope_str: String = row.get(4)?;
         let tier_str: String = row.get(5).unwrap_or_else(|_| "peripheral".to_string());
-        let importance: f64 = row.get(6)?;
-        let confidence: f64 = row.get(7)?;
-        let tags_json: String = row.get(8)?;
-        let created_at_str: String = row.get(9)?;
-        let updated_at_str: String = row.get(10)?;
-        let access_count: i64 = row.get(11)?;
-        let last_accessed_str: Option<String> = row.get(12)?;
-        let evidence_json: String = row.get(13)?;
-        let embedding_bytes: Option<Vec<u8>> = row.get(14)?;
-        let metadata_json: String = row.get(15)?;
+        let approved_by_human_int: i64 = row.get(6).unwrap_or(0);
+        let importance: f64 = row.get(7)?;
+        let confidence: f64 = row.get(8)?;
+        let tags_json: String = row.get(9)?;
+        let created_at_str: String = row.get(10)?;
+        let updated_at_str: String = row.get(11)?;
+        let access_count: i64 = row.get(12)?;
+        let last_accessed_str: Option<String> = row.get(13)?;
+        let evidence_json: String = row.get(14)?;
+        let embedding_bytes: Option<Vec<u8>> = row.get(15)?;
+        let metadata_json: String = row.get(16)?;
 
         let id = Uuid::parse_str(&id_str).map_err(|_| rusqlite::Error::InvalidQuery)?;
         let memory_type = mem_type_str
@@ -2144,6 +2230,7 @@ impl SqliteStore {
         let tier = tier_str
             .parse::<MemoryTier>()
             .unwrap_or(MemoryTier::Peripheral);
+        let approved_by_human = approved_by_human_int != 0;
         let tags: Vec<String> = serde_json::from_str(&tags_json).unwrap_or_default();
         let evidence_ids: Vec<Uuid> = serde_json::from_str(&evidence_json).unwrap_or_default();
         let metadata: serde_json::Value =
@@ -2168,6 +2255,7 @@ impl SqliteStore {
             summary,
             scope,
             tier,
+            approved_by_human,
             importance: importance as f32,
             confidence: confidence as f32,
             tags,
@@ -2297,17 +2385,19 @@ impl SqliteStore {
         let importance: f64 = row.get(6)?;
         let confidence: f64 = row.get(7)?;
         let tier_str: String = row.get(8).unwrap_or_else(|_| "peripheral".to_string());
-        let created_at_str: String = row.get(9)?;
-        let updated_at_str: String = row.get(10)?;
-        let status_str: String = row.get(11)?;
-        let version: i64 = row.get(12)?;
-        let replaced_str: Option<String> = row.get(13)?;
-        let tags_json: String = row.get(14)?;
-        let code_anchor_json: Option<String> = row.get(15).ok().flatten();
+        let approved_by_human_int: i64 = row.get(9).unwrap_or(0);
+        let created_at_str: String = row.get(10)?;
+        let updated_at_str: String = row.get(11)?;
+        let status_str: String = row.get(12)?;
+        let version: i64 = row.get(13)?;
+        let replaced_str: Option<String> = row.get(14)?;
+        let tags_json: String = row.get(15)?;
+        let code_anchor_json: Option<String> = row.get(16).ok().flatten();
 
         let id = Uuid::parse_str(&id_str).map_err(|_| rusqlite::Error::InvalidQuery)?;
         let scope = scope_str.parse::<Scope>().map_err(|_| rusqlite::Error::InvalidQuery)?;
         let tier = tier_str.parse::<MemoryTier>().unwrap_or(MemoryTier::Peripheral);
+        let approved_by_human = approved_by_human_int != 0;
         let evidence: Vec<EvidenceRef> = serde_json::from_str(&evidence_json).unwrap_or_default();
         let created_at = DateTime::parse_from_rfc3339(&created_at_str)
             .map(|dt| dt.with_timezone(&Utc))
@@ -2330,6 +2420,7 @@ impl SqliteStore {
             importance: importance as f32,
             confidence: confidence as f32,
             tier,
+            approved_by_human,
             created_at,
             last_updated_at,
             status,

@@ -23,7 +23,7 @@ use uuid::Uuid;
 
 use strata_core::errors::StrataError;
 use strata_core::events::{Event, EventId};
-use strata_core::state::{DigestOutput, FailurePattern, MemoryHandle, MemoryRecord, Scope};
+use strata_core::state::{DigestOutput, FailurePattern, MemoryHandle, MemoryRecord, MemoryTier, Scope};
 use strata_core::traits::{EventStore, MemoryEngine};
 
 pub use alignment::PreferenceMiner;
@@ -53,7 +53,7 @@ pub use workspace::{MonorepoPackage, PackageType, WorkspaceBoundary, WorkspaceBo
 pub use sync::{calculate_exponential_backoff, compute_version_hash, SyncEngine};
 pub use strata_core::schemas::{
     CodeAnchor, ContextBudgetConfig, ExportFormat, FeedbackEvent, FeedbackRating, HostTargetConfig,
-    ImplicitSignal, KtoSample, MemoryFeedback, PreferencePair, SftSample, SignalKind, SymbolType,
+    ImplicitSignal, KtoSample, MemoryFeedback, PreferencePair, SemanticFact, SftSample, SignalKind, SymbolType,
 };
 pub type DpoPair = PreferencePair;
 
@@ -169,6 +169,26 @@ impl SqliteMemoryEngine {
 
         Ok(combined_results)
     }
+
+    /// Promotes a memory record to Core Tier with explicit human approval.
+    pub async fn promote_to_core(
+        &self,
+        id: &Uuid,
+        approved_by_human: bool,
+        reason: Option<&str>,
+    ) -> Result<MemoryRecord, StrataError> {
+        self.store.promote_memory_to_core(id, approved_by_human, reason)
+    }
+
+    /// Promotes a semantic fact to Core Tier with explicit human approval.
+    pub async fn promote_fact_to_core(
+        &self,
+        id: &Uuid,
+        approved_by_human: bool,
+        reason: Option<&str>,
+    ) -> Result<SemanticFact, StrataError> {
+        self.store.promote_semantic_fact_to_core(id, approved_by_human, reason)
+    }
 }
 
 #[async_trait]
@@ -213,6 +233,13 @@ impl MemoryEngine for SqliteMemoryEngine {
 
     async fn write(&self, record: &MemoryRecord) -> Result<MemoryHandle, StrataError> {
         let mut to_write = record.clone();
+
+        // Strict Human-in-the-loop Invariant: Core Tier requires explicit human approval
+        if to_write.tier == MemoryTier::Core && !to_write.approved_by_human {
+            return Err(StrataError::Validation(
+                "Cannot write memory directly to Core Tier without explicit human approval (approved_by_human=true)".to_string(),
+            ));
+        }
 
         // If embedding is missing, generate it automatically
         if to_write.embedding.is_none() && !to_write.content.trim().is_empty() {

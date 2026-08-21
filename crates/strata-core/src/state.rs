@@ -161,6 +161,8 @@ pub struct MemoryRecord {
     pub scope: Scope,
     #[serde(default)]
     pub tier: MemoryTier,
+    #[serde(default)]
+    pub approved_by_human: bool,
     pub importance: f32,
     pub confidence: f32,
     #[serde(default)]
@@ -186,6 +188,7 @@ impl MemoryRecord {
             summary: None,
             scope,
             tier: MemoryTier::Peripheral,
+            approved_by_human: false,
             importance: 0.5,
             confidence: 1.0,
             tags: Vec::new(),
@@ -202,6 +205,15 @@ impl MemoryRecord {
     pub fn with_tier(mut self, tier: MemoryTier) -> Self {
         self.tier = tier;
         self
+    }
+
+    pub fn with_human_approval(mut self, approved: bool) -> Self {
+        self.approved_by_human = approved;
+        self
+    }
+
+    pub fn is_approved_by_human(&self) -> bool {
+        self.approved_by_human
     }
 
     pub fn is_core(&self) -> bool {
@@ -280,6 +292,7 @@ impl MemoryRecord {
             memory_type: self.memory_type.clone(),
             scope: self.scope.clone(),
             tier: self.tier,
+            approved_by_human: self.approved_by_human,
             relevance_score: score,
         }
     }
@@ -294,6 +307,8 @@ pub struct MemoryHandle {
     pub scope: Scope,
     #[serde(default)]
     pub tier: MemoryTier,
+    #[serde(default)]
+    pub approved_by_human: bool,
     pub relevance_score: Option<f32>,
 }
 
@@ -515,10 +530,12 @@ mod tests {
             memory_type: MemoryType::Episodic,
             scope: Scope::Global,
             tier: MemoryTier::Working,
+            approved_by_human: false,
             relevance_score: Some(1.0),
         };
         assert!(working_handle.is_working());
         assert!(!working_handle.is_core());
+        assert!(!working_handle.approved_by_human);
     }
 
     #[test]

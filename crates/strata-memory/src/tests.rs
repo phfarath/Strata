@@ -1339,6 +1339,79 @@ fn test_sqlite_architecture_summary_caching() {
     assert_eq!(cached.clusters.len(), summary.clusters.len());
 }
 
+#[tokio::test]
+async fn test_hitl_core_tier_approval_and_promotion() {
+    use strata_core::state::{MemoryTier, MemoryType};
+
+    let engine = SqliteMemoryEngine::open_in_memory(None).expect("open in-memory engine");
+    let store = engine.store();
+
+    // 1. Attempting to write directly to Core Tier without human approval must fail
+    let unapproved_core = MemoryRecord::new(
+        MemoryType::Semantic,
+        "Critical architectural rule: DB queries must use parameterized statements",
+        Scope::Global,
+    ).with_tier(MemoryTier::Core); // approved_by_human is false by default
+
+    let write_res = engine.write(&unapproved_core).await;
+    assert!(write_res.is_err(), "Direct write to Core Tier without human approval must be rejected");
+
+    // 2. Writing to Working Tier initially succeeds
+    let working_mem = MemoryRecord::new(
+        MemoryType::Procedural,
+        "Use exponential backoff for network calls",
+        Scope::Global,
+    ).with_tier(MemoryTier::Working);
+
+    let handle = engine.write(&working_mem).await.expect("write working memory");
+
+    // 3. Attempting to promote without human approval (approved_by_human = false) must fail
+    let unapproved_promote_res = engine.promote_to_core(&handle.id, false, Some("Policy update")).await;
+    assert!(unapproved_promote_res.is_err(), "Promotion without human approval must be rejected");
+
+    // 4. Promoting with human approval (approved_by_human = true) succeeds
+    let promoted = engine
+        .promote_to_core(&handle.id, true, Some("Approved in ADR-042 by security team"))
+        .await
+        .expect("promote to core with human approval");
+
+    assert_eq!(promoted.tier, MemoryTier::Core);
+    assert!(promoted.approved_by_human);
+    assert_eq!(promoted.importance, 1.0);
+
+    // Verify metadata was attached
+    let reason = promoted.metadata.get("promotion_reason").and_then(|v| v.as_str());
+    assert_eq!(reason, Some("Approved in ADR-042 by security team"));
+
+    // Verify persistence in SQLite
+    let persisted = store.get_memory(&handle.id).expect("get memory").expect("memory exists");
+    assert_eq!(persisted.tier, MemoryTier::Core);
+    assert!(persisted.approved_by_human);
+    assert_eq!(persisted.importance, 1.0);
+
+    // 5. Test SemanticFact promotion with HITL
+    let fact = SemanticFact::new("PostgreSQL 16 requires pgvector 0.7+", "db_config", Scope::Global)
+        .with_tier(MemoryTier::Working);
+    store.insert_or_update_semantic_fact(&fact).expect("insert fact");
+
+    // Rejection without approval
+    let fact_unapproved = store.promote_semantic_fact_to_core(&fact.id, false, None);
+    assert!(fact_unapproved.is_err());
+
+    // Approval succeeds
+    let fact_promoted = store
+        .promote_semantic_fact_to_core(&fact.id, true, Some("Production verified"))
+        .expect("promote fact");
+    assert_eq!(fact_promoted.tier, MemoryTier::Core);
+    assert!(fact_promoted.approved_by_human);
+    assert_eq!(fact_promoted.importance, 1.0);
+
+    let persisted_fact = store.get_semantic_fact(&fact.id).expect("get fact").expect("fact exists");
+    assert_eq!(persisted_fact.tier, MemoryTier::Core);
+    assert!(persisted_fact.approved_by_human);
+}
+
+
 
 
 
