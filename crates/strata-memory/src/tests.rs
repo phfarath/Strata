@@ -28,6 +28,7 @@ use crate::embedding::{
 use crate::jtms::{ConflictResolution, TruthMaintenanceSystem};
 use crate::pipeline::ConsolidationPipeline;
 use crate::store::SqliteStore;
+use crate::workspace::{MonorepoPackage, PackageType, WorkspaceBoundary};
 use crate::sync::{compute_version_hash, SyncEngine};
 use crate::SqliteMemoryEngine;
 use std::sync::Arc;
@@ -1250,6 +1251,69 @@ async fn test_bitemporal_code_anchor_reconciliation_and_store_persistence() {
     assert_eq!(re_retrieved.status, FactStatus::Deprecated);
     assert!(!re_retrieved.code_anchor.unwrap().is_valid);
 }
+
+#[tokio::test]
+async fn test_monorepo_package_scoped_search_and_isolation() {
+    let engine = SqliteMemoryEngine::open_in_memory(None).expect("open engine");
+
+    // 1. Create a simulated monorepo boundary with 2 independent crates: `auth-crate` and `billing-crate`
+    let mut boundary = WorkspaceBoundary::new("repo_root", PackageType::CargoWorkspace);
+    boundary.add_package(MonorepoPackage::new(
+        "auth-crate",
+        PackageType::CargoCrate,
+        "repo_root/crates/auth",
+        "repo_root/crates/auth/Cargo.toml",
+    ));
+    boundary.add_package(MonorepoPackage::new(
+        "billing-crate",
+        PackageType::CargoCrate,
+        "repo_root/crates/billing",
+        "repo_root/crates/billing/Cargo.toml",
+    ));
+
+    // 2. Write memories into specific package scopes and global scope
+    let auth_mem = MemoryRecord::new(
+        MemoryType::Semantic,
+        "Token validation uses RSA-256 JWT key in auth crate",
+        Scope::Project("auth-crate".to_string()),
+    );
+    let billing_mem = MemoryRecord::new(
+        MemoryType::Semantic,
+        "Stripe webhook subscription validation in billing crate",
+        Scope::Project("billing-crate".to_string()),
+    );
+    let global_mem = MemoryRecord::new(
+        MemoryType::Semantic,
+        "Code style requires explicit error handling across entire repository",
+        Scope::Global,
+    );
+
+    engine.write(&auth_mem).await.expect("write auth mem");
+    engine.write(&billing_mem).await.expect("write billing mem");
+    engine.write(&global_mem).await.expect("write global mem");
+
+    // 3. Search scoped to an auth crate file: `repo_root/crates/auth/src/token.rs`
+    let auth_results = engine
+        .search_scoped_to_file("validation", "repo_root/crates/auth/src/token.rs", Some(&boundary), 5)
+        .await
+        .expect("search scoped to auth");
+
+    // Must find auth-crate memory first and global memory, but NOT billing-crate memory
+    assert!(auth_results.iter().any(|m| m.content.contains("Token validation")));
+    assert!(auth_results.iter().any(|m| m.content.contains("Code style requires")));
+    assert!(!auth_results.iter().any(|m| m.content.contains("Stripe webhook")));
+
+    // 4. Search scoped to a billing crate file: `repo_root/crates/billing/src/stripe.rs`
+    let billing_results = engine
+        .search_scoped_to_file("validation", "repo_root/crates/billing/src/stripe.rs", Some(&boundary), 5)
+        .await
+        .expect("search scoped to billing");
+
+    assert!(billing_results.iter().any(|m| m.content.contains("Stripe webhook")));
+    assert!(billing_results.iter().any(|m| m.content.contains("Code style requires")));
+    assert!(!billing_results.iter().any(|m| m.content.contains("Token validation")));
+}
+
 
 
 

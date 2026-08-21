@@ -15,6 +15,7 @@ use strata_cli::{
     commands::{
         auth::{run_auth, AuthArgs},
         blast_radius::{run_blast_radius, BlastRadiusArgs},
+        callgraph::run_callgraph,
         consolidate::{run_consolidate, ConsolidateOptions},
         daemon::{run_daemon, DaemonArgs},
         doctor::run_doctor,
@@ -31,6 +32,7 @@ use strata_cli::{
         sync::{run_sync, SyncArgs},
         sync_hosts::{run_sync_hosts, SyncHostsArgs},
         train::{run_train, TrainArgs},
+        workspace::{run_workspace, WorkspaceArgs},
     },
     mcp::server::McpServer,
 };
@@ -208,6 +210,33 @@ enum Commands {
     /// One-click local LoRA fine-tuning via Unsloth and Ollama deployment
     #[command(name = "train", alias = "lora", alias = "finetune")]
     Train(TrainArgs),
+
+    /// Deterministic native call graph and import dependency analyzer
+    #[command(name = "callgraph", alias = "calls", alias = "hierarchy")]
+    CallGraph {
+        #[arg(help = "Path to source file or directory to analyze")]
+        path: String,
+
+        #[arg(long, help = "Filter callers or callees of a specific symbol/function")]
+        symbol: Option<String>,
+
+        #[arg(
+            long,
+            default_value = "all",
+            help = "Hierarchy direction (callers, callees, both, imports, all)"
+        )]
+        direction: String,
+
+        #[arg(long, default_value_t = 50, help = "Maximum call edges to display")]
+        limit: usize,
+
+        #[arg(long, help = "Output as raw JSON")]
+        json: bool,
+    },
+
+    /// Multi-package monorepo workspace detector and boundary isolator
+    #[command(name = "workspace", alias = "monorepo", alias = "packages")]
+    Workspace(WorkspaceArgs),
 }
 
 
@@ -254,6 +283,19 @@ async fn main() -> Result<()> {
     if let Commands::Key(args) = cli.command {
         return run_key(args).await;
     }
+
+    // Fast-path for CallGraph (analyzes code AST directly on-the-fly)
+    if let Commands::CallGraph { path, symbol, direction, limit, json } = &cli.command {
+        return run_callgraph(path, symbol.as_deref(), direction, *json, *limit)
+            .await
+            .map_err(Into::into);
+    }
+
+    // Fast-path for Workspace (detects package boundaries directly on disk)
+    if let Commands::Workspace(args) = cli.command {
+        return run_workspace(args).await.map_err(Into::into);
+    }
+
     let resolved_ws = strata_cli::config::StrataConfig::resolve_workspace(None);
     if std::env::var("STRATA_WORKSPACE_ID").is_err() && resolved_ws != "default" {
         std::env::set_var("STRATA_WORKSPACE_ID", &resolved_ws);
@@ -267,7 +309,7 @@ async fn main() -> Result<()> {
     );
 
     match cli.command {
-        Commands::Init { .. } | Commands::Plan(_) | Commands::Auth(_) | Commands::Key(_) | Commands::Login(_) | Commands::Logout => unreachable!(),
+        Commands::Init { .. } | Commands::Plan(_) | Commands::Auth(_) | Commands::Key(_) | Commands::Login(_) | Commands::Logout | Commands::CallGraph { .. } | Commands::Workspace(_) => unreachable!(),
 
         Commands::Mcp => {
             let server = McpServer::new(engine);

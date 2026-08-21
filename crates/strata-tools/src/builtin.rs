@@ -899,5 +899,307 @@ impl Tool for TrainPipelineTool {
     }
 }
 
+// =========================================================================
+// Native Call Graph Tool
+// =========================================================================
+
+pub struct CallGraphTool {
+    store: Option<Arc<strata_memory::store::SqliteStore>>,
+}
+
+impl CallGraphTool {
+    pub fn new() -> Self {
+        Self { store: None }
+    }
+
+    pub fn with_store(store: Arc<strata_memory::store::SqliteStore>) -> Self {
+        Self { store: Some(store) }
+    }
+}
+
+impl Default for CallGraphTool {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+#[async_trait]
+impl Tool for CallGraphTool {
+    fn name(&self) -> &str {
+        "strata_call_graph"
+    }
+
+    fn description(&self) -> &str {
+        "Deterministic Native Call Graph and Module Import Dependency Analyzer in Rust. Analyzes function calls, method calls, constructors, imports, and recursion."
+    }
+
+    fn parameters_schema(&self) -> serde_json::Value {
+        json!({
+            "type": "object",
+            "properties": {
+                "path": {
+                    "type": "string",
+                    "description": "File path to analyze or target"
+                },
+                "code": {
+                    "type": "string",
+                    "description": "Optional raw source code string to analyze on-the-fly"
+                },
+                "symbol": {
+                    "type": "string",
+                    "description": "Optional symbol/function name to inspect callers or callees"
+                },
+                "direction": {
+                    "type": "string",
+                    "enum": ["callers", "callees", "both", "imports", "all"],
+                    "description": "Call hierarchy direction to retrieve (default: 'all')"
+                },
+                "limit": {
+                    "type": "integer",
+                    "description": "Maximum number of edges to return (default: 50)"
+                }
+            }
+        })
+    }
+
+    async fn execute(&self, params: serde_json::Value) -> Result<serde_json::Value, StrataError> {
+        let path_opt = params.get("path").and_then(|v| v.as_str());
+        let code_opt = params.get("code").and_then(|v| v.as_str());
+        let symbol_opt = params.get("symbol").and_then(|v| v.as_str());
+        let direction = params
+            .get("direction")
+            .and_then(|v| v.as_str())
+            .unwrap_or("all");
+        let limit = params.get("limit").and_then(|v| v.as_u64()).unwrap_or(50) as usize;
+
+        let analyzer = strata_memory::CallGraphAnalyzer::new();
+        let mut edges = Vec::new();
+
+        // 1. If code or path is provided, analyze directly
+        if let Some(code) = code_opt {
+            let file_path = path_opt.unwrap_or("snippet.rs");
+            let lang = strata_memory::LanguageKind::from_file_path(file_path);
+            let extracted = analyzer.analyze_source(code, lang, file_path)?;
+            if let Some(ref store) = self.store {
+                let _ = store.clear_call_edges_for_file(file_path);
+                let _ = store.insert_call_edges(&extracted);
+            }
+            edges.extend(extracted);
+        } else if let Some(path) = path_opt {
+            if let Ok(content) = std::fs::read_to_string(path) {
+                let lang = strata_memory::LanguageKind::from_file_path(path);
+                let extracted = analyzer.analyze_source(&content, lang, path)?;
+                if let Some(ref store) = self.store {
+                    let _ = store.clear_call_edges_for_file(path);
+                    let _ = store.insert_call_edges(&extracted);
+                }
+                edges.extend(extracted);
+            } else if let Some(ref store) = self.store {
+                edges = store.get_file_call_edges(path)?;
+            }
+        } else if let (Some(ref store), Some(sym)) = (&self.store, symbol_opt) {
+            edges = store.get_callers_of_symbol(sym, limit)?;
+        }
+
+        let graph = strata_memory::CallGraph::from_edges(edges.clone());
+        let recursive = graph.detect_recursive_calls();
+
+        // Filter based on symbol and direction
+        let callers: Vec<_> = if let Some(sym) = symbol_opt {
+            graph.callers_of(sym).into_iter().cloned().collect()
+        } else {
+            edges
+                .iter()
+                .filter(|e| e.call_type != strata_memory::CallType::Import)
+                .cloned()
+                .collect()
+        };
+
+        let callees: Vec<_> = if let (Some(sym), Some(p)) = (symbol_opt, path_opt) {
+            graph.callees_of(p, sym).into_iter().cloned().collect()
+        } else {
+            Vec::new()
+        };
+
+        let imports: Vec<_> = if let Some(p) = path_opt {
+            graph.file_imports(p).into_iter().cloned().collect()
+        } else {
+            edges
+                .iter()
+                .filter(|e| e.call_type == strata_memory::CallType::Import)
+                .cloned()
+                .collect()
+        };
+
+        // Formatted Markdown / ASCII tree summary for agents
+        let mut summary_lines = Vec::new();
+        summary_lines.push(format!("### 📞 Call Graph Analysis ({direction})"));
+        if let Some(p) = path_opt {
+            summary_lines.push(format!("- **Target File**: `{p}`"));
+        }
+        if let Some(sym) = symbol_opt {
+            summary_lines.push(format!("- **Target Symbol**: `{sym}`"));
+        }
+        summary_lines.push(format!("- **Total Edges Detected**: {}", edges.len()));
+
+        if !recursive.is_empty() {
+            summary_lines.push(format!("- ⚠️ **Recursive Calls**: {}", recursive.len()));
+            for (f, sym) in &recursive {
+                summary_lines.push(format!("  - `{}::{}` (self-call)", f, sym));
+            }
+        }
+
+        if !imports.is_empty() && (direction == "imports" || direction == "all") {
+            summary_lines.push("\n#### 📦 Import Dependencies:".to_string());
+            for imp in &imports {
+                summary_lines.push(format!("  - line {}: `{}`", imp.line_number, imp.callee_symbol));
+            }
+        }
+
+        if !callers.is_empty() && (direction == "callers" || direction == "both" || direction == "all") {
+            summary_lines.push("\n#### ⬆️ Callers (Who invokes this):".to_string());
+            for c in &callers {
+                summary_lines.push(format!(
+                    "  - `{}:{}` (line {}) -> invokes `{}` [{}]",
+                    c.caller_file, c.caller_symbol, c.line_number, c.callee_symbol, c.call_type
+                ));
+            }
+        }
+
+        if !callees.is_empty() && (direction == "callees" || direction == "both" || direction == "all") {
+            summary_lines.push("\n#### ⬇️ Callees (What this invokes):".to_string());
+            for c in &callees {
+                summary_lines.push(format!(
+                    "  - line {}: `{}` [{}]",
+                    c.line_number, c.callee_symbol, c.call_type
+                ));
+            }
+        }
+
+        let formatted_summary = summary_lines.join("\n");
+
+        Ok(json!({
+            "status": "success",
+            "total_edges": edges.len(),
+            "target_path": path_opt,
+            "target_symbol": symbol_opt,
+            "direction": direction,
+            "callers": callers,
+            "callees": callees,
+            "imports": imports,
+            "recursive_calls": recursive,
+            "formatted_summary": formatted_summary
+        }))
+    }
+}
+
+// =========================================================================
+// Workspace Boundary Detection Tool
+// =========================================================================
+
+pub struct WorkspaceDetectTool;
+
+impl WorkspaceDetectTool {
+    pub fn new() -> Self {
+        Self
+    }
+}
+
+impl Default for WorkspaceDetectTool {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+#[async_trait]
+impl Tool for WorkspaceDetectTool {
+    fn name(&self) -> &str {
+        "strata_workspace_detect"
+    }
+
+    fn description(&self) -> &str {
+        "Detect monorepo workspace boundaries, member packages/crates, internal dependencies, and isolate file scopes."
+    }
+
+    fn parameters_schema(&self) -> serde_json::Value {
+        json!({
+            "type": "object",
+            "properties": {
+                "root_path": {
+                    "type": "string",
+                    "description": "Root repository or workspace directory to inspect (default: current directory '.')"
+                },
+                "file_path": {
+                    "type": "string",
+                    "description": "Optional file path to resolve against detected package boundaries and get hierarchical scopes"
+                }
+            }
+        })
+    }
+
+    async fn execute(&self, params: serde_json::Value) -> Result<serde_json::Value, StrataError> {
+        let root_str = params
+            .get("root_path")
+            .and_then(|v| v.as_str())
+            .unwrap_or(".");
+        let file_path_opt = params.get("file_path").and_then(|v| v.as_str());
+
+        let root_path = std::path::Path::new(root_str);
+        let boundary = strata_memory::WorkspaceBoundaryDetector::detect(root_path)?;
+
+        let mut resolved_pkg = None;
+        let mut hierarchical_scopes = Vec::new();
+
+        if let Some(f_path) = file_path_opt {
+            resolved_pkg = boundary.find_package_for_file(f_path).cloned();
+            hierarchical_scopes = boundary
+                .get_hierarchical_scopes(f_path)
+                .into_iter()
+                .map(|s| s.to_string())
+                .collect();
+        }
+
+        // Formatted Markdown summary for coding agents
+        let mut summary_lines = Vec::new();
+        summary_lines.push(format!("### 🏢 Workspace Boundary Report ({})", boundary.workspace_type));
+        summary_lines.push(format!("- **Root Directory**: `{}`", boundary.root_path));
+        summary_lines.push(format!("- **Member Packages ({} found)**:", boundary.packages.len()));
+
+        for pkg in &boundary.packages {
+            let deps_str = if pkg.internal_dependencies.is_empty() {
+                "".to_string()
+            } else {
+                format!(" (depends on: {})", pkg.internal_dependencies.join(", "))
+            };
+            summary_lines.push(format!(
+                "  - **`{}`** [{}] @ `{}`{}",
+                pkg.name, pkg.package_type, pkg.root_path, deps_str
+            ));
+        }
+
+        if let Some(ref pkg) = resolved_pkg {
+            summary_lines.push(format!("\n#### 🎯 Resolved Target File Context:"));
+            summary_lines.push(format!("- **File**: `{}`", file_path_opt.unwrap_or("")));
+            summary_lines.push(format!("- **Owning Package**: `{}`", pkg.name));
+            summary_lines.push(format!("- **Hierarchical Search Scopes**: `{}`", hierarchical_scopes.join(" -> ")));
+        }
+
+        let formatted_summary = summary_lines.join("\n");
+
+        Ok(json!({
+            "status": "success",
+            "root_path": boundary.root_path,
+            "workspace_type": boundary.workspace_type.to_string(),
+            "packages_count": boundary.packages.len(),
+            "packages": boundary.packages,
+            "resolved_package": resolved_pkg,
+            "hierarchical_scopes": hierarchical_scopes,
+            "formatted_summary": formatted_summary
+        }))
+    }
+}
+
+
+
 
 

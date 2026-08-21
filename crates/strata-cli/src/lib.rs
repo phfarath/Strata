@@ -79,6 +79,61 @@ mod tests {
         assert_eq!(failures.len(), 1);
         assert_eq!(failures[0].signature, "cargo_package_not_found");
     }
+
+    #[tokio::test]
+    async fn test_cli_callgraph_command_file_and_directory() {
+        let temp_dir = std::env::temp_dir().join("strata_cli_callgraph_test");
+        let _ = std::fs::create_dir_all(&temp_dir);
+
+        let file_a = temp_dir.join("service.rs");
+        let file_b = temp_dir.join("handler.rs");
+
+        std::fs::write(
+            &file_a,
+            r#"
+use crate::handler::process_data;
+
+pub fn start_service() {
+    process_data("hello");
+}
+"#,
+        )
+        .unwrap();
+
+        std::fs::write(
+            &file_b,
+            r#"
+pub fn process_data(msg: &str) {
+    println!("{}", msg);
+}
+"#,
+        )
+        .unwrap();
+
+        // Test running callgraph on a single file
+        let res_file = run_callgraph(file_a.to_str().unwrap(), None, "all", true, 10).await;
+        assert!(res_file.is_ok());
+
+        // Test running callgraph on the whole directory
+        let res_dir = run_callgraph(temp_dir.to_str().unwrap(), Some("process_data"), "callers", true, 10).await;
+        assert!(res_dir.is_ok());
+
+        let _ = std::fs::remove_dir_all(&temp_dir);
+    }
+
+    #[tokio::test]
+    async fn test_cli_workspace_command() {
+        let current_dir = std::env::current_dir().unwrap();
+
+        let args = crate::commands::workspace::WorkspaceArgs {
+            path: current_dir.to_str().unwrap().to_string(),
+            file: Some("crates/strata-memory/src/workspace.rs".to_string()),
+            json: true,
+        };
+
+        let res = crate::commands::workspace::run_workspace(args).await;
+        assert!(res.is_ok());
+    }
 }
 
 

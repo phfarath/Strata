@@ -243,6 +243,53 @@ impl McpServer {
                     }
                 }),
             },
+            ToolDefinition {
+                name: "strata_call_graph".to_string(),
+                description: "Deterministic Native Call Graph and Module Import Dependency Analyzer in Rust. Queries callers, callees, imports, and recursive cycles for any symbol or file.".to_string(),
+                input_schema: serde_json::json!({
+                    "type": "object",
+                    "properties": {
+                        "path": {
+                            "type": "string",
+                            "description": "File path to analyze or query"
+                        },
+                        "code": {
+                            "type": "string",
+                            "description": "Optional raw source code string to analyze on-the-fly"
+                        },
+                        "symbol": {
+                            "type": "string",
+                            "description": "Optional function/symbol name to inspect callers or callees"
+                        },
+                        "direction": {
+                            "type": "string",
+                            "enum": ["callers", "callees", "both", "imports", "all"],
+                            "description": "Call hierarchy direction to retrieve (default: 'all')"
+                        },
+                        "limit": {
+                            "type": "integer",
+                            "description": "Maximum number of edges to return (default: 50)"
+                        }
+                    }
+                }),
+            },
+            ToolDefinition {
+                name: "strata_workspace_detect".to_string(),
+                description: "Detect monorepo workspace boundaries, member packages/crates, internal dependencies, and isolate file search scopes.".to_string(),
+                input_schema: serde_json::json!({
+                    "type": "object",
+                    "properties": {
+                        "root_path": {
+                            "type": "string",
+                            "description": "Root directory of the workspace or monorepo to inspect (default: '.')"
+                        },
+                        "file_path": {
+                            "type": "string",
+                            "description": "Optional file path to resolve to its owner package and compute hierarchical scopes"
+                        }
+                    }
+                }),
+            },
         ]
     }
 
@@ -687,6 +734,34 @@ impl McpServer {
                         CallToolResult::structured(summary_table.to_string(), val)
                     }
                     Err(e) => CallToolResult::error(format!("Train pipeline error: {e}")),
+                }
+            }
+            "strata_call_graph" | "call_graph" => {
+                use strata_core::traits::Tool;
+                let tool = strata_tools::CallGraphTool::new();
+                match tool.execute(args).await {
+                    Ok(val) => {
+                        let summary = val
+                            .get("formatted_summary")
+                            .and_then(|v| v.as_str())
+                            .unwrap_or("Call graph analysis completed.");
+                        CallToolResult::structured(summary.to_string(), val)
+                    }
+                    Err(e) => CallToolResult::error(format!("Call graph analysis error: {e}")),
+                }
+            }
+            "strata_workspace_detect" | "workspace_detect" => {
+                use strata_core::traits::Tool;
+                let tool = strata_tools::WorkspaceDetectTool::new();
+                match tool.execute(args).await {
+                    Ok(val) => {
+                        let summary = val
+                            .get("formatted_summary")
+                            .and_then(|v| v.as_str())
+                            .unwrap_or("Workspace boundary report completed.");
+                        CallToolResult::structured(summary.to_string(), val)
+                    }
+                    Err(e) => CallToolResult::error(format!("Workspace detect error: {e}")),
                 }
             }
             unknown_tool => CallToolResult::error(format!("Unknown tool: '{unknown_tool}'")),

@@ -497,3 +497,185 @@ async fn test_ping_endpoint_and_security_headers() {
     assert!(ping_data["timestamp"].is_string());
 }
 
+#[tokio::test]
+async fn test_multi_workspace_isolation_and_cross_tenant_rejection_e2e() {
+    let (base_url, _handle) = spawn_test_server(None).await;
+    let client = Client::new();
+
+    // 1. Signup Tenant Alpha
+    let signup_alpha = client
+        .post(format!("{base_url}/api/v1/auth/signup"))
+        .json(&serde_json::json!({
+            "email": "alpha@tenant.dev",
+            "password": "PasswordAlpha123!",
+            "full_name": "Tenant Alpha",
+            "workspace_name": "Alpha Corp"
+        }))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(signup_alpha.status(), reqwest::StatusCode::OK);
+    let data_alpha: serde_json::Value = signup_alpha.json().await.unwrap();
+    let token_alpha = data_alpha["token"].as_str().unwrap();
+    let ws_alpha_id = data_alpha["workspaces"][0]["id"].as_str().unwrap();
+
+    // 2. Signup Tenant Beta
+    let signup_beta = client
+        .post(format!("{base_url}/api/v1/auth/signup"))
+        .json(&serde_json::json!({
+            "email": "beta@tenant.dev",
+            "password": "PasswordBeta123!",
+            "full_name": "Tenant Beta",
+            "workspace_name": "Beta Corp"
+        }))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(signup_beta.status(), reqwest::StatusCode::OK);
+    let data_beta: serde_json::Value = signup_beta.json().await.unwrap();
+    let token_beta = data_beta["token"].as_str().unwrap();
+    let ws_beta_id = data_beta["workspaces"][0]["id"].as_str().unwrap();
+
+    // 3. Generate API Key for Tenant Alpha
+    let key_alpha_resp = client
+        .post(format!("{base_url}/api/v1/keys"))
+        .header("Authorization", format!("Bearer {token_alpha}"))
+        .json(&serde_json::json!({
+            "workspace_id": ws_alpha_id,
+            "name": "Alpha Machine Key"
+        }))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(key_alpha_resp.status(), reqwest::StatusCode::OK);
+    let key_alpha_data: serde_json::Value = key_alpha_resp.json().await.unwrap();
+    let key_alpha = key_alpha_data["key"].as_str().unwrap();
+
+    // 4. Generate API Key for Tenant Beta
+    let key_beta_resp = client
+        .post(format!("{base_url}/api/v1/keys"))
+        .header("Authorization", format!("Bearer {token_beta}"))
+        .json(&serde_json::json!({
+            "workspace_id": ws_beta_id,
+            "name": "Beta Machine Key"
+        }))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(key_beta_resp.status(), reqwest::StatusCode::OK);
+    let key_beta_data: serde_json::Value = key_beta_resp.json().await.unwrap();
+    let key_beta = key_beta_data["key"].as_str().unwrap();
+
+    // 5. Push data to Alpha Workspace using Alpha Key
+    let alpha_delta = SyncDelta::new(
+        ws_alpha_id,
+        1,
+        "semantic_fact",
+        serde_json::json!({ "secret": "Alpha confidential IP" }),
+        "v-alpha-1",
+    );
+    let push_alpha_resp = client
+        .post(format!("{base_url}/sync/push"))
+        .header("Authorization", format!("Bearer {key_alpha}"))
+        .json(&serde_json::json!({
+            "workspace_id": ws_alpha_id,
+            "deltas": [alpha_delta]
+        }))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(push_alpha_resp.status(), reqwest::StatusCode::OK);
+
+    // 6. Tenant Beta attempts to pull from Alpha Workspace using Beta Key -> Must NOT return Alpha's deltas
+    let cross_pull_resp = client
+        .get(format!("{base_url}/sync/pull?workspace_id={ws_beta_id}&since_sequence=0"))
+        .header("Authorization", format!("Bearer {key_beta}"))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(cross_pull_resp.status(), reqwest::StatusCode::OK);
+    let beta_deltas: Vec<SyncDelta> = cross_pull_resp.json().await.unwrap();
+    assert_eq!(beta_deltas.len(), 0, "Beta workspace must have 0 deltas (complete tenant isolation)");
+
+    // 7. Verify Alpha pulls its own delta cleanly
+    let alpha_pull_resp = client
+        .get(format!("{base_url}/sync/pull?workspace_id={ws_alpha_id}&since_sequence=0"))
+        .header("Authorization", format!("Bearer {key_alpha}"))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(alpha_pull_resp.status(), reqwest::StatusCode::OK);
+    let alpha_deltas: Vec<SyncDelta> = alpha_pull_resp.json().await.unwrap();
+    assert_eq!(alpha_deltas.len(), 1);
+    assert_eq!(alpha_deltas[0].payload["secret"], "Alpha confidential IP");
+}
+
+#[tokio::test]
+async fn test_api_key_revocation_and_unauthorized_rejection_e2e() {
+    let (base_url, _handle) = spawn_test_server(None).await;
+    let client = Client::new();
+
+    // 1. Signup User
+    let signup_resp = client
+        .post(format!("{base_url}/api/v1/auth/signup"))
+        .json(&serde_json::json!({
+            "email": "revocation@test.dev",
+            "password": "StrongPassword123!",
+            "full_name": "Revocation User"
+        }))
+        .send()
+        .await
+        .unwrap();
+    let signup_data: serde_json::Value = signup_resp.json().await.unwrap();
+    let token = signup_data["token"].as_str().unwrap();
+    let ws_id = signup_data["workspaces"][0]["id"].as_str().unwrap();
+
+    // 2. Create API key
+    let key_resp = client
+        .post(format!("{base_url}/api/v1/keys"))
+        .header("Authorization", format!("Bearer {token}"))
+        .json(&serde_json::json!({
+            "workspace_id": ws_id,
+            "name": "Temporary Key to Revoke"
+        }))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(key_resp.status(), reqwest::StatusCode::OK);
+    let key_data: serde_json::Value = key_resp.json().await.unwrap();
+    let key_id = key_data["id"].as_str().unwrap();
+    let api_key = key_data["key"].as_str().unwrap();
+
+    // 3. Test that API key works for status check
+    let status_resp = client
+        .get(format!("{base_url}/sync/status?workspace_id={ws_id}"))
+        .header("Authorization", format!("Bearer {api_key}"))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(status_resp.status(), reqwest::StatusCode::OK);
+
+    // 4. Revoke API key via DELETE /api/v1/keys/{key_id}
+    let revoke_resp = client
+        .delete(format!("{base_url}/api/v1/keys/{key_id}"))
+        .header("Authorization", format!("Bearer {token}"))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(revoke_resp.status(), reqwest::StatusCode::OK);
+
+    // 5. Subsequent request with revoked key MUST be rejected with 401 Unauthorized
+    let rejected_resp = client
+        .get(format!("{base_url}/sync/status?workspace_id={ws_id}"))
+        .header("Authorization", format!("Bearer {api_key}"))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(
+        rejected_resp.status(),
+        reqwest::StatusCode::UNAUTHORIZED,
+        "Revoked API key must receive 401 Unauthorized"
+    );
+}
+
+
