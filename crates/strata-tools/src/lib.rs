@@ -542,4 +542,28 @@ fn execute_step() {}
         assert_eq!(res["resolved_package"]["name"], "strata-core");
         assert!(res["formatted_summary"].as_str().unwrap().contains("Workspace Boundary Report"));
     }
+
+    #[tokio::test]
+    async fn test_architecture_map_tool_execution() {
+        let tool = ArchitectureMapTool::new();
+        let current_dir = std::env::current_dir().unwrap();
+        let target_dir = if current_dir.join("src").exists() {
+            current_dir.join("src")
+        } else {
+            current_dir.clone()
+        };
+
+        let res = tool
+            .execute(json!({
+                "path": target_dir.to_str().unwrap(),
+                "workspace_id": "test-strata-tools"
+            }))
+            .await
+            .expect("execute architecture map tool");
+
+        assert_eq!(res["status"], "success");
+        assert_eq!(res["workspace_id"], "test-strata-tools");
+        assert!(res["clusters_count"].as_u64().unwrap() >= 1);
+        assert!(res["formatted_summary"].as_str().unwrap().contains("High-Level Architecture Map"));
+    }
 }

@@ -21,6 +21,7 @@ use strata_core::state::{
 
 
 use crate::call_graph::{CallEdge, CallType};
+use crate::community::ArchitectureGraphSummary;
 use crate::embedding::{bytes_to_embedding, embedding_to_bytes};
 
 pub struct SqliteStore {
@@ -465,6 +466,17 @@ impl SqliteStore {
             CREATE INDEX IF NOT EXISTS idx_call_edges_callee ON call_edges(callee_symbol);
             CREATE INDEX IF NOT EXISTS idx_call_edges_file ON call_edges(caller_file);
             CREATE INDEX IF NOT EXISTS idx_call_edges_type ON call_edges(call_type);
+
+            -- Architecture Graph Summaries and Community Clusters cache table
+            CREATE TABLE IF NOT EXISTS architecture_summaries (
+                id TEXT PRIMARY KEY,
+                workspace_id TEXT NOT NULL,
+                summary_json TEXT NOT NULL,
+                created_at TEXT NOT NULL
+            );
+
+            CREATE INDEX IF NOT EXISTS idx_arch_summaries_ws ON architecture_summaries(workspace_id);
+            CREATE INDEX IF NOT EXISTS idx_arch_summaries_created ON architecture_summaries(created_at);
             ",
         )
         .map_err(|e| StrataError::Database(format!("Failed to execute schema migration: {e}")))?;
@@ -3272,6 +3284,62 @@ impl SqliteStore {
             call_type,
             created_at,
         })
+    }
+
+    // ==========================================
+    // Architecture Graph Summary Cache
+    // ==========================================
+
+    /// Caches an ArchitectureGraphSummary into SQLite for fast recall.
+    pub fn cache_architecture_summary(&self, summary: &ArchitectureGraphSummary) -> Result<(), StrataError> {
+        let conn = self.conn.lock().map_err(|_| {
+            StrataError::Database("Lock poisoned on SQLite connection".to_string())
+        })?;
+
+        let id_str = summary.id.to_string();
+        let created_at_str = summary.created_at.to_rfc3339();
+        let summary_json = serde_json::to_string(summary)?;
+
+        conn.execute(
+            "INSERT INTO architecture_summaries (id, workspace_id, summary_json, created_at)
+             VALUES (?1, ?2, ?3, ?4)
+             ON CONFLICT(id) DO UPDATE SET
+                workspace_id = excluded.workspace_id,
+                summary_json = excluded.summary_json,
+                created_at = excluded.created_at",
+            params![id_str, summary.workspace_id, summary_json, created_at_str],
+        )
+        .map_err(|e| StrataError::Database(format!("Failed to cache architecture summary: {e}")))?;
+
+        Ok(())
+    }
+
+    /// Retrieves the most recent cached ArchitectureGraphSummary for a given workspace.
+    pub fn get_cached_architecture_summary(&self, workspace_id: &str) -> Result<Option<ArchitectureGraphSummary>, StrataError> {
+        let conn = self.conn.lock().map_err(|_| {
+            StrataError::Database("Lock poisoned on SQLite connection".to_string())
+        })?;
+
+        let mut stmt = conn
+            .prepare(
+                "SELECT summary_json FROM architecture_summaries
+                 WHERE workspace_id = ?1
+                 ORDER BY created_at DESC
+                 LIMIT 1",
+            )
+            .map_err(|e| StrataError::Database(e.to_string()))?;
+
+        let summary_opt: Option<String> = stmt
+            .query_row(params![workspace_id], |r| r.get(0))
+            .optional()
+            .map_err(|e| StrataError::Database(e.to_string()))?;
+
+        if let Some(json_str) = summary_opt {
+            let summary: ArchitectureGraphSummary = serde_json::from_str(&json_str)?;
+            Ok(Some(summary))
+        } else {
+            Ok(None)
+        }
     }
 }
 

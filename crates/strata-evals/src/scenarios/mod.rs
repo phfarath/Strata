@@ -1,3 +1,4 @@
+pub mod architecture_clustering;
 pub mod cognitive_feedback_and_alignment;
 pub mod cognitive_observability;
 pub mod cross_host_transfer;
@@ -13,6 +14,7 @@ pub mod silent_failure_avoidance;
 pub mod workspace_monorepo;
 pub mod world_model_causal;
 
+pub use architecture_clustering::*;
 pub use cognitive_feedback_and_alignment::*;
 pub use cognitive_observability::*;
 pub use cross_host_transfer::*;

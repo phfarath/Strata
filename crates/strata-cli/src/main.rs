@@ -13,6 +13,7 @@ use strata_memory::SqliteMemoryEngine;
 
 use strata_cli::{
     commands::{
+        architecture::{run_architecture, ArchitectureArgs},
         auth::{run_auth, AuthArgs},
         blast_radius::{run_blast_radius, BlastRadiusArgs},
         callgraph::run_callgraph,
@@ -237,6 +238,10 @@ enum Commands {
     /// Multi-package monorepo workspace detector and boundary isolator
     #[command(name = "workspace", alias = "monorepo", alias = "packages")]
     Workspace(WorkspaceArgs),
+
+    /// Graph community extraction and high-level architectural clustering
+    #[command(name = "architecture", alias = "cluster", alias = "communities", alias = "macro")]
+    Architecture(ArchitectureArgs),
 }
 
 
@@ -296,6 +301,11 @@ async fn main() -> Result<()> {
         return run_workspace(args).await.map_err(Into::into);
     }
 
+    // Fast-path for Architecture (clusters graph communities directly on-the-fly)
+    if let Commands::Architecture(args) = cli.command {
+        return run_architecture(args).await.map_err(Into::into);
+    }
+
     let resolved_ws = strata_cli::config::StrataConfig::resolve_workspace(None);
     if std::env::var("STRATA_WORKSPACE_ID").is_err() && resolved_ws != "default" {
         std::env::set_var("STRATA_WORKSPACE_ID", &resolved_ws);
@@ -309,7 +319,7 @@ async fn main() -> Result<()> {
     );
 
     match cli.command {
-        Commands::Init { .. } | Commands::Plan(_) | Commands::Auth(_) | Commands::Key(_) | Commands::Login(_) | Commands::Logout | Commands::CallGraph { .. } | Commands::Workspace(_) => unreachable!(),
+        Commands::Init { .. } | Commands::Plan(_) | Commands::Auth(_) | Commands::Key(_) | Commands::Login(_) | Commands::Logout | Commands::CallGraph { .. } | Commands::Workspace(_) | Commands::Architecture(_) => unreachable!(),
 
         Commands::Mcp => {
             let server = McpServer::new(engine);

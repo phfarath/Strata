@@ -1314,6 +1314,32 @@ async fn test_monorepo_package_scoped_search_and_isolation() {
     assert!(!billing_results.iter().any(|m| m.content.contains("Token validation")));
 }
 
+#[test]
+fn test_sqlite_architecture_summary_caching() {
+    let store = SqliteStore::open_in_memory().expect("open in-memory sqlite");
+
+    let summary = crate::community::CommunityDetector::default().detect_from_edges(
+        &[
+            crate::call_graph::CallEdge::new("src/auth.rs", "login", "validate", 10, crate::call_graph::CallType::FunctionCall),
+            crate::call_graph::CallEdge::new("src/db.rs", "query", "connect", 20, crate::call_graph::CallType::FunctionCall),
+        ],
+        "test-ws",
+    );
+
+    // Cache summary
+    store.cache_architecture_summary(&summary).expect("cache architecture summary");
+
+    // Retrieve cached summary
+    let cached = store.get_cached_architecture_summary("test-ws")
+        .expect("get cached architecture summary")
+        .expect("should find cached summary");
+
+    assert_eq!(cached.workspace_id, "test-ws");
+    assert_eq!(cached.total_edges, 2);
+    assert_eq!(cached.clusters.len(), summary.clusters.len());
+}
+
+
 
 
 

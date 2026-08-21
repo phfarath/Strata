@@ -1,3 +1,4 @@
+pub mod architecture;
 pub mod auth;
 pub mod blast_radius;
 pub mod callgraph;
@@ -19,6 +20,7 @@ pub mod sync_hosts;
 pub mod train;
 pub mod workspace;
 
+pub use architecture::*;
 pub use auth::*;
 pub use blast_radius::*;
 pub use callgraph::*;

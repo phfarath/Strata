@@ -1199,6 +1199,89 @@ impl Tool for WorkspaceDetectTool {
     }
 }
 
+// =========================================================================
+// Graph Communities & Architecture Map Tool
+// =========================================================================
+
+pub struct ArchitectureMapTool;
+
+impl ArchitectureMapTool {
+    pub fn new() -> Self {
+        Self
+    }
+}
+
+impl Default for ArchitectureMapTool {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+#[async_trait]
+impl Tool for ArchitectureMapTool {
+    fn name(&self) -> &str {
+        "strata_architecture_map"
+    }
+
+    fn description(&self) -> &str {
+        "Extract graph communities and high-level architectural clusters from codebase call graphs, imports, and AST symbols to understand macro software architecture."
+    }
+
+    fn parameters_schema(&self) -> serde_json::Value {
+        json!({
+            "type": "object",
+            "properties": {
+                "path": {
+                    "type": "string",
+                    "description": "Root workspace or directory path to analyze (default: '.')"
+                },
+                "workspace_id": {
+                    "type": "string",
+                    "description": "Workspace identifier (default: 'default')"
+                },
+                "min_cluster_size": {
+                    "type": "integer",
+                    "description": "Minimum member symbols/files required per cluster (default: 1)"
+                },
+                "max_iterations": {
+                    "type": "integer",
+                    "description": "Maximum LPA convergence iterations (default: 25)"
+                }
+            }
+        })
+    }
+
+    async fn execute(&self, params: serde_json::Value) -> Result<serde_json::Value, StrataError> {
+        let path_str = params.get("path").and_then(|v| v.as_str()).unwrap_or(".");
+        let ws_id = params.get("workspace_id").and_then(|v| v.as_str()).unwrap_or("default");
+        let min_cluster_size = params.get("min_cluster_size").and_then(|v| v.as_u64()).unwrap_or(1) as usize;
+        let max_iter = params.get("max_iterations").and_then(|v| v.as_u64()).unwrap_or(25) as usize;
+
+        let config = strata_memory::ClusteringConfig {
+            max_iterations: max_iter,
+            min_cluster_size,
+            call_weight: 1.5,
+            import_weight: 1.0,
+        };
+
+        let detector = strata_memory::CommunityDetector::new(config);
+        let summary = detector.detect_from_directory(std::path::Path::new(path_str), ws_id)?;
+
+        Ok(json!({
+            "status": "success",
+            "workspace_id": summary.workspace_id,
+            "total_nodes": summary.total_nodes,
+            "total_edges": summary.total_edges,
+            "modularity": summary.modularity,
+            "cross_cluster_edges_count": summary.cross_cluster_edges_count,
+            "clusters_count": summary.clusters.len(),
+            "clusters": summary.clusters,
+            "formatted_summary": summary.formatted_summary
+        }))
+    }
+}
+
+
 
 
 
