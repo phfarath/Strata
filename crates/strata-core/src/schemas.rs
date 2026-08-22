@@ -263,6 +263,8 @@ pub struct SemanticFact {
     pub tags: Vec<String>,
     #[serde(default)]
     pub code_anchor: Option<CodeAnchor>,
+    #[serde(default)]
+    pub depends_on: Vec<Uuid>,
 }
 
 impl SemanticFact {
@@ -286,6 +288,25 @@ impl SemanticFact {
             replaced_by: None,
             tags: Vec::new(),
             code_anchor: None,
+            depends_on: Vec::new(),
+        }
+    }
+
+    pub fn with_depends_on(mut self, depends_on: Vec<Uuid>) -> Self {
+        self.depends_on = depends_on;
+        self
+    }
+
+    pub fn with_dependency(mut self, prerequisite_id: Uuid) -> Self {
+        if !self.depends_on.contains(&prerequisite_id) {
+            self.depends_on.push(prerequisite_id);
+        }
+        self
+    }
+
+    pub fn add_dependency(&mut self, prerequisite_id: Uuid) {
+        if !self.depends_on.contains(&prerequisite_id) {
+            self.depends_on.push(prerequisite_id);
         }
     }
 
@@ -1456,6 +1477,85 @@ impl CodeAnchor {
 
     pub fn is_active(&self) -> bool {
         self.is_active_at(Utc::now())
+    }
+}
+
+/// Audit record capturing every JTMS belief revision and contradiction resolution event.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct JtmsAuditRow {
+    pub id: Uuid,
+    pub winning_fact_id: Uuid,
+    pub losing_fact_id: Uuid,
+    pub resolution_type: String,
+    pub reason: String,
+    #[serde(default)]
+    pub contradiction_cues: Vec<String>,
+    #[serde(default)]
+    pub similarity: f32,
+    pub timestamp: DateTime<Utc>,
+    #[serde(default)]
+    pub metadata: serde_json::Value,
+}
+
+impl JtmsAuditRow {
+    pub fn new(
+        winning_fact_id: Uuid,
+        losing_fact_id: Uuid,
+        resolution_type: impl Into<String>,
+        reason: impl Into<String>,
+    ) -> Self {
+        Self {
+            id: Uuid::new_v4(),
+            winning_fact_id,
+            losing_fact_id,
+            resolution_type: resolution_type.into(),
+            reason: reason.into(),
+            contradiction_cues: Vec::new(),
+            similarity: 0.0,
+            timestamp: Utc::now(),
+            metadata: serde_json::json!({}),
+        }
+    }
+
+    pub fn with_cues(mut self, cues: Vec<String>) -> Self {
+        self.contradiction_cues = cues;
+        self
+    }
+
+    pub fn with_similarity(mut self, similarity: f32) -> Self {
+        self.similarity = similarity;
+        self
+    }
+
+    pub fn with_metadata(mut self, metadata: serde_json::Value) -> Self {
+        self.metadata = metadata;
+        self
+    }
+}
+
+/// Explicit dependency edge between semantic facts in the JTMS belief graph.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct FactDependency {
+    pub id: Uuid,
+    pub dependent_fact_id: Uuid,
+    pub prerequisite_fact_id: Uuid,
+    pub dependency_type: String,
+    pub created_at: DateTime<Utc>,
+}
+
+impl FactDependency {
+    pub fn new(
+        dependent_fact_id: Uuid,
+        prerequisite_fact_id: Uuid,
+        dependency_type: impl Into<String>,
+    ) -> Self {
+        Self {
+            id: Uuid::new_v4(),
+            dependent_fact_id,
+            prerequisite_fact_id,
+            dependency_type: dependency_type.into(),
+            created_at: Utc::now(),
+        }
     }
 }
 

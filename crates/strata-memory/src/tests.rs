@@ -13,7 +13,7 @@ use strata_core::schemas::{
 };
 
 use strata_core::state::{
-    FailureSeverity, MemoryRecord, MemoryType, Scope,
+    FailureSeverity, MemoryRecord, MemoryTier, MemoryType, Scope,
 };
 use strata_core::traits::{EventStore, MemoryEngine};
 
@@ -1848,6 +1848,188 @@ async fn test_reconciliation_idempotence_on_clean_workspace() {
 
     let fact_after = store.get_semantic_fact(&fact.id).unwrap().unwrap();
     assert_eq!(fact_after.status, FactStatus::Active);
+}
+
+#[tokio::test]
+async fn test_jtms_v2_replay_consistency() {
+    let embedder = MockEmbeddingProvider::default();
+    let jtms = TruthMaintenanceSystem::with_default_threshold();
+
+    let stmt_1 = "The backend microservices communication layer is implemented using REST JSON APIs.";
+    let stmt_2 = "The backend microservices communication layer is migrated to gRPC Protobuf, deprecating REST JSON APIs.";
+
+    let emb_1 = embedder.embed_text(stmt_1).await.unwrap();
+    let emb_2 = embedder.embed_text(stmt_2).await.unwrap();
+
+    // Order 1: Ingest Fact 1, then Fact 2
+    let store_a = SqliteStore::open_in_memory().unwrap();
+    let mut fact1_a = SemanticFact::new(stmt_1, "architecture", Scope::Global)
+        .with_importance(0.8)
+        .with_confidence(0.9);
+    fact1_a.created_at = Utc::now() - chrono::Duration::hours(2);
+
+    let mut fact2_a = SemanticFact::new(stmt_2, "architecture", Scope::Global)
+        .with_importance(0.9)
+        .with_confidence(0.95);
+    fact2_a.created_at = Utc::now();
+
+    jtms.resolve_and_upsert(&store_a, &mut fact1_a, &emb_1).unwrap();
+    jtms.resolve_and_upsert(&store_a, &mut fact2_a, &emb_2).unwrap();
+
+    // Order 2: Ingest Fact 2, then Fact 1
+    let store_b = SqliteStore::open_in_memory().unwrap();
+    let mut fact1_b = SemanticFact::new(stmt_1, "architecture", Scope::Global)
+        .with_importance(0.8)
+        .with_confidence(0.9)
+        .with_id(fact1_a.id);
+    fact1_b.created_at = fact1_a.created_at;
+
+    let mut fact2_b = SemanticFact::new(stmt_2, "architecture", Scope::Global)
+        .with_importance(0.9)
+        .with_confidence(0.95)
+        .with_id(fact2_a.id);
+    fact2_b.created_at = fact2_a.created_at;
+
+    jtms.resolve_and_upsert(&store_b, &mut fact2_b, &emb_2).unwrap();
+    jtms.resolve_and_upsert(&store_b, &mut fact1_b, &emb_1).unwrap();
+
+    // Verify Store A and Store B state parity
+    let final1_a = store_a.get_semantic_fact(&fact1_a.id).unwrap().unwrap();
+    let final2_a = store_a.get_semantic_fact(&fact2_a.id).unwrap().unwrap();
+
+    let final1_b = store_b.get_semantic_fact(&fact1_b.id).unwrap().unwrap();
+    let final2_b = store_b.get_semantic_fact(&fact2_b.id).unwrap().unwrap();
+
+    assert_eq!(final1_a.status, FactStatus::Deprecated);
+    assert_eq!(final1_b.status, FactStatus::Deprecated);
+    assert_eq!(final1_a.replaced_by, Some(fact2_a.id));
+    assert_eq!(final1_b.replaced_by, Some(fact2_b.id));
+
+    assert_eq!(final2_a.status, FactStatus::Active);
+    assert_eq!(final2_b.status, FactStatus::Active);
+}
+
+#[tokio::test]
+async fn test_jtms_v2_downstream_invalidation_propagation() {
+    let store = SqliteStore::open_in_memory().unwrap();
+    let embedder = MockEmbeddingProvider::default();
+    let jtms = TruthMaintenanceSystem::with_default_threshold();
+
+    // 1. Fact A: PostgreSQL is the primary database
+    let stmt_a = "PostgreSQL is the primary database.";
+    let emb_a = embedder.embed_text(stmt_a).await.unwrap();
+    let mut fact_a = SemanticFact::new(stmt_a, "database", Scope::Global);
+    fact_a.created_at = Utc::now() - chrono::Duration::hours(3);
+    jtms.resolve_and_upsert(&store, &mut fact_a, &emb_a).unwrap();
+
+    // 2. Fact B: Sqlx connection pool is configured for PostgreSQL (depends on A)
+    let stmt_b = "Sqlx pool is connected to PostgreSQL on port 5432.";
+    let emb_b = embedder.embed_text(stmt_b).await.unwrap();
+    let mut fact_b = SemanticFact::new(stmt_b, "database", Scope::Global)
+        .with_dependency(fact_a.id);
+    fact_b.created_at = Utc::now() - chrono::Duration::hours(2);
+    jtms.resolve_and_upsert(&store, &mut fact_b, &emb_b).unwrap();
+
+    // 3. Fact C: User repository utilizes Sqlx pool (depends on B)
+    let stmt_c = "User repository executes queries via Sqlx connection pool.";
+    let emb_c = embedder.embed_text(stmt_c).await.unwrap();
+    let mut fact_c = SemanticFact::new(stmt_c, "repository", Scope::Global)
+        .with_dependency(fact_b.id);
+    fact_c.created_at = Utc::now() - chrono::Duration::hours(1);
+    jtms.resolve_and_upsert(&store, &mut fact_c, &emb_c).unwrap();
+
+    assert!(jtms.is_belief_valid(&store, &fact_a.id).unwrap());
+    assert!(jtms.is_belief_valid(&store, &fact_b.id).unwrap());
+    assert!(jtms.is_belief_valid(&store, &fact_c.id).unwrap());
+
+    // 4. Ingest superseding Fact A2: Database migrated to MySQL
+    let stmt_a2 = "Primary database is migrated to MySQL, deprecating PostgreSQL.";
+    let emb_a2 = embedder.embed_text(stmt_a2).await.unwrap();
+    let mut fact_a2 = SemanticFact::new(stmt_a2, "database", Scope::Global);
+    fact_a2.created_at = Utc::now();
+    jtms.resolve_and_upsert(&store, &mut fact_a2, &emb_a2).unwrap();
+
+    // Check statuses
+    let fact_a_res = store.get_semantic_fact(&fact_a.id).unwrap().unwrap();
+    let fact_a2_res = store.get_semantic_fact(&fact_a2.id).unwrap().unwrap();
+    let fact_b_res = store.get_semantic_fact(&fact_b.id).unwrap().unwrap();
+    let fact_c_res = store.get_semantic_fact(&fact_c.id).unwrap().unwrap();
+
+    assert_eq!(fact_a2_res.status, FactStatus::Active);
+    assert_eq!(fact_a_res.status, FactStatus::Deprecated);
+    assert_eq!(fact_b_res.status, FactStatus::Stale);
+    assert_eq!(fact_c_res.status, FactStatus::Stale);
+
+    // Check audits
+    let audits_b = store.get_jtms_audits_for_fact(&fact_b.id).unwrap();
+    assert!(!audits_b.is_empty());
+    assert_eq!(audits_b[0].resolution_type, "invalidation");
+
+    let audits_c = store.get_jtms_audits_for_fact(&fact_c.id).unwrap();
+    assert!(!audits_c.is_empty());
+    assert_eq!(audits_c[0].resolution_type, "invalidation");
+}
+
+#[tokio::test]
+async fn test_jtms_v2_core_tier_and_human_approval_authority() {
+    let store = SqliteStore::open_in_memory().unwrap();
+    let embedder = MockEmbeddingProvider::default();
+    let jtms = TruthMaintenanceSystem::with_default_threshold();
+
+    // Fact 1: Core Tier + Human Approved
+    let stmt_1 = "Auth tokens must use asymmetric RS256 algorithm with public key verification.";
+    let emb_1 = embedder.embed_text(stmt_1).await.unwrap();
+    let mut fact1 = SemanticFact::new(stmt_1, "security", Scope::Global)
+        .with_tier(MemoryTier::Core)
+        .with_human_approval(true);
+    fact1.created_at = Utc::now() - chrono::Duration::days(10);
+    jtms.resolve_and_upsert(&store, &mut fact1, &emb_1).unwrap();
+
+    // Fact 2: Peripheral Tier + Unapproved, chronologically newer
+    let stmt_2 = "Auth tokens are configured to use symmetric HS256 algorithm instead of RS256.";
+    let emb_2 = embedder.embed_text(stmt_2).await.unwrap();
+    let mut fact2 = SemanticFact::new(stmt_2, "security", Scope::Global)
+        .with_tier(MemoryTier::Peripheral)
+        .with_human_approval(false);
+    fact2.created_at = Utc::now();
+
+    jtms.resolve_and_upsert(&store, &mut fact2, &emb_2).unwrap();
+
+    // Core Tier fact with human approval should WIN and reject Fact 2
+    let fact1_res = store.get_semantic_fact(&fact1.id).unwrap().unwrap();
+    let fact2_res = store.get_semantic_fact(&fact2.id).unwrap().unwrap();
+
+    assert_eq!(fact1_res.status, FactStatus::Active);
+    assert_eq!(fact2_res.status, FactStatus::Deprecated);
+    assert_eq!(fact2_res.replaced_by, Some(fact1.id));
+}
+
+#[tokio::test]
+async fn test_jtms_v2_orthogonal_coexistence_no_false_conflicts() {
+    let store = SqliteStore::open_in_memory().unwrap();
+    let embedder = MockEmbeddingProvider::default();
+    let jtms = TruthMaintenanceSystem::with_default_threshold();
+
+    let stmt_fe = "The frontend user interface is built using React and Tailwind CSS.";
+    let stmt_be = "The backend microservice server is built using Rust Axum and Tokio.";
+
+    let emb_fe = embedder.embed_text(stmt_fe).await.unwrap();
+    let emb_be = embedder.embed_text(stmt_be).await.unwrap();
+
+    let mut fact_fe = SemanticFact::new(stmt_fe, "stack", Scope::Global);
+    let mut fact_be = SemanticFact::new(stmt_be, "stack", Scope::Global);
+
+    let conf_fe = jtms.resolve_and_upsert(&store, &mut fact_fe, &emb_fe).unwrap();
+    let conf_be = jtms.resolve_and_upsert(&store, &mut fact_be, &emb_be).unwrap();
+
+    assert!(conf_fe.is_empty());
+    assert!(conf_be.is_empty());
+
+    let res_fe = store.get_semantic_fact(&fact_fe.id).unwrap().unwrap();
+    let res_be = store.get_semantic_fact(&fact_be.id).unwrap().unwrap();
+
+    assert_eq!(res_fe.status, FactStatus::Active);
+    assert_eq!(res_be.status, FactStatus::Active);
 }
 
 
