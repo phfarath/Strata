@@ -449,7 +449,9 @@ impl SqliteStore {
                 chosen TEXT NOT NULL,
                 rejected TEXT NOT NULL,
                 source_session_id TEXT NOT NULL,
-                created_at TEXT NOT NULL
+                created_at TEXT NOT NULL,
+                oracle_verified INTEGER DEFAULT 0,
+                verification_source TEXT
             );
 
             CREATE INDEX IF NOT EXISTS idx_pref_pairs_session ON preference_pairs(source_session_id);
@@ -486,13 +488,15 @@ impl SqliteStore {
         )
         .map_err(|e| StrataError::Database(format!("Failed to execute schema migration: {e}")))?;
 
-        // Safe migration for existing databases: add code_anchor_json, tier, and approved_by_human if not exists
+        // Safe migration for existing databases: add code_anchor_json, tier, approved_by_human, oracle_verified if not exists
         let _ = conn.execute("ALTER TABLE semantic_facts ADD COLUMN code_anchor_json TEXT DEFAULT NULL", []);
         let _ = conn.execute("ALTER TABLE memories ADD COLUMN tier TEXT NOT NULL DEFAULT 'peripheral'", []);
         let _ = conn.execute("ALTER TABLE semantic_facts ADD COLUMN tier TEXT NOT NULL DEFAULT 'peripheral'", []);
         let _ = conn.execute("ALTER TABLE memories ADD COLUMN approved_by_human INTEGER NOT NULL DEFAULT 0", []);
         let _ = conn.execute("ALTER TABLE semantic_facts ADD COLUMN approved_by_human INTEGER NOT NULL DEFAULT 0", []);
         let _ = conn.execute("ALTER TABLE cold_storage_memories ADD COLUMN approved_by_human INTEGER NOT NULL DEFAULT 0", []);
+        let _ = conn.execute("ALTER TABLE preference_pairs ADD COLUMN oracle_verified INTEGER DEFAULT 0", []);
+        let _ = conn.execute("ALTER TABLE preference_pairs ADD COLUMN verification_source TEXT", []);
 
         Ok(())
     }
@@ -3087,11 +3091,12 @@ impl SqliteStore {
 
         let id_str = pair.id.to_string();
         let ts_str = pair.created_at.to_rfc3339();
+        let oracle_verified_int = if pair.oracle_verified { 1 } else { 0 };
 
         conn.execute(
             "INSERT INTO preference_pairs (
-                id, prompt, chosen, rejected, source_session_id, created_at
-            ) VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
+                id, prompt, chosen, rejected, source_session_id, created_at, oracle_verified, verification_source
+            ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)",
             params![
                 id_str,
                 pair.prompt,
@@ -3099,6 +3104,8 @@ impl SqliteStore {
                 pair.rejected,
                 pair.source_session_id,
                 ts_str,
+                oracle_verified_int,
+                pair.verification_source,
             ],
         )
         .map_err(|e| StrataError::Database(format!("Failed to insert preference pair: {e}")))?;
@@ -3132,6 +3139,9 @@ impl SqliteStore {
             let created_at = DateTime::parse_from_rfc3339(&created_at_str)
                 .map(|dt| dt.with_timezone(&Utc))
                 .unwrap_or_else(|_| Utc::now());
+            let oracle_verified_int: Option<i64> = row.get(6).ok();
+            let oracle_verified = oracle_verified_int.map(|v| v != 0).unwrap_or(false);
+            let verification_source: Option<String> = row.get(7).ok().flatten();
 
             Ok(PreferencePair {
                 id,
@@ -3140,6 +3150,8 @@ impl SqliteStore {
                 rejected,
                 source_session_id,
                 created_at,
+                oracle_verified,
+                verification_source,
             })
         };
 
@@ -3147,7 +3159,7 @@ impl SqliteStore {
         if let Some(sid) = session_id {
             let mut stmt = conn
                 .prepare(
-                    "SELECT id, prompt, chosen, rejected, source_session_id, created_at
+                    "SELECT id, prompt, chosen, rejected, source_session_id, created_at, oracle_verified, verification_source
                      FROM preference_pairs
                      WHERE source_session_id = ?1
                      ORDER BY created_at DESC",
@@ -3164,7 +3176,7 @@ impl SqliteStore {
         } else {
             let mut stmt = conn
                 .prepare(
-                    "SELECT id, prompt, chosen, rejected, source_session_id, created_at
+                    "SELECT id, prompt, chosen, rejected, source_session_id, created_at, oracle_verified, verification_source
                      FROM preference_pairs
                      ORDER BY created_at DESC",
                 )

@@ -10,6 +10,7 @@ use strata_core::schemas::{
 use strata_core::state::Scope;
 use strata_core::traits::ReasoningEngine;
 
+use crate::ast::CodeAnchorEngine;
 use crate::decay::DecayCalculator;
 use crate::embedding::EmbeddingProvider;
 use crate::jtms::TruthMaintenanceSystem;
@@ -24,6 +25,9 @@ pub struct PipelineConfig {
     pub enable_jtms: bool,
     /// Whether to run mathematical decay pruning after consolidation
     pub enable_decay_pruning: bool,
+    /// Whether to run automatic code anchor reconciliation
+    #[serde(default)]
+    pub enable_code_reconciliation: bool,
     /// Optional custom pruning threshold override
     pub prune_threshold: Option<f32>,
     /// Decay calculator configuration
@@ -38,6 +42,7 @@ impl Default for PipelineConfig {
             min_salience_threshold: 0.2,
             enable_jtms: true,
             enable_decay_pruning: true,
+            enable_code_reconciliation: false,
             prune_threshold: None,
             decay_config: DecayConfig::default(),
             jtms_similarity_threshold: 0.85,
@@ -55,6 +60,8 @@ pub struct ConsolidationResult {
     pub procedural_skills: Vec<ProceduralSkill>,
     pub conflicts_resolved: usize,
     pub memories_pruned: usize,
+    pub facts_stale: usize,
+    pub facts_suspicious: usize,
     pub events_processed: usize,
 }
 
@@ -63,16 +70,19 @@ pub struct ConsolidationPipeline {
     pub config: PipelineConfig,
     pub jtms: TruthMaintenanceSystem,
     pub decay: DecayCalculator,
+    pub anchor_engine: CodeAnchorEngine,
 }
 
 impl ConsolidationPipeline {
     pub fn new(config: PipelineConfig) -> Self {
         let jtms = TruthMaintenanceSystem::new(config.jtms_similarity_threshold);
         let decay = DecayCalculator::new(config.decay_config.clone());
+        let anchor_engine = CodeAnchorEngine::new();
         Self {
             config,
             jtms,
             decay,
+            anchor_engine,
         }
     }
 
@@ -511,5 +521,18 @@ impl ConsolidationPipeline {
         }
 
         Ok(total)
+    }
+
+    /// Reconciles code-anchored semantic facts in the store against a workspace on disk.
+    pub async fn reconcile_code_anchors(
+        &self,
+        store: &SqliteStore,
+        workspace_root: &std::path::Path,
+        git_commit_hash: Option<&str>,
+        world_model: Option<&strata_reasoning::WorldModel>,
+    ) -> Result<crate::ast::ReconciliationReport, StrataError> {
+        self.anchor_engine
+            .reconcile_workspace_dir(store, workspace_root, git_commit_hash, world_model)
+            .await
     }
 }

@@ -9,8 +9,12 @@ import {
   MemoryRecord,
 } from './types';
 
-// Default production endpoint
-const DEFAULT_API_URL = 'https://strata.pedrofarath.me';
+// Default endpoint resolution (environment variable -> localhost fallback -> production)
+const DEFAULT_API_URL =
+  (import.meta as any).env?.VITE_API_URL ||
+  (typeof window !== 'undefined' && (window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1')
+    ? `${window.location.protocol}//${window.location.hostname}:8080`
+    : 'https://strata.pedrofarath.me');
 
 export class StrataApiClient {
   private baseUrl: string;

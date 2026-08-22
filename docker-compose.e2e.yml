@@ -1,8 +1,8 @@
 services:
-  # PostgreSQL with pgvector extension (mirrors Supabase / Railway Postgres cloud database)
+  # 1. PostgreSQL 16 with pgvector extension (mirrors cloud Supabase/Railway)
   db:
     image: pgvector/pgvector:pg16
-    container_name: strata-db
+    container_name: strata-db-e2e
     restart: unless-stopped
     environment:
       POSTGRES_DB: strata_cloud
@@ -11,21 +11,21 @@ services:
     ports:
       - "5432:5432"
     volumes:
-      - pgdata:/var/lib/postgresql/data
+      - pgdata_e2e:/var/lib/postgresql/data
       - ./docker/init.sql:/docker-entrypoint-initdb.d/init.sql
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U postgres -d strata_cloud"]
-      interval: 3s
-      timeout: 3s
+      interval: 2s
+      timeout: 2s
       retries: 10
       start_period: 2s
 
-  # Strata Cloud Sync & Multi-Device SaaS Server (mirrors Railway / Cloud deployment)
+  # 2. Strata Cloud Sync & Multi-Device SaaS Server
   server:
     build:
       context: .
       dockerfile: Dockerfile
-    container_name: strata-server
+    container_name: strata-server-e2e
     restart: unless-stopped
     depends_on:
       db:
@@ -33,25 +33,25 @@ services:
     ports:
       - "8080:8080"
     environment:
-      DATABASE_URL: ${DATABASE_URL:-postgres://postgres:postgres@db:5432/strata_cloud?sslmode=disable}
-      JWT_SECRET: ${JWT_SECRET:-dev-local-jwt-secret-dummy-key}
-      STRATA_SERVER_SECRET: ${STRATA_SERVER_SECRET:-dev-local-server-secret-dummy-key}
+      DATABASE_URL: postgres://postgres:postgres@db:5432/strata_cloud?sslmode=disable
+      JWT_SECRET: dev-local-jwt-secret-dummy-key
+      STRATA_SERVER_SECRET: dev-local-server-secret-dummy-key
       HOST: 0.0.0.0
       PORT: 8080
       RUST_LOG: strata_server=debug,tower_http=info
     healthcheck:
       test: ["CMD-SHELL", "curl -f http://localhost:8080/health || exit 1"]
-      interval: 5s
+      interval: 3s
       timeout: 3s
-      retries: 5
-      start_period: 5s
+      retries: 10
+      start_period: 3s
 
-  # Strata React Web Dashboard
+  # 3. Strata React Vite Web UI
   web:
     build:
       context: ./web
       dockerfile: Dockerfile.web
-    container_name: strata-web
+    container_name: strata-web-e2e
     restart: unless-stopped
     depends_on:
       server:
@@ -68,5 +68,5 @@ services:
       start_period: 3s
 
 volumes:
-  pgdata:
+  pgdata_e2e:
     driver: local

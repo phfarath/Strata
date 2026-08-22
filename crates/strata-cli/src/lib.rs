@@ -212,6 +212,142 @@ pub fn process_data(msg: &str) {
         assert_eq!(fetched_mem.tier, MemoryTier::Core);
         assert!(fetched_mem.approved_by_human);
     }
+
+    #[tokio::test]
+    async fn test_cli_export_command_with_require_verified() {
+        use strata_core::schemas::PreferencePair;
+        use crate::commands::export::{run_export, ExportArgs};
+
+        let temp_dir = std::env::temp_dir().join(format!("strata_cli_export_test_{}", uuid::Uuid::new_v4()));
+        let _ = std::fs::create_dir_all(&temp_dir);
+
+        let store = Arc::new(SqliteStore::open_in_memory().unwrap());
+
+        // Seed 1 verified pair and 1 unverified pair
+        let verified_pair = PreferencePair::new(
+            "Compile error: borrow checker",
+            "Use clone or scoped block",
+            "Use unsafe transmute",
+            "sess-cli-export",
+        )
+        .with_verification(true, Some("cargo_test_oracle".to_string()));
+        store.record_preference_pair(&verified_pair).expect("record verified");
+
+        let unverified_pair = PreferencePair::new(
+            "Unverified experiment",
+            "Try random change",
+            "Do nothing",
+            "sess-cli-export",
+        )
+        .with_verification(false, None);
+        store.record_preference_pair(&unverified_pair).expect("record unverified");
+
+        let out_verified = temp_dir.join("verified.jsonl");
+        let out_all = temp_dir.join("all.jsonl");
+
+        // 1. Export with require_verified = true (default)
+        let args_verified = ExportArgs {
+            format: "dpo".to_string(),
+            out: Some(out_verified.clone()),
+            scope: None,
+            session: Some("sess-cli-export".to_string()),
+            require_verified: true,
+        };
+        let res_v = run_export(args_verified, Arc::clone(&store)).await;
+        assert!(res_v.is_ok(), "Gated export must succeed");
+
+        let content_v = std::fs::read_to_string(&out_verified).expect("read verified output");
+        let lines_v: Vec<&str> = content_v.lines().filter(|l| !l.trim().is_empty()).collect();
+        assert_eq!(lines_v.len(), 1, "Only verified pairs should be exported when require_verified is true");
+        let p_v: PreferencePair = serde_json::from_str(lines_v[0]).expect("parse json line");
+        assert!(p_v.oracle_verified);
+        assert_eq!(p_v.verification_source.as_deref(), Some("cargo_test_oracle"));
+
+        // 2. Export with require_verified = false (unrestricted)
+        let args_all = ExportArgs {
+            format: "dpo".to_string(),
+            out: Some(out_all.clone()),
+            scope: None,
+            session: Some("sess-cli-export".to_string()),
+            require_verified: false,
+        };
+        let res_all = run_export(args_all, Arc::clone(&store)).await;
+        assert!(res_all.is_ok(), "Unrestricted export must succeed");
+
+        let content_all = std::fs::read_to_string(&out_all).expect("read all output");
+        let lines_all: Vec<&str> = content_all.lines().filter(|l| !l.trim().is_empty()).collect();
+        assert_eq!(lines_all.len(), 2, "Both verified and unverified pairs should be exported when require_verified is false");
+
+        let _ = std::fs::remove_dir_all(&temp_dir);
+    }
+
+    #[tokio::test]
+    async fn test_cli_reconcile_command() {
+        use crate::commands::reconcile::{run_reconcile, ReconcileArgs};
+        use strata_core::schemas::{FactStatus, SemanticFact};
+        use strata_core::state::Scope;
+        use strata_memory::{AstParser, CodeAnchorEngine};
+
+        let temp_dir = std::env::temp_dir().join(format!("strata_cli_reconcile_test_{}", uuid::Uuid::new_v4()));
+        let src_dir = temp_dir.join("src");
+        let _ = std::fs::create_dir_all(&src_dir);
+
+        let file_path = src_dir.join("service.rs");
+        let initial_code = r#"
+            pub fn handle_request(req_id: &str) -> bool {
+                !req_id.is_empty()
+            }
+        "#;
+        std::fs::write(&file_path, initial_code).expect("write file");
+
+        let store = Arc::new(SqliteStore::open_in_memory().unwrap());
+        let parser = AstParser::new();
+        let engine = CodeAnchorEngine::new();
+
+        let sym = &parser.parse_file("src/service.rs", initial_code).unwrap()[0];
+        let anchor = engine.create_anchor("src/service.rs", sym, Some("commit-1"));
+
+        let fact = SemanticFact::new("handle_request validates non-empty request IDs", "api", Scope::Global)
+            .with_code_anchor(anchor);
+        store.insert_or_update_semantic_fact(&fact).expect("insert fact");
+
+        // 1. Initial reconcile on clean directory -> Fact remains active
+        let args_clean = ReconcileArgs {
+            workspace: temp_dir.clone(),
+            commit: Some("commit-1".to_string()),
+            files: vec![],
+            json: true,
+        };
+        let res_clean = run_reconcile(args_clean, Arc::clone(&store)).await;
+        assert!(res_clean.is_ok());
+
+        let fact_clean = store.get_semantic_fact(&fact.id).unwrap().unwrap();
+        assert_eq!(fact_clean.status, FactStatus::Active);
+
+        // 2. Modify source file on disk
+        let modified_code = r#"
+            pub async fn handle_request(req_id: &str, auth: &str) -> Result<bool, String> {
+                Ok(true)
+            }
+        "#;
+        std::fs::write(&file_path, modified_code).expect("write modified");
+
+        let args_mod = ReconcileArgs {
+            workspace: temp_dir.clone(),
+            commit: Some("commit-2".to_string()),
+            files: vec![],
+            json: true,
+        };
+        let res_mod = run_reconcile(args_mod, Arc::clone(&store)).await;
+        assert!(res_mod.is_ok());
+
+        let fact_stale = store.get_semantic_fact(&fact.id).unwrap().unwrap();
+        assert_eq!(fact_stale.status, FactStatus::Stale);
+
+        let _ = std::fs::remove_dir_all(&temp_dir);
+    }
 }
+
+
 
 

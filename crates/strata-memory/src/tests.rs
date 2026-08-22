@@ -9,7 +9,7 @@ use strata_core::schemas::{
     CodeAnchor, ContextBudgetConfig, DecayConfig, EpisodicMemory, ExportFormat, FactStatus, FeedbackEvent,
     FeedbackRating, HostTargetConfig, ImplicitSignal, MemoryFeedback, ParameterDef,
     PreferencePair, ProceduralExample, ProceduralSkill, ProceduralStep, SemanticFact,
-    SignalKind, SignalScores, SymbolType, SyncConfig, SyncDelta,
+    SftSample, SignalKind, SignalScores, SymbolType, SyncConfig, SyncDelta,
 };
 
 use strata_core::state::{
@@ -939,6 +939,160 @@ async fn test_preference_miner_dpo_kto_sft_and_export() {
 }
 
 #[tokio::test]
+async fn test_oracle_verified_gating_and_metadata() {
+    use strata_core::state::FailurePattern;
+
+    let store = Arc::new(SqliteStore::open_in_memory().expect("init store"));
+
+    // 1. Explicit Preference Pairs: 1 Verified, 1 Unverified
+    let verified_pair = PreferencePair::new(
+        "Fix compiler lifetime error",
+        "Add explicit 'a lifetime bounds on struct references",
+        "Transmute to static reference using unsafe",
+        "sess-oracle-1",
+    )
+    .with_verification(true, Some("cargo_check_oracle".to_string()));
+    store.record_preference_pair(&verified_pair).expect("record verified pair");
+
+    let unverified_pair = PreferencePair::new(
+        "Suggest algorithm optimization",
+        "Rewrite with custom unsafe SIMD assembly",
+        "Keep scalar loop",
+        "sess-oracle-1",
+    )
+    .with_verification(false, None::<String>);
+    store.record_preference_pair(&unverified_pair).expect("record unverified pair");
+
+    // Verify SQLite roundtrip preserves metadata
+    let pairs_from_db = store.get_preference_pairs(Some("sess-oracle-1")).expect("get pairs");
+    assert_eq!(pairs_from_db.len(), 2);
+    let p_verified = pairs_from_db.iter().find(|p| p.oracle_verified).expect("find verified");
+    assert_eq!(p_verified.verification_source.as_deref(), Some("cargo_check_oracle"));
+    let p_unverified = pairs_from_db.iter().find(|p| !p.oracle_verified).expect("find unverified");
+    assert_eq!(p_unverified.verification_source, None);
+
+    // 2. Episodic Memories: 1 Verified (success = 0.95), 1 Unverified (success = 0.72)
+    let now = Utc::now();
+    let mut ep_high = EpisodicMemory::new(
+        "sess-oracle-1",
+        "agent-1",
+        "Fix broken unit tests in memory engine",
+        now,
+        now,
+    );
+    ep_high.goals = vec!["Pass all unit tests".to_string()];
+    ep_high.obstacles = vec!["Lock poisoned error in concurrent test".to_string()];
+    ep_high.outcomes = vec!["Replaced Mutex with parking_lot RwLock".to_string()];
+    ep_high.signals = SignalScores {
+        success: 0.95,
+        frustration: 0.0,
+        novelty: 0.5,
+        importance: 0.8,
+    };
+    store.insert_episodic_memory(&ep_high).expect("insert ep_high");
+
+    let mut ep_med = EpisodicMemory::new(
+        "sess-oracle-1",
+        "agent-1",
+        "Exploratory refactor of cache layer",
+        now,
+        now,
+    );
+    ep_med.goals = vec!["Explore cache strategies".to_string()];
+    ep_med.obstacles = vec!["Memory usage slightly increased".to_string()];
+    ep_med.outcomes = vec!["Partial LRU cache implemented".to_string()];
+    ep_med.signals = SignalScores {
+        success: 0.72,
+        frustration: 0.1,
+        novelty: 0.6,
+        importance: 0.5,
+    };
+    store.insert_episodic_memory(&ep_med).expect("insert ep_med");
+
+    // 3. Failure Patterns: 1 Verified (with mitigation), 1 Unverified (empty mitigation)
+    let mut fp_verified = FailurePattern::new(
+        "sig-borrow-mut",
+        "BorrowMutCollision",
+        "Multiple mutable borrows of same RefCell",
+        "Scope mutable borrow with explicit block or use RefCell::try_borrow_mut",
+    );
+    fp_verified.trigger_condition = "Calling borrow_mut twice in same scope".to_string();
+    store.upsert_failure_pattern(&fp_verified).expect("upsert fp_verified");
+
+    let mut fp_unverified = FailurePattern::new(
+        "sig-unknown-crash",
+        "MysteriousCrash",
+        "Unknown panic occurred in worker thread",
+        "", // empty mitigation
+    );
+    fp_unverified.trigger_condition = "Thread panic".to_string();
+    store.upsert_failure_pattern(&fp_unverified).expect("upsert fp_unverified");
+
+    // 4. Procedural Skills: 1 Verified (success_rate = 0.95), 1 Unverified (success_rate = 0.50)
+    let mut skill_verified = ProceduralSkill::new("fix_borrow_error", "Resolve RefCell borrow collisions");
+    skill_verified.success_rate = 0.95;
+    skill_verified.steps = vec![ProceduralStep::new(1, "rustc", "check", serde_json::json!({}))];
+    skill_verified.examples = vec![ProceduralExample::new("sess-oracle-1", "Passed cargo test")];
+    store.insert_or_update_procedural_skill(&skill_verified).expect("insert skill_verified");
+
+    let mut skill_unverified = ProceduralSkill::new("experimental_jit", "Experimental JIT compiler pass");
+    skill_unverified.success_rate = 0.50;
+    skill_unverified.steps = vec![ProceduralStep::new(1, "jit", "compile", serde_json::json!({}))];
+    store.insert_or_update_procedural_skill(&skill_unverified).expect("insert skill_unverified");
+
+    // 5. Test PreferenceMiner Gating
+    let miner = PreferenceMiner::new(Arc::clone(&store));
+
+    // DPO Gating Test
+    let all_dpo = miner.mine_dpo_pairs_filtered(Some("sess-oracle-1"), false).expect("mine all dpo");
+    let verified_dpo = miner.mine_dpo_pairs_filtered(Some("sess-oracle-1"), true).expect("mine verified dpo");
+    assert!(all_dpo.len() > verified_dpo.len(), "All DPO ({}) should be strictly greater than verified DPO ({})", all_dpo.len(), verified_dpo.len());
+    assert!(verified_dpo.iter().all(|p| p.oracle_verified), "Every pair in verified_dpo must have oracle_verified == true");
+    assert!(verified_dpo.iter().all(|p| p.verification_source.is_some()), "Every verified pair must have a verification_source");
+
+    // KTO Gating Test
+    let all_kto = miner.mine_kto_samples_filtered(Some("sess-oracle-1"), false).expect("mine all kto");
+    let verified_kto = miner.mine_kto_samples_filtered(Some("sess-oracle-1"), true).expect("mine verified kto");
+    assert!(all_kto.len() > verified_kto.len(), "All KTO ({}) should be greater than verified KTO ({})", all_kto.len(), verified_kto.len());
+    assert!(verified_kto.iter().all(|s| s.oracle_verified), "Every sample in verified_kto must have oracle_verified == true");
+
+    // SFT Gating Test
+    let all_sft = miner.mine_sft_samples_filtered(false).expect("mine all sft");
+    let verified_sft = miner.mine_sft_samples_filtered(true).expect("mine verified sft");
+    assert!(all_sft.len() > verified_sft.len(), "All SFT ({}) should be greater than verified SFT ({})", all_sft.len(), verified_sft.len());
+    assert!(verified_sft.iter().all(|s| s.oracle_verified), "Every sample in verified_sft must have oracle_verified == true");
+    assert!(verified_sft.iter().any(|s| s.instruction.contains("fix_borrow_error")));
+    assert!(!verified_sft.iter().any(|s| s.instruction.contains("experimental_jit")));
+
+    // 6. Test Exports with Gating
+    let dpo_jsonl_verified = miner.export_with_gating(ExportFormat::Dpo, Some("sess-oracle-1"), true).expect("export dpo verified");
+    for line in dpo_jsonl_verified.lines() {
+        let p: PreferencePair = serde_json::from_str(line).expect("deserialize dpo line");
+        assert!(p.oracle_verified, "Exported line must be oracle_verified");
+        assert!(p.verification_source.is_some(), "Exported line must have verification_source");
+    }
+
+    let dpo_jsonl_all = miner.export_with_gating(ExportFormat::Dpo, Some("sess-oracle-1"), false).expect("export dpo all");
+    let has_unverified_in_all = dpo_jsonl_all.lines().any(|line| {
+        let p: PreferencePair = serde_json::from_str(line).expect("deserialize dpo line");
+        !p.oracle_verified
+    });
+    assert!(has_unverified_in_all, "Unrestricted export must include unverified pairs");
+
+    // SFT JSONL gating
+    let sft_jsonl_verified = miner.export_with_gating(ExportFormat::Sft, None, true).expect("export sft verified");
+    for line in sft_jsonl_verified.lines() {
+        let s: SftSample = serde_json::from_str(line).expect("deserialize sft line");
+        assert!(s.oracle_verified, "Exported SFT sample must be oracle_verified");
+    }
+
+    // Markdown export gating
+    let md_verified = miner.export_with_gating(ExportFormat::Markdown, Some("sess-oracle-1"), true).expect("export md verified");
+    assert!(md_verified.contains("Oracle-Verified Only"));
+    assert!(md_verified.contains("Oracle Verification"));
+}
+
+#[tokio::test]
 async fn test_multi_host_compiler_context_and_sync() {
     use std::fs;
 
@@ -1410,6 +1564,292 @@ async fn test_hitl_core_tier_approval_and_promotion() {
     assert_eq!(persisted_fact.tier, MemoryTier::Core);
     assert!(persisted_fact.approved_by_human);
 }
+
+#[tokio::test]
+async fn test_ast_blake3_content_hashing_and_merkle_tree() {
+    let parser = AstParser::new();
+    let code_v1 = r#"
+        pub fn authenticate_user(token: &str) -> bool {
+            !token.is_empty()
+        }
+    "#;
+
+    let symbols = parser.parse_file("auth.rs", code_v1).expect("parse file");
+    assert_eq!(symbols.len(), 1);
+    let sym = &symbols[0];
+    assert_eq!(sym.name, "authenticate_user");
+    assert!(!sym.content_hash.is_empty(), "Blake3 content hash must be computed");
+    assert_eq!(sym.content_hash, AstParser::blake3_content_hash(&sym.raw_code));
+
+    // Whitespace line endings (\r\n vs \n) shouldn't change hash due to line normalization
+    let code_v1_crlf = code_v1.replace('\n', "\r\n");
+    let symbols_crlf = parser.parse_file("auth.rs", &code_v1_crlf).expect("parse crlf");
+    assert_eq!(symbols_crlf[0].content_hash, sym.content_hash);
+}
+
+#[tokio::test]
+async fn test_on_commit_reconciliation_stale_invalidation() {
+    let store = SqliteStore::open_in_memory().expect("open store");
+    let engine = CodeAnchorEngine::new();
+    let parser = AstParser::new();
+
+    let initial_code = r#"
+        pub fn process_payment(amount: u64) -> Result<(), String> {
+            Ok(())
+        }
+    "#;
+
+    let symbols = parser.parse_file("billing.rs", initial_code).expect("parse billing");
+    let anchor = engine.create_anchor("billing.rs", &symbols[0], Some("commit-1"));
+
+    let fact = SemanticFact::new(
+        "process_payment accepts u64 amount and returns synchronous Result",
+        "finance",
+        Scope::Project("strata".to_string()),
+    )
+    .with_importance(0.8)
+    .with_code_anchor(anchor);
+
+    store.insert_or_update_semantic_fact(&fact).expect("insert fact");
+
+    // Commit 2 alters the function body and signature
+    let modified_code = r#"
+        pub async fn process_payment(amount: u64, currency: &str) -> Result<(), PaymentError> {
+            Err(PaymentError::GatewayTimeout)
+        }
+    "#;
+
+    let workspace_files = [("billing.rs", modified_code)];
+    let report = engine
+        .reconcile_workspace_on_commit(&store, &workspace_files, Some("commit-2"), None)
+        .await
+        .expect("reconcile commit");
+
+    assert_eq!(report.stale_facts.len(), 1);
+    assert_eq!(report.stale_facts[0], fact.id);
+    assert_eq!(report.active_facts.len(), 0);
+
+    let updated_fact = store.get_semantic_fact(&fact.id).unwrap().unwrap();
+    assert_eq!(updated_fact.status, FactStatus::Stale);
+    assert!(updated_fact.is_stale());
+    assert!(!updated_fact.code_anchor.as_ref().unwrap().is_valid);
+}
+
+#[tokio::test]
+async fn test_blake3_fallback_tolerates_file_renames_and_symbol_relocation() {
+    let store = SqliteStore::open_in_memory().expect("open store");
+    let engine = CodeAnchorEngine::new();
+    let parser = AstParser::new();
+
+    let symbol_body = r#"
+        pub fn calculate_tax(subtotal: f64) -> f64 {
+            subtotal * 0.20
+        }
+    "#;
+
+    let symbols = parser.parse_file("legacy_tax.rs", symbol_body).expect("parse legacy tax");
+    let anchor = engine.create_anchor("legacy_tax.rs", &symbols[0], Some("commit-1"));
+
+    let fact = SemanticFact::new(
+        "calculate_tax applies standard 20% VAT rate",
+        "tax",
+        Scope::Project("strata".to_string()),
+    )
+    .with_importance(0.9)
+    .with_code_anchor(anchor);
+
+    store.insert_or_update_semantic_fact(&fact).expect("insert fact");
+
+    // File was moved/renamed to `crates/finance/src/vat.rs` but function body is 100% IDENTICAL
+    let workspace_files = [("crates/finance/src/vat.rs", symbol_body)];
+
+    let report = engine
+        .reconcile_workspace_on_commit(&store, &workspace_files, Some("commit-2"), None)
+        .await
+        .expect("reconcile renamed file");
+
+    assert_eq!(report.stale_facts.len(), 0, "Fact should NOT be stale because content is identical");
+    assert_eq!(report.moved_anchors.len(), 1, "Should detect relocated anchor via Blake3");
+    assert_eq!(report.moved_anchors[0], fact.id);
+    assert_eq!(report.active_facts.len(), 1);
+
+    let updated_fact = store.get_semantic_fact(&fact.id).unwrap().unwrap();
+    assert_eq!(updated_fact.status, FactStatus::Active);
+    let anc = updated_fact.code_anchor.unwrap();
+    assert_eq!(anc.file_path, "crates/finance/src/vat.rs");
+    assert_eq!(anc.symbol_path, "calculate_tax");
+    assert!(anc.is_valid);
+    assert_eq!(anc.git_commit_hash.as_deref(), Some("commit-2"));
+}
+
+#[tokio::test]
+async fn test_stale_fact_decay_boost_accelerated_pruning() {
+    let store = SqliteStore::open_in_memory().expect("open store");
+    let calc = DecayCalculator::with_default_config();
+
+    let now = Utc::now();
+    let old_time = now - Duration::hours(100);
+
+    // 1. Active fact with Core Tier
+    let mut active_fact = SemanticFact::new(
+        "Standard invariant rule",
+        "rules",
+        Scope::Global,
+    )
+    .with_importance(0.9)
+    .with_tier(strata_core::state::MemoryTier::Core);
+    active_fact.created_at = old_time;
+    active_fact.last_updated_at = old_time;
+    active_fact.status = FactStatus::Active;
+    store.insert_or_update_semantic_fact(&active_fact).expect("insert active");
+
+    // 2. Stale fact (previously Core, but anchor invalidated)
+    let mut stale_fact = SemanticFact::new(
+        "Outdated anchor fact",
+        "rules",
+        Scope::Global,
+    )
+    .with_importance(0.9)
+    .with_tier(strata_core::state::MemoryTier::Core);
+    stale_fact.created_at = old_time;
+    stale_fact.last_updated_at = old_time;
+    stale_fact.status = FactStatus::Stale;
+    store.insert_or_update_semantic_fact(&stale_fact).expect("insert stale");
+
+    // Evaluate decay metrics directly
+    let active_metrics = calc.evaluate_semantic_fact(&active_fact, &[], now);
+    let stale_metrics = calc.evaluate_semantic_fact(&stale_fact, &[], now);
+
+    assert_eq!(active_metrics.retention, 1.0, "Active Core fact has frozen retention");
+    assert!(stale_metrics.retention < 0.1, "Stale fact suffers boosted decay");
+    assert!(stale_metrics.is_expired, "Stale fact should be expired after 100 hours of inactivity");
+
+    // Pruning run
+    let report = calc.prune_expired(&store, Some(0.1), Some(now)).expect("prune expired");
+    assert_eq!(report.core_protected, 1, "Active Core fact was protected");
+    assert_eq!(report.facts_pruned, 1, "Stale fact was pruned to Deprecated");
+
+    let re_active = store.get_semantic_fact(&active_fact.id).unwrap().unwrap();
+    assert_eq!(re_active.status, FactStatus::Active);
+
+    let re_stale = store.get_semantic_fact(&stale_fact.id).unwrap().unwrap();
+    assert_eq!(re_stale.status, FactStatus::Deprecated);
+}
+
+#[tokio::test]
+async fn test_causal_blast_radius_suspicious_marking_on_commit() {
+    let store = SqliteStore::open_in_memory().expect("open store");
+    let engine = CodeAnchorEngine::new();
+    let parser = AstParser::new();
+
+    // Setup World Model with Causal Graph: storage.rs depends on db.rs
+    let world_model = strata_reasoning::WorldModel::new();
+    let _ = world_model.register_invariant("DB Connection Pool Invariant", "db must be pooling", "storage.rs").await;
+
+    let db_source = r#"
+        pub fn connect_db() -> bool {
+            true
+        }
+    "#;
+
+    let storage_source = r#"
+        pub fn save_record() -> bool {
+            true
+        }
+    "#;
+
+    let db_sym = &parser.parse_file("db.rs", db_source).unwrap()[0];
+    let storage_sym = &parser.parse_file("storage.rs", storage_source).unwrap()[0];
+
+    // Fact 1 anchored to db.rs
+    let fact_db = SemanticFact::new(
+        "connect_db initializes global connection pool",
+        "database",
+        Scope::Global,
+    )
+    .with_code_anchor(engine.create_anchor("db.rs", db_sym, Some("commit-1")));
+    store.insert_or_update_semantic_fact(&fact_db).unwrap();
+
+    // Fact 2 anchored to storage.rs which depends on db.rs
+    let fact_storage = SemanticFact::new(
+        "save_record writes entities through db.rs connection",
+        "storage",
+        Scope::Global,
+    )
+    .with_code_anchor(engine.create_anchor("storage.rs", storage_sym, Some("commit-1")));
+    store.insert_or_update_semantic_fact(&fact_storage).unwrap();
+
+    // Modify db.rs
+    let modified_db = r#"
+        pub async fn connect_db(url: &str) -> Result<(), String> {
+            Ok(())
+        }
+    "#;
+
+    let workspace_files = [("db.rs", modified_db), ("storage.rs", storage_source)];
+
+    let report = engine
+        .reconcile_workspace_on_commit(&store, &workspace_files, Some("commit-2"), Some(&world_model))
+        .await
+        .expect("reconcile commit");
+
+    // Fact 1 is stale (directly modified)
+    assert!(report.stale_facts.contains(&fact_db.id));
+
+    // Fact 2 is suspicious (statement references db.rs / blast radius)
+    assert!(report.suspicious_facts.contains(&fact_storage.id));
+
+    let f1 = store.get_semantic_fact(&fact_db.id).unwrap().unwrap();
+    let f2 = store.get_semantic_fact(&fact_storage.id).unwrap().unwrap();
+
+    assert_eq!(f1.status, FactStatus::Stale);
+    assert_eq!(f2.status, FactStatus::Suspicious);
+    assert!(f2.is_suspicious());
+}
+
+#[tokio::test]
+async fn test_reconciliation_idempotence_on_clean_workspace() {
+    let store = SqliteStore::open_in_memory().expect("open store");
+    let engine = CodeAnchorEngine::new();
+    let parser = AstParser::new();
+
+    let code = r#"
+        pub fn stable_logic() -> u32 {
+            42
+        }
+    "#;
+
+    let sym = &parser.parse_file("logic.rs", code).unwrap()[0];
+    let fact = SemanticFact::new("stable logic is 42", "math", Scope::Global)
+        .with_code_anchor(engine.create_anchor("logic.rs", sym, Some("commit-1")));
+    store.insert_or_update_semantic_fact(&fact).unwrap();
+
+    let workspace_files = [("logic.rs", code)];
+
+    // Pass 1
+    let rep1 = engine
+        .reconcile_workspace_on_commit(&store, &workspace_files, Some("commit-1"), None)
+        .await
+        .unwrap();
+
+    assert_eq!(rep1.stale_facts.len(), 0);
+    assert_eq!(rep1.suspicious_facts.len(), 0);
+    assert_eq!(rep1.active_facts.len(), 1);
+
+    // Pass 2 (immediate re-run)
+    let rep2 = engine
+        .reconcile_workspace_on_commit(&store, &workspace_files, Some("commit-1"), None)
+        .await
+        .unwrap();
+
+    assert_eq!(rep2.stale_facts.len(), 0);
+    assert_eq!(rep2.suspicious_facts.len(), 0);
+    assert_eq!(rep2.active_facts.len(), 1);
+
+    let fact_after = store.get_semantic_fact(&fact.id).unwrap().unwrap();
+    assert_eq!(fact_after.status, FactStatus::Active);
+}
+
 
 
 

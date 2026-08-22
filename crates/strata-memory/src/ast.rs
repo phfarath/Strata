@@ -1,4 +1,5 @@
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
+use std::path::{Path, PathBuf};
 use chrono::Utc;
 use hex;
 use serde::{Deserialize, Serialize};
@@ -8,6 +9,7 @@ use uuid::Uuid;
 
 use strata_core::errors::StrataError;
 use strata_core::schemas::{CodeAnchor, FactStatus, SemanticFact, SymbolType};
+use crate::store::SqliteStore;
 
 /// Supported programming languages for structural AST indexing.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
@@ -54,6 +56,8 @@ pub struct ExtractedSymbol {
     pub raw_code: String,
     pub node_hash: String,
     #[serde(default)]
+    pub content_hash: String,
+    #[serde(default)]
     pub doc_comment: Option<String>,
 }
 
@@ -80,6 +84,16 @@ impl AstParser {
             hasher.update(b"\n");
         }
         hex::encode(hasher.finalize())
+    }
+
+    /// Computes deterministic Blake3 content hash of normalized symbol body.
+    pub fn blake3_content_hash(content: &str) -> String {
+        let mut hasher = blake3::Hasher::new();
+        for line in content.lines() {
+            hasher.update(line.trim_end().as_bytes());
+            hasher.update(b"\n");
+        }
+        hasher.finalize().to_hex().to_string()
     }
 
     /// Parses source code and returns all extracted structural symbols.
@@ -153,6 +167,7 @@ impl AstParser {
                             end_line: child.end_position().row as u32 + 1,
                             raw_code: raw_code.to_string(),
                             node_hash: Self::hash_content(raw_code),
+                            content_hash: Self::blake3_content_hash(raw_code),
                             doc_comment: None,
                         });
                     }
@@ -169,6 +184,7 @@ impl AstParser {
                             end_line: child.end_position().row as u32 + 1,
                             raw_code: raw_code.to_string(),
                             node_hash: Self::hash_content(raw_code),
+                            content_hash: Self::blake3_content_hash(raw_code),
                             doc_comment: None,
                         });
                     }
@@ -185,6 +201,7 @@ impl AstParser {
                             end_line: child.end_position().row as u32 + 1,
                             raw_code: raw_code.to_string(),
                             node_hash: Self::hash_content(raw_code),
+                            content_hash: Self::blake3_content_hash(raw_code),
                             doc_comment: None,
                         });
                     }
@@ -201,6 +218,7 @@ impl AstParser {
                             end_line: child.end_position().row as u32 + 1,
                             raw_code: raw_code.to_string(),
                             node_hash: Self::hash_content(raw_code),
+                            content_hash: Self::blake3_content_hash(raw_code),
                             doc_comment: None,
                         });
                     }
@@ -217,6 +235,7 @@ impl AstParser {
                             end_line: child.end_position().row as u32 + 1,
                             raw_code: raw_code.to_string(),
                             node_hash: Self::hash_content(raw_code),
+                            content_hash: Self::blake3_content_hash(raw_code),
                             doc_comment: None,
                         });
                     }
@@ -233,6 +252,7 @@ impl AstParser {
                             end_line: child.end_position().row as u32 + 1,
                             raw_code: raw_code.to_string(),
                             node_hash: Self::hash_content(raw_code),
+                            content_hash: Self::blake3_content_hash(raw_code),
                             doc_comment: None,
                         });
                     }
@@ -267,6 +287,7 @@ impl AstParser {
                                         end_line: item.end_position().row as u32 + 1,
                                         raw_code: raw_code.to_string(),
                                         node_hash: Self::hash_content(raw_code),
+                                        content_hash: Self::blake3_content_hash(raw_code),
                                         doc_comment: None,
                                     });
                                 }
@@ -311,6 +332,7 @@ impl AstParser {
                             end_line: target_node.end_position().row as u32 + 1,
                             raw_code: raw_code.to_string(),
                             node_hash: Self::hash_content(raw_code),
+                            content_hash: Self::blake3_content_hash(raw_code),
                             doc_comment: None,
                         });
                     }
@@ -327,6 +349,7 @@ impl AstParser {
                             end_line: target_node.end_position().row as u32 + 1,
                             raw_code: raw_code.to_string(),
                             node_hash: Self::hash_content(raw_code),
+                            content_hash: Self::blake3_content_hash(raw_code),
                             doc_comment: None,
                         });
 
@@ -345,6 +368,7 @@ impl AstParser {
                                             end_line: item.end_position().row as u32 + 1,
                                             raw_code: method_raw.to_string(),
                                             node_hash: Self::hash_content(method_raw),
+                                            content_hash: Self::blake3_content_hash(method_raw),
                                             doc_comment: None,
                                         });
                                     }
@@ -365,6 +389,7 @@ impl AstParser {
                             end_line: target_node.end_position().row as u32 + 1,
                             raw_code: raw_code.to_string(),
                             node_hash: Self::hash_content(raw_code),
+                            content_hash: Self::blake3_content_hash(raw_code),
                             doc_comment: None,
                         });
                     }
@@ -381,6 +406,7 @@ impl AstParser {
                             end_line: target_node.end_position().row as u32 + 1,
                             raw_code: raw_code.to_string(),
                             node_hash: Self::hash_content(raw_code),
+                            content_hash: Self::blake3_content_hash(raw_code),
                             doc_comment: None,
                         });
                     }
@@ -397,6 +423,7 @@ impl AstParser {
                             end_line: target_node.end_position().row as u32 + 1,
                             raw_code: raw_code.to_string(),
                             node_hash: Self::hash_content(raw_code),
+                            content_hash: Self::blake3_content_hash(raw_code),
                             doc_comment: None,
                         });
                     }
@@ -428,6 +455,7 @@ impl AstParser {
                             end_line: child.end_position().row as u32 + 1,
                             raw_code: raw_code.to_string(),
                             node_hash: Self::hash_content(raw_code),
+                            content_hash: Self::blake3_content_hash(raw_code),
                             doc_comment: None,
                         });
                     }
@@ -444,6 +472,7 @@ impl AstParser {
                             end_line: child.end_position().row as u32 + 1,
                             raw_code: raw_code.to_string(),
                             node_hash: Self::hash_content(raw_code),
+                            content_hash: Self::blake3_content_hash(raw_code),
                             doc_comment: None,
                         });
 
@@ -462,6 +491,7 @@ impl AstParser {
                                             end_line: item.end_position().row as u32 + 1,
                                             raw_code: method_raw.to_string(),
                                             node_hash: Self::hash_content(method_raw),
+                                            content_hash: Self::blake3_content_hash(method_raw),
                                             doc_comment: None,
                                         });
                                     }
@@ -488,9 +518,17 @@ pub struct AstDiffResult {
 /// Report resulting from bi-temporal fact reconciliation against current source code.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Default)]
 pub struct ReconciliationReport {
+    pub stale_facts: Vec<Uuid>,
+    pub suspicious_facts: Vec<Uuid>,
+    pub moved_anchors: Vec<Uuid>,
     pub invalidated_facts: Vec<Uuid>,
     pub updated_facts: Vec<Uuid>,
     pub active_facts: Vec<Uuid>,
+    pub total_facts_scanned: usize,
+    #[serde(default)]
+    pub merkle_root_before: Option<String>,
+    #[serde(default)]
+    pub merkle_root_after: Option<String>,
 }
 
 /// Engine managing Git Merkle Tree calculations and CodeAnchor lifecycle.
@@ -511,7 +549,7 @@ impl CodeAnchorEngine {
         }
     }
 
-    /// Creates a CodeAnchor for an extracted symbol with optional Git commit hash.
+    /// Creates a CodeAnchor for an extracted symbol with optional Git commit hash and Blake3 content hash.
     pub fn create_anchor(
         &self,
         file_path: &str,
@@ -526,6 +564,7 @@ impl CodeAnchorEngine {
             symbol.start_line,
             symbol.end_line,
         );
+        anchor.content_hash = Some(symbol.content_hash.clone());
         if let Some(commit) = git_commit_hash {
             anchor = anchor.with_git_commit(commit);
         }
@@ -639,6 +678,7 @@ impl CodeAnchorEngine {
                             fact.status = FactStatus::Deprecated;
                             fact.last_updated_at = Utc::now();
                             report.invalidated_facts.push(fact.id);
+                            report.stale_facts.push(fact.id);
                         } else {
                             report.active_facts.push(fact.id);
                         }
@@ -648,6 +688,7 @@ impl CodeAnchorEngine {
                         fact.status = FactStatus::Deprecated;
                         fact.last_updated_at = Utc::now();
                         report.invalidated_facts.push(fact.id);
+                        report.stale_facts.push(fact.id);
                     }
                 } else if anchor.is_valid {
                     report.active_facts.push(fact.id);
@@ -656,5 +697,316 @@ impl CodeAnchorEngine {
         }
 
         Ok(report)
+    }
+
+    /// Reconciles all code-anchored semantic facts in the SQLite store against the full workspace source files.
+    ///
+    /// Lifecycle execution:
+    /// 1. Merkle / AST comparison between anchored symbol version and current workspace ASTs.
+    /// 2. Fallback Blake3 (content-hash) matching to tolerate renames and file moves without invalidating facts if symbol body is identical.
+    /// 3. Direct transition of modified/deleted facts to `FactStatus::Stale` with anchor invalidation.
+    /// 4. Propagation of `FactStatus::Suspicious` to dependent facts via the Causal World Model blast radius.
+    /// 5. Persistent atomic update in SQLite store.
+    pub async fn reconcile_workspace_on_commit(
+        &self,
+        store: &SqliteStore,
+        workspace_files: &[(&str, &str)], // (relative_file_path, file_content)
+        git_commit_hash: Option<&str>,
+        world_model: Option<&strata_reasoning::WorldModel>,
+    ) -> Result<ReconciliationReport, StrataError> {
+        let mut exact_map: HashMap<(String, String), ExtractedSymbol> = HashMap::new();
+        let mut blake3_map: HashMap<String, Vec<(String, ExtractedSymbol)>> = HashMap::new();
+        let mut all_current_symbols: Vec<ExtractedSymbol> = Vec::new();
+
+        for &(path, content) in workspace_files {
+            let normalized_path = path.replace('\\', "/");
+            if let Ok(symbols) = self.parser.parse_file(&normalized_path, content) {
+                for sym in symbols {
+                    exact_map.insert((normalized_path.clone(), sym.symbol_path.clone()), sym.clone());
+                    blake3_map
+                        .entry(sym.content_hash.clone())
+                        .or_default()
+                        .push((normalized_path.clone(), sym.clone()));
+                    // Also index by node_hash for legacy fallback
+                    blake3_map
+                        .entry(sym.node_hash.clone())
+                        .or_default()
+                        .push((normalized_path.clone(), sym.clone()));
+                    all_current_symbols.push(sym);
+                }
+            }
+        }
+
+        let merkle_root_after = Self::compute_merkle_tree_hash(&all_current_symbols);
+
+        let mut facts = store.get_all_semantic_facts(None, None, 10000)?;
+        let mut report = ReconciliationReport {
+            total_facts_scanned: facts.len(),
+            merkle_root_after: Some(merkle_root_after),
+            ..Default::default()
+        };
+
+        let mut stale_targets: Vec<(Uuid, String, String)> = Vec::new();
+        let mut modified_fact_ids: HashSet<Uuid> = HashSet::new();
+
+        // 1. First pass: Reconcile code anchors
+        for fact in facts.iter_mut() {
+            if fact.code_anchor.is_none() {
+                continue;
+            }
+
+            let (is_valid, norm_anchor_path, symbol_path, ast_node_hash, content_hash) = {
+                let a = fact.code_anchor.as_ref().unwrap();
+                (
+                    a.is_valid,
+                    a.file_path.replace('\\', "/"),
+                    a.symbol_path.clone(),
+                    a.ast_node_hash.clone(),
+                    a.content_hash.clone(),
+                )
+            };
+
+            if !is_valid && (fact.status == FactStatus::Deprecated || fact.status == FactStatus::Stale) {
+                continue;
+            }
+
+            let lookup_key = (norm_anchor_path.clone(), symbol_path.clone());
+            if let Some(current_sym) = exact_map.get(&lookup_key) {
+                // Exact location matched!
+                if ast_node_hash == current_sym.node_hash
+                    || content_hash.as_deref() == Some(&current_sym.content_hash)
+                {
+                    // Symbol is intact & active
+                    let anchor = fact.code_anchor.as_mut().unwrap();
+                    let mut updated = false;
+                    if anchor.start_line != current_sym.start_line || anchor.end_line != current_sym.end_line {
+                        anchor.start_line = current_sym.start_line;
+                        anchor.end_line = current_sym.end_line;
+                        updated = true;
+                    }
+                    if anchor.content_hash.is_none() {
+                        anchor.content_hash = Some(current_sym.content_hash.clone());
+                        updated = true;
+                    }
+                    if let Some(commit) = git_commit_hash {
+                        if anchor.git_commit_hash.as_deref() != Some(commit) {
+                            anchor.git_commit_hash = Some(commit.to_string());
+                            updated = true;
+                        }
+                    }
+                    if updated {
+                        fact.last_updated_at = Utc::now();
+                        report.updated_facts.push(fact.id);
+                        modified_fact_ids.insert(fact.id);
+                    }
+                    report.active_facts.push(fact.id);
+                } else {
+                    // Symbol was modified in place -> Transmit to Stale
+                    fact.mark_stale();
+                    report.stale_facts.push(fact.id);
+                    report.invalidated_facts.push(fact.id);
+                    stale_targets.push((fact.id, norm_anchor_path.clone(), symbol_path.clone()));
+                    modified_fact_ids.insert(fact.id);
+                }
+            } else {
+                // Symbol NOT found at (file_path, symbol_path)
+                // Fallback: Check Blake3 content-hash across entire workspace to tolerate renames/moves
+                let target_hash = content_hash
+                    .as_deref()
+                    .unwrap_or(&ast_node_hash);
+
+                if let Some(matches) = blake3_map.get(target_hash) {
+                    if let Some((new_file, new_sym)) = matches.first() {
+                        // Found relocated symbol with identical content body!
+                        let anchor = fact.code_anchor.as_mut().unwrap();
+                        anchor.file_path = new_file.clone();
+                        anchor.symbol_path = new_sym.symbol_path.clone();
+                        anchor.symbol_type = new_sym.symbol_type;
+                        anchor.start_line = new_sym.start_line;
+                        anchor.end_line = new_sym.end_line;
+                        anchor.ast_node_hash = new_sym.node_hash.clone();
+                        anchor.content_hash = Some(new_sym.content_hash.clone());
+                        if let Some(commit) = git_commit_hash {
+                            anchor.git_commit_hash = Some(commit.to_string());
+                        }
+                        anchor.is_valid = true;
+                        anchor.valid_until = None;
+                        fact.last_updated_at = Utc::now();
+                        report.moved_anchors.push(fact.id);
+                        report.active_facts.push(fact.id);
+                        report.updated_facts.push(fact.id);
+                        modified_fact_ids.insert(fact.id);
+                    } else {
+                        fact.mark_stale();
+                        report.stale_facts.push(fact.id);
+                        report.invalidated_facts.push(fact.id);
+                        stale_targets.push((fact.id, norm_anchor_path.clone(), symbol_path.clone()));
+                        modified_fact_ids.insert(fact.id);
+                    }
+                } else {
+                    // Symbol truly deleted or changed beyond recognition
+                    fact.mark_stale();
+                    report.stale_facts.push(fact.id);
+                    report.invalidated_facts.push(fact.id);
+                    stale_targets.push((fact.id, norm_anchor_path.clone(), symbol_path.clone()));
+                    modified_fact_ids.insert(fact.id);
+                }
+            }
+        }
+
+        // 2. Second pass: Causal blast radius propagation for suspicious facts
+        if !stale_targets.is_empty() {
+            let mut impacted_identifiers: HashSet<String> = HashSet::new();
+
+            for (_id, stale_file, stale_sym) in &stale_targets {
+                impacted_identifiers.insert(stale_file.clone());
+                impacted_identifiers.insert(stale_sym.clone());
+
+                if let Some(filename) = std::path::Path::new(stale_file).file_name().and_then(|f| f.to_str()) {
+                    impacted_identifiers.insert(filename.to_string());
+                }
+
+                if let Some(wm) = world_model {
+                    if let Ok(blast) = wm.predict_impact(stale_file, 3).await {
+                        for imp in blast.direct_impacts.iter().chain(&blast.transitive_impacts) {
+                            impacted_identifiers.insert(imp.name.clone());
+                            impacted_identifiers.insert(imp.node_id.clone());
+                            if let Some(ref p) = imp.path {
+                                impacted_identifiers.insert(p.clone());
+                            }
+                        }
+                    }
+                }
+            }
+
+            for fact in facts.iter_mut() {
+                if fact.status == FactStatus::Active {
+                    let mut is_dependent = false;
+
+                    if let Some(ref anc) = fact.code_anchor {
+                        let anc_norm = anc.file_path.replace('\\', "/");
+                        if impacted_identifiers.contains(&anc_norm)
+                            || impacted_identifiers.contains(&anc.symbol_path)
+                        {
+                            is_dependent = true;
+                        }
+                    }
+
+                    for ev in &fact.evidence {
+                        let ev_norm = ev.source_id.replace('\\', "/");
+                        if impacted_identifiers.contains(&ev_norm) {
+                            is_dependent = true;
+                        }
+                    }
+
+                    for id_str in &impacted_identifiers {
+                        if !id_str.is_empty()
+                            && (fact.statement.contains(id_str) || fact.tags.contains(id_str))
+                        {
+                            is_dependent = true;
+                            break;
+                        }
+                    }
+
+                    if is_dependent {
+                        fact.mark_suspicious();
+                        report.suspicious_facts.push(fact.id);
+                        report.active_facts.retain(|&id| id != fact.id);
+                        modified_fact_ids.insert(fact.id);
+                    }
+                }
+            }
+        }
+
+        // 3. Third pass: Atomic persistence to SQLite
+        for fact in &facts {
+            if modified_fact_ids.contains(&fact.id) {
+                store.insert_or_update_semantic_fact(fact)?;
+            }
+        }
+
+        Ok(report)
+    }
+
+    /// Recursively scans a workspace directory on disk and reconciles all semantic facts.
+    pub async fn reconcile_workspace_dir(
+        &self,
+        store: &SqliteStore,
+        workspace_root: &Path,
+        git_commit_hash: Option<&str>,
+        world_model: Option<&strata_reasoning::WorldModel>,
+    ) -> Result<ReconciliationReport, StrataError> {
+        let mut paths: Vec<PathBuf> = Vec::new();
+        let mut contents: Vec<String> = Vec::new();
+
+        self.collect_workspace_files(workspace_root, workspace_root, &mut paths, &mut contents)?;
+
+        let mut relative_paths: Vec<String> = Vec::new();
+        for p in &paths {
+            let rel = p
+                .strip_prefix(workspace_root)
+                .unwrap_or(p)
+                .to_string_lossy()
+                .replace('\\', "/");
+            relative_paths.push(rel);
+        }
+
+        let file_slices: Vec<(&str, &str)> = relative_paths
+            .iter()
+            .zip(contents.iter())
+            .map(|(p, c)| (p.as_str(), c.as_str()))
+            .collect();
+
+        self.reconcile_workspace_on_commit(store, &file_slices, git_commit_hash, world_model)
+            .await
+    }
+
+    fn collect_workspace_files(
+        &self,
+        current_dir: &Path,
+        _root_dir: &Path,
+        out_paths: &mut Vec<PathBuf>,
+        out_contents: &mut Vec<String>,
+    ) -> Result<(), StrataError> {
+        if !current_dir.exists() || !current_dir.is_dir() {
+            return Ok(());
+        }
+
+        let entries = std::fs::read_dir(current_dir)
+            .map_err(|e| StrataError::Internal(format!("Failed to read dir {}: {e}", current_dir.display())))?;
+
+        for entry in entries.flatten() {
+            let path = entry.path();
+            let name = entry.file_name().to_string_lossy().to_string();
+
+            // Skip hidden and build directories
+            if name.starts_with('.')
+                || name == "target"
+                || name == "node_modules"
+                || name == "dist"
+                || name == "build"
+                || name == "venv"
+                || name == ".venv"
+            {
+                continue;
+            }
+
+            if path.is_dir() {
+                self.collect_workspace_files(&path, _root_dir, out_paths, out_contents)?;
+            } else if path.is_file() {
+                let ext = path.extension().and_then(|e| e.to_str()).unwrap_or("");
+                match ext {
+                    "rs" | "ts" | "tsx" | "js" | "jsx" | "py" | "pyi" => {
+                        if let Ok(content) = std::fs::read_to_string(&path) {
+                            out_paths.push(path);
+                            out_contents.push(content);
+                        }
+                    }
+                    _ => {}
+                }
+            }
+        }
+
+        Ok(())
     }
 }

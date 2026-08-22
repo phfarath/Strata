@@ -200,25 +200,67 @@ impl DecayCalculator {
         )
     }
 
-    /// Evaluate decay metrics for a `SemanticFact`.
+    /// Evaluate decay metrics for a `SemanticFact`, factoring in status invalidation and decay boosts.
     pub fn evaluate_semantic_fact(
         &self,
         fact: &SemanticFact,
         access_times: &[DateTime<Utc>],
         current_time: DateTime<Utc>,
     ) -> DecayMetrics {
-        self.evaluate_decay_with_tier(
-            fact.tier,
-            fact.importance,
-            fact.confidence,
-            fact.created_at,
-            access_times,
-            current_time,
-        )
+        match fact.status {
+            FactStatus::Deprecated => DecayMetrics {
+                activation: -10.0,
+                retention: 0.0,
+                stability: 0.001,
+                is_expired: true,
+            },
+            FactStatus::Stale => {
+                // Stale facts suffer a severe stability penalty (5x faster decay) and activation drop
+                let mut metrics = self.evaluate_decay(
+                    fact.importance * 0.5,
+                    fact.confidence * 0.3,
+                    fact.created_at,
+                    access_times,
+                    current_time,
+                );
+                metrics.stability = (metrics.stability * 0.2).max(0.001);
+                metrics.activation -= 2.0;
+                let elapsed_hours = (current_time - fact.last_updated_at).num_seconds().max(0) as f32 / 3600.0;
+                metrics.retention = self.calculate_ebbinghaus_retention(elapsed_hours, metrics.stability);
+                if metrics.retention < self.config.prune_threshold {
+                    metrics.is_expired = true;
+                }
+                metrics
+            }
+            FactStatus::Suspicious => {
+                // Suspicious facts suffer a moderate penalty to encourage re-verification
+                let mut metrics = self.evaluate_decay_with_tier(
+                    fact.tier,
+                    fact.importance * 0.7,
+                    fact.confidence * 0.6,
+                    fact.created_at,
+                    access_times,
+                    current_time,
+                );
+                metrics.stability = (metrics.stability * 0.5).max(0.001);
+                metrics.activation -= 1.0;
+                metrics
+            }
+            FactStatus::Active | FactStatus::Candidate | FactStatus::Outlier => {
+                self.evaluate_decay_with_tier(
+                    fact.tier,
+                    fact.importance,
+                    fact.confidence,
+                    fact.created_at,
+                    access_times,
+                    current_time,
+                )
+            }
+        }
     }
 
-    /// Prunes expired peripheral memories below the threshold, moving them to cold storage.
-    /// Core Tier memories are protected and never pruned.
+    /// Prunes expired peripheral and stale memories below the threshold, moving them to cold storage / deprecation.
+    /// Active Core Tier memories are protected and never pruned.
     pub fn prune_expired(
         &self,
         store: &SqliteStore,
@@ -230,24 +272,30 @@ impl DecayCalculator {
 
         let mut report = PruneReport::default();
 
-        // 1. Check semantic facts
-        let facts = store.get_all_semantic_facts(None, Some(FactStatus::Active), 10000)?;
+        // 1. Check semantic facts across all statuses (Active, Stale, Suspicious)
+        let facts = store.get_all_semantic_facts(None, None, 10000)?;
         for fact in facts {
-            // Core Tier is immune to pruning
-            if fact.tier == MemoryTier::Core || fact.importance >= self.config.invariant_threshold {
-                report.core_protected += 1;
+            if fact.status == FactStatus::Deprecated {
                 continue;
             }
 
-            if fact.tier == MemoryTier::Working {
-                report.working_active += 1;
-                continue;
+            // Only Active Core/Working tier facts are protected from pruning
+            if fact.status == FactStatus::Active {
+                if fact.tier == MemoryTier::Core || fact.importance >= self.config.invariant_threshold {
+                    report.core_protected += 1;
+                    continue;
+                }
+
+                if fact.tier == MemoryTier::Working {
+                    report.working_active += 1;
+                    continue;
+                }
             }
 
             let logs = store.get_memory_access_logs(&fact.id)?;
             let metrics = self.evaluate_semantic_fact(&fact, &logs, now);
 
-            if metrics.retention < prune_thresh {
+            if metrics.retention < prune_thresh || metrics.is_expired {
                 let mut updated = fact.clone();
                 updated.status = FactStatus::Deprecated;
                 updated.last_updated_at = now;
