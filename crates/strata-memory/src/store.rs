@@ -9,9 +9,10 @@ use strata_core::events::{
     DataClassification, Event, EventId, EventPayload, Provenance, RetentionPolicy,
 };
 use strata_core::schemas::{
-    CodeAnchor, EpisodicMemory, EvidenceRef, FactStatus, FeedbackEvent, FeedbackRating, ImplicitSignal,
-    MemoryFeedback, ParameterDef, PreferencePair, ProceduralExample,
-    ProceduralSkill, ProceduralStep, SemanticFact, SignalKind, SignalScores, SyncDelta,
+    CodeAnchor, EpisodicMemory, EvidenceRef, FactDependency, FactStatus, FeedbackEvent,
+    FeedbackRating, ImplicitSignal, JtmsAuditRow, MemoryFeedback, ParameterDef, PreferencePair,
+    ProceduralExample, ProceduralSkill, ProceduralStep, SemanticFact, SignalKind, SignalScores,
+    SyncDelta,
 };
 
 use strata_core::state::{
@@ -300,6 +301,7 @@ impl SqliteStore {
                 replaced_by TEXT,
                 tags_json TEXT NOT NULL DEFAULT '[]',
                 code_anchor_json TEXT DEFAULT NULL,
+                depends_on_json TEXT NOT NULL DEFAULT '[]',
                 embedding BLOB
             );
 
@@ -484,12 +486,43 @@ impl SqliteStore {
 
             CREATE INDEX IF NOT EXISTS idx_arch_summaries_ws ON architecture_summaries(workspace_id);
             CREATE INDEX IF NOT EXISTS idx_arch_summaries_created ON architecture_summaries(created_at);
+
+            -- JTMS Truth Maintenance Audits Table
+            CREATE TABLE IF NOT EXISTS jtms_audits (
+                id TEXT PRIMARY KEY,
+                winning_fact_id TEXT NOT NULL,
+                losing_fact_id TEXT NOT NULL,
+                resolution_type TEXT NOT NULL,
+                reason TEXT NOT NULL,
+                contradiction_cues_json TEXT NOT NULL DEFAULT '[]',
+                similarity REAL NOT NULL DEFAULT 0.0,
+                timestamp TEXT NOT NULL,
+                metadata_json TEXT NOT NULL DEFAULT '{}'
+            );
+
+            CREATE INDEX IF NOT EXISTS idx_jtms_audits_winner ON jtms_audits(winning_fact_id);
+            CREATE INDEX IF NOT EXISTS idx_jtms_audits_loser ON jtms_audits(losing_fact_id);
+            CREATE INDEX IF NOT EXISTS idx_jtms_audits_ts ON jtms_audits(timestamp);
+            CREATE INDEX IF NOT EXISTS idx_jtms_audits_type ON jtms_audits(resolution_type);
+
+            -- Semantic Fact Dependencies Table
+            CREATE TABLE IF NOT EXISTS fact_dependencies (
+                id TEXT PRIMARY KEY,
+                dependent_fact_id TEXT NOT NULL,
+                prerequisite_fact_id TEXT NOT NULL,
+                dependency_type TEXT NOT NULL DEFAULT 'supports',
+                created_at TEXT NOT NULL
+            );
+
+            CREATE INDEX IF NOT EXISTS idx_fact_deps_dependent ON fact_dependencies(dependent_fact_id);
+            CREATE INDEX IF NOT EXISTS idx_fact_deps_prereq ON fact_dependencies(prerequisite_fact_id);
             ",
         )
         .map_err(|e| StrataError::Database(format!("Failed to execute schema migration: {e}")))?;
 
-        // Safe migration for existing databases: add code_anchor_json, tier, approved_by_human, oracle_verified if not exists
+        // Safe migration for existing databases: add code_anchor_json, depends_on_json, tier, approved_by_human, oracle_verified if not exists
         let _ = conn.execute("ALTER TABLE semantic_facts ADD COLUMN code_anchor_json TEXT DEFAULT NULL", []);
+        let _ = conn.execute("ALTER TABLE semantic_facts ADD COLUMN depends_on_json TEXT NOT NULL DEFAULT '[]'", []);
         let _ = conn.execute("ALTER TABLE memories ADD COLUMN tier TEXT NOT NULL DEFAULT 'peripheral'", []);
         let _ = conn.execute("ALTER TABLE semantic_facts ADD COLUMN tier TEXT NOT NULL DEFAULT 'peripheral'", []);
         let _ = conn.execute("ALTER TABLE memories ADD COLUMN approved_by_human INTEGER NOT NULL DEFAULT 0", []);
@@ -1614,6 +1647,7 @@ impl SqliteStore {
     }
 
     // ==========================================
+    // ==========================================
     // Semantic Facts CRUD
     // ==========================================
 
@@ -1636,13 +1670,14 @@ impl SqliteStore {
             Some(anchor) => Some(serde_json::to_string(anchor)?),
             None => None,
         };
+        let depends_on_json = serde_json::to_string(&fact.depends_on)?;
 
         conn.execute(
             "INSERT INTO semantic_facts (
                 id, project, scope, statement, category, evidence_json,
                 importance, confidence, tier, approved_by_human, created_at, last_updated_at, status,
-                version, replaced_by, tags_json, code_anchor_json
-            ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17)
+                version, replaced_by, tags_json, code_anchor_json, depends_on_json
+            ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18)
             ON CONFLICT(id) DO UPDATE SET
                 project = excluded.project,
                 scope = excluded.scope,
@@ -1658,7 +1693,8 @@ impl SqliteStore {
                 version = excluded.version,
                 replaced_by = excluded.replaced_by,
                 tags_json = excluded.tags_json,
-                code_anchor_json = excluded.code_anchor_json",
+                code_anchor_json = excluded.code_anchor_json,
+                depends_on_json = excluded.depends_on_json",
             params![
                 id_str,
                 fact.project,
@@ -1677,9 +1713,21 @@ impl SqliteStore {
                 replaced_str,
                 tags_json,
                 code_anchor_json,
+                depends_on_json,
             ],
         )
         .map_err(|e| StrataError::Database(format!("Failed to persist semantic fact: {e}")))?;
+
+        // Also record dependencies in fact_dependencies table
+        for prereq_id in &fact.depends_on {
+            let dep_id = format!("{}_{}", fact.id, prereq_id);
+            let _ = conn.execute(
+                "INSERT INTO fact_dependencies (id, dependent_fact_id, prerequisite_fact_id, dependency_type, created_at)
+                 VALUES (?1, ?2, ?3, 'supports', ?4)
+                 ON CONFLICT(id) DO NOTHING",
+                params![dep_id, fact.id.to_string(), prereq_id.to_string(), created_at_str],
+            );
+        }
 
         Ok(())
     }
@@ -1694,7 +1742,7 @@ impl SqliteStore {
             .prepare(
                 "SELECT id, project, scope, statement, category, evidence_json,
                         importance, confidence, tier, approved_by_human, created_at, last_updated_at, status,
-                        version, replaced_by, tags_json, code_anchor_json
+                        version, replaced_by, tags_json, code_anchor_json, depends_on_json
                  FROM semantic_facts
                  WHERE id = ?1",
             )
@@ -1738,7 +1786,7 @@ impl SqliteStore {
 
         let mut sql = "SELECT id, project, scope, statement, category, evidence_json,
                               importance, confidence, tier, approved_by_human, created_at, last_updated_at, status,
-                              version, replaced_by, tags_json, code_anchor_json
+                              version, replaced_by, tags_json, code_anchor_json, depends_on_json
                        FROM semantic_facts WHERE 1=1".to_string();
 
         let mut params_vec: Vec<Box<dyn rusqlite::ToSql>> = Vec::new();
@@ -1781,7 +1829,7 @@ impl SqliteStore {
 
         let mut sql = "SELECT id, project, scope, statement, category, evidence_json,
                               importance, confidence, tier, approved_by_human, created_at, last_updated_at, status,
-                              version, replaced_by, tags_json, code_anchor_json, embedding
+                              version, replaced_by, tags_json, code_anchor_json, depends_on_json, embedding
                        FROM semantic_facts WHERE 1=1".to_string();
 
         let mut params_vec: Vec<Box<dyn rusqlite::ToSql>> = Vec::new();
@@ -1802,7 +1850,7 @@ impl SqliteStore {
         let rows = stmt
             .query_map(params_slice.as_slice(), |row| {
                 let fact = Self::row_to_fact(row)?;
-                let blob_opt: Option<Vec<u8>> = row.get(17)?;
+                let blob_opt: Option<Vec<u8>> = row.get(18)?;
                 let emb = blob_opt.and_then(|b| bytes_to_embedding(&b).ok());
                 Ok((fact, emb))
             })
@@ -1832,7 +1880,7 @@ impl SqliteStore {
         let sql = "
             SELECT m.id, m.project, m.scope, m.statement, m.category, m.evidence_json,
                    m.importance, m.confidence, m.tier, m.approved_by_human, m.created_at, m.last_updated_at, m.status,
-                   m.version, m.replaced_by, m.tags_json, m.code_anchor_json,
+                   m.version, m.replaced_by, m.tags_json, m.code_anchor_json, m.depends_on_json,
                    bm25(semantic_facts_fts) as rank
             FROM semantic_facts_fts f
             JOIN semantic_facts m ON m.id = f.id
@@ -1844,8 +1892,180 @@ impl SqliteStore {
         let rows = stmt
             .query_map(params![sanitized, limit as i64], |row| {
                 let fact = Self::row_to_fact(row)?;
-                let rank: f64 = row.get(17)?;
+                let rank: f64 = row.get(18)?;
                 Ok((fact, rank as f32))
+            })
+            .map_err(|e| StrataError::Database(e.to_string()))?;
+
+        let mut results = Vec::new();
+        for r in rows {
+            results.push(r.map_err(|e| StrataError::Database(e.to_string()))?);
+        }
+        Ok(results)
+    }
+
+    // ==========================================
+    // JTMS Audits & Fact Dependencies
+    // ==========================================
+
+    pub fn insert_jtms_audit(&self, audit: &JtmsAuditRow) -> Result<(), StrataError> {
+        let conn = self.conn.lock().map_err(|_| {
+            StrataError::Database("Lock poisoned on SQLite connection".to_string())
+        })?;
+
+        let id_str = audit.id.to_string();
+        let winning_str = audit.winning_fact_id.to_string();
+        let losing_str = audit.losing_fact_id.to_string();
+        let cues_json = serde_json::to_string(&audit.contradiction_cues)?;
+        let ts_str = audit.timestamp.to_rfc3339();
+        let metadata_json = serde_json::to_string(&audit.metadata)?;
+
+        conn.execute(
+            "INSERT INTO jtms_audits (
+                id, winning_fact_id, losing_fact_id, resolution_type, reason,
+                contradiction_cues_json, similarity, timestamp, metadata_json
+            ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)
+            ON CONFLICT(id) DO UPDATE SET
+                winning_fact_id = excluded.winning_fact_id,
+                losing_fact_id = excluded.losing_fact_id,
+                resolution_type = excluded.resolution_type,
+                reason = excluded.reason,
+                contradiction_cues_json = excluded.contradiction_cues_json,
+                similarity = excluded.similarity,
+                timestamp = excluded.timestamp,
+                metadata_json = excluded.metadata_json",
+            params![
+                id_str,
+                winning_str,
+                losing_str,
+                audit.resolution_type,
+                audit.reason,
+                cues_json,
+                audit.similarity,
+                ts_str,
+                metadata_json,
+            ],
+        )
+        .map_err(|e| StrataError::Database(format!("Failed to insert JTMS audit row: {e}")))?;
+
+        Ok(())
+    }
+
+    pub fn get_jtms_audits_for_fact(&self, fact_id: &Uuid) -> Result<Vec<JtmsAuditRow>, StrataError> {
+        let conn = self.conn.lock().map_err(|_| {
+            StrataError::Database("Lock poisoned on SQLite connection".to_string())
+        })?;
+
+        let fact_str = fact_id.to_string();
+        let mut stmt = conn
+            .prepare(
+                "SELECT id, winning_fact_id, losing_fact_id, resolution_type, reason,
+                        contradiction_cues_json, similarity, timestamp, metadata_json
+                 FROM jtms_audits
+                 WHERE winning_fact_id = ?1 OR losing_fact_id = ?1
+                 ORDER BY timestamp DESC",
+            )
+            .map_err(|e| StrataError::Database(e.to_string()))?;
+
+        let rows = stmt
+            .query_map(params![fact_str], |row| Self::row_to_jtms_audit(row))
+            .map_err(|e| StrataError::Database(e.to_string()))?;
+
+        let mut results = Vec::new();
+        for r in rows {
+            results.push(r.map_err(|e| StrataError::Database(e.to_string()))?);
+        }
+        Ok(results)
+    }
+
+    pub fn get_all_jtms_audits(&self, limit: usize) -> Result<Vec<JtmsAuditRow>, StrataError> {
+        let conn = self.conn.lock().map_err(|_| {
+            StrataError::Database("Lock poisoned on SQLite connection".to_string())
+        })?;
+
+        let mut stmt = conn
+            .prepare(
+                "SELECT id, winning_fact_id, losing_fact_id, resolution_type, reason,
+                        contradiction_cues_json, similarity, timestamp, metadata_json
+                 FROM jtms_audits
+                 ORDER BY timestamp DESC
+                 LIMIT ?1",
+            )
+            .map_err(|e| StrataError::Database(e.to_string()))?;
+
+        let rows = stmt
+            .query_map(params![limit as i64], |row| Self::row_to_jtms_audit(row))
+            .map_err(|e| StrataError::Database(e.to_string()))?;
+
+        let mut results = Vec::new();
+        for r in rows {
+            results.push(r.map_err(|e| StrataError::Database(e.to_string()))?);
+        }
+        Ok(results)
+    }
+
+    pub fn add_fact_dependency(&self, dep: &FactDependency) -> Result<(), StrataError> {
+        let conn = self.conn.lock().map_err(|_| {
+            StrataError::Database("Lock poisoned on SQLite connection".to_string())
+        })?;
+
+        let id_str = dep.id.to_string();
+        let dep_fact_str = dep.dependent_fact_id.to_string();
+        let prereq_str = dep.prerequisite_fact_id.to_string();
+        let ts_str = dep.created_at.to_rfc3339();
+
+        conn.execute(
+            "INSERT INTO fact_dependencies (id, dependent_fact_id, prerequisite_fact_id, dependency_type, created_at)
+             VALUES (?1, ?2, ?3, ?4, ?5)
+             ON CONFLICT(id) DO UPDATE SET
+                dependent_fact_id = excluded.dependent_fact_id,
+                prerequisite_fact_id = excluded.prerequisite_fact_id,
+                dependency_type = excluded.dependency_type",
+            params![id_str, dep_fact_str, prereq_str, dep.dependency_type, ts_str],
+        )
+        .map_err(|e| StrataError::Database(format!("Failed to insert fact dependency: {e}")))?;
+
+        Ok(())
+    }
+
+    pub fn get_downstream_dependent_fact_ids(&self, prerequisite_id: &Uuid) -> Result<Vec<Uuid>, StrataError> {
+        let conn = self.conn.lock().map_err(|_| {
+            StrataError::Database("Lock poisoned on SQLite connection".to_string())
+        })?;
+
+        let prereq_str = prerequisite_id.to_string();
+        let mut stmt = conn
+            .prepare("SELECT dependent_fact_id FROM fact_dependencies WHERE prerequisite_fact_id = ?1")
+            .map_err(|e| StrataError::Database(e.to_string()))?;
+
+        let rows = stmt
+            .query_map(params![prereq_str], |row| {
+                let id_str: String = row.get(0)?;
+                Uuid::parse_str(&id_str).map_err(|_| rusqlite::Error::InvalidQuery)
+            })
+            .map_err(|e| StrataError::Database(e.to_string()))?;
+
+        let mut results = Vec::new();
+        for r in rows {
+            results.push(r.map_err(|e| StrataError::Database(e.to_string()))?);
+        }
+        Ok(results)
+    }
+
+    pub fn get_upstream_prerequisite_fact_ids(&self, dependent_id: &Uuid) -> Result<Vec<Uuid>, StrataError> {
+        let conn = self.conn.lock().map_err(|_| {
+            StrataError::Database("Lock poisoned on SQLite connection".to_string())
+        })?;
+
+        let dep_str = dependent_id.to_string();
+        let mut stmt = conn
+            .prepare("SELECT prerequisite_fact_id FROM fact_dependencies WHERE dependent_fact_id = ?1")
+            .map_err(|e| StrataError::Database(e.to_string()))?;
+
+        let rows = stmt
+            .query_map(params![dep_str], |row| {
+                let id_str: String = row.get(0)?;
+                Uuid::parse_str(&id_str).map_err(|_| rusqlite::Error::InvalidQuery)
             })
             .map_err(|e| StrataError::Database(e.to_string()))?;
 
@@ -2413,6 +2633,8 @@ impl SqliteStore {
         let replaced_by = replaced_str.and_then(|s| Uuid::parse_str(&s).ok());
         let tags: Vec<String> = serde_json::from_str(&tags_json).unwrap_or_default();
         let code_anchor: Option<CodeAnchor> = code_anchor_json.and_then(|s| serde_json::from_str(&s).ok());
+        let depends_on_json: String = row.get(17).unwrap_or_else(|_| "[]".to_string());
+        let depends_on: Vec<Uuid> = serde_json::from_str(&depends_on_json).unwrap_or_default();
 
         Ok(SemanticFact {
             id,
@@ -2432,6 +2654,40 @@ impl SqliteStore {
             replaced_by,
             tags,
             code_anchor,
+            depends_on,
+        })
+    }
+
+    fn row_to_jtms_audit(row: &rusqlite::Row) -> rusqlite::Result<JtmsAuditRow> {
+        let id_str: String = row.get(0)?;
+        let winning_str: String = row.get(1)?;
+        let losing_str: String = row.get(2)?;
+        let resolution_type: String = row.get(3)?;
+        let reason: String = row.get(4)?;
+        let cues_json: String = row.get(5)?;
+        let similarity: f64 = row.get(6)?;
+        let ts_str: String = row.get(7)?;
+        let meta_json: String = row.get(8)?;
+
+        let id = Uuid::parse_str(&id_str).map_err(|_| rusqlite::Error::InvalidQuery)?;
+        let winning_fact_id = Uuid::parse_str(&winning_str).map_err(|_| rusqlite::Error::InvalidQuery)?;
+        let losing_fact_id = Uuid::parse_str(&losing_str).map_err(|_| rusqlite::Error::InvalidQuery)?;
+        let contradiction_cues: Vec<String> = serde_json::from_str(&cues_json).unwrap_or_default();
+        let timestamp = DateTime::parse_from_rfc3339(&ts_str)
+            .map(|dt| dt.with_timezone(&Utc))
+            .unwrap_or_else(|_| Utc::now());
+        let metadata: serde_json::Value = serde_json::from_str(&meta_json).unwrap_or_default();
+
+        Ok(JtmsAuditRow {
+            id,
+            winning_fact_id,
+            losing_fact_id,
+            resolution_type,
+            reason,
+            contradiction_cues,
+            similarity: similarity as f32,
+            timestamp,
+            metadata,
         })
     }
 
