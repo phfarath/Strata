@@ -13,10 +13,10 @@ pub use events::{
 };
 pub use schemas::{
     CodeAnchor, ContextBudgetConfig, DecayConfig, DecayMetrics, EvidenceRef, EpisodicMemory,
-    ExportFormat, FactStatus, FeedbackEvent, FeedbackRating, HostTargetConfig, ImplicitSignal,
-    KtoSample, MemoryFeedback, ParameterDef, PreferencePair, ProceduralExample,
-    ProceduralSkill, ProceduralStep, SemanticFact, SftSample, SignalKind, SignalScores,
-    SymbolType, SyncConfig, SyncDelta, SyncReport,
+    ExportFormat, FactDependency, FactStatus, FeedbackEvent, FeedbackRating, HostTargetConfig,
+    ImplicitSignal, JtmsAuditRow, KtoSample, MemoryFeedback, ParameterDef, PreferencePair,
+    ProceduralExample, ProceduralSkill, ProceduralStep, SemanticFact, SftSample, SignalKind,
+    SignalScores, SymbolType, SyncConfig, SyncDelta, SyncReport,
 };
 pub use state::{
     DigestOutput, FailurePattern, FailureSeverity, MemoryHandle, MemoryRecord, MemoryTier,

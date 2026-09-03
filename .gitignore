@@ -14,4 +14,6 @@ dist
 .vercel
 /training_artifacts
 output/
+playwright-report/
+test-results/
 

@@ -30,6 +30,7 @@ use strata_cli::{
         plan::{run_plan, PlanArgs},
         promote::{run_promote, PromoteArgs},
         prune::{run_prune, PruneOptions},
+        reconcile::{run_reconcile, ReconcileArgs},
         search::{run_search, SearchOptions},
         sync::{run_sync, SyncArgs},
         sync_hosts::{run_sync_hosts, SyncHostsArgs},
@@ -247,6 +248,10 @@ enum Commands {
     /// Human-in-the-loop approval and promotion of memories/facts to permanent Core Tier (frozen retention, R=1.0)
     #[command(name = "promote", alias = "memory-promote", alias = "approve", alias = "freeze")]
     Promote(PromoteArgs),
+
+    /// Reconcile code-anchored semantic facts bi-temporally against current code ASTs and Git commits
+    #[command(name = "reconcile", alias = "reconcile-anchors", alias = "sync-anchors")]
+    Reconcile(ReconcileArgs),
 }
 
 
@@ -481,6 +486,11 @@ async fn main() -> Result<()> {
 
         Commands::Promote(args) => {
             run_promote(args, engine).await?;
+        }
+
+        Commands::Reconcile(args) => {
+            let store = engine.store_arc();
+            run_reconcile(args, store).await?;
         }
     }
 

@@ -18,6 +18,16 @@ pub struct ExportArgs {
 
     #[arg(long, help = "Optional session ID filter")]
     pub session: Option<String>,
+
+    #[arg(
+        long,
+        default_value_t = true,
+        action = clap::ArgAction::Set,
+        num_args = 0..=1,
+        default_missing_value = "true",
+        help = "Require chosen items to be verified by an oracle (tests green, compilation, positive feedback)"
+    )]
+    pub require_verified: bool,
 }
 
 pub async fn run_export(args: ExportArgs, store: Arc<SqliteStore>) -> Result<()> {
@@ -25,7 +35,7 @@ pub async fn run_export(args: ExportArgs, store: Arc<SqliteStore>) -> Result<()>
     let filter = args.session.as_deref().or(args.scope.as_deref());
 
     let miner = PreferenceMiner::new(store);
-    let output = miner.export(format, filter)
+    let output = miner.export_with_gating(format, filter, args.require_verified)
         .context("Failed to mine and export alignment preferences")?;
 
     if let Some(out_path) = args.out {
@@ -35,7 +45,7 @@ pub async fn run_export(args: ExportArgs, store: Arc<SqliteStore>) -> Result<()>
         }
         fs::write(&out_path, &output)
             .with_context(|| format!("Failed to write export output to '{}'", out_path.display()))?;
-        eprintln!("✓ Mined dataset exported successfully to '{}' (format: {:?})", out_path.display(), format);
+        eprintln!("✓ Mined dataset exported successfully to '{}' (format: {:?}, require_verified: {})", out_path.display(), format, args.require_verified);
     } else {
         print!("{output}");
     }

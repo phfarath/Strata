@@ -224,8 +224,19 @@ O Strata inclui 8 cenários determinísticos de avaliação contínua em [`crate
 
 ---
 
+## ☁️ Strata Cloud & Colaboração em Equipe
+
+Para equipes de engenharia que necessitam de:
+- **Team Memory**: Memória semântica compartilhada e indexação contínua entre múltiplos desenvolvedores e repositórios.
+- **CDC Relay Hub**: Sincronização central em tempo real via PostgreSQL 16 + pgvector e WebSockets.
+- **Web Portal & Dashboard**: Visualização gráfica das comunidades arquiteturais, trilha de auditoria e gestão de chaves/permissões (RBAC).
+
+Conheça a plataforma gerenciada em **[Strata Cloud](https://github.com/phfarath/strata-cloud)**.
+
+---
+
 ## 📜 Licença
 
 Distribuído sob as licenças **MIT** ou **Apache-2.0**.
-Consulte o arquivo [`LICENSE`](LICENSE) para mais detalhes.
+Consulte os arquivos [`LICENSE-MIT`](LICENSE-MIT) e [`LICENSE-APACHE`](LICENSE-APACHE) para mais detalhes.
 

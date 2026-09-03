@@ -158,6 +158,8 @@ pub enum FactStatus {
     Deprecated,
     Outlier,
     Candidate,
+    Stale,
+    Suspicious,
 }
 
 impl Default for FactStatus {
@@ -173,6 +175,8 @@ impl fmt::Display for FactStatus {
             FactStatus::Deprecated => write!(f, "deprecated"),
             FactStatus::Outlier => write!(f, "outlier"),
             FactStatus::Candidate => write!(f, "candidate"),
+            FactStatus::Stale => write!(f, "stale"),
+            FactStatus::Suspicious => write!(f, "suspicious"),
         }
     }
 }
@@ -186,6 +190,8 @@ impl FromStr for FactStatus {
             "deprecated" | "out" => Ok(FactStatus::Deprecated),
             "outlier" => Ok(FactStatus::Outlier),
             "candidate" => Ok(FactStatus::Candidate),
+            "stale" => Ok(FactStatus::Stale),
+            "suspicious" | "suspect" => Ok(FactStatus::Suspicious),
             _ => Err(format!("Unknown FactStatus: {s}")),
         }
     }
@@ -257,6 +263,8 @@ pub struct SemanticFact {
     pub tags: Vec<String>,
     #[serde(default)]
     pub code_anchor: Option<CodeAnchor>,
+    #[serde(default)]
+    pub depends_on: Vec<Uuid>,
 }
 
 impl SemanticFact {
@@ -280,6 +288,25 @@ impl SemanticFact {
             replaced_by: None,
             tags: Vec::new(),
             code_anchor: None,
+            depends_on: Vec::new(),
+        }
+    }
+
+    pub fn with_depends_on(mut self, depends_on: Vec<Uuid>) -> Self {
+        self.depends_on = depends_on;
+        self
+    }
+
+    pub fn with_dependency(mut self, prerequisite_id: Uuid) -> Self {
+        if !self.depends_on.contains(&prerequisite_id) {
+            self.depends_on.push(prerequisite_id);
+        }
+        self
+    }
+
+    pub fn add_dependency(&mut self, prerequisite_id: Uuid) {
+        if !self.depends_on.contains(&prerequisite_id) {
+            self.depends_on.push(prerequisite_id);
         }
     }
 
@@ -351,6 +378,31 @@ impl SemanticFact {
         if let Some(ref mut anchor) = self.code_anchor {
             anchor.invalidate();
         }
+    }
+
+    pub fn mark_stale(&mut self) {
+        self.status = FactStatus::Stale;
+        self.last_updated_at = Utc::now();
+        if let Some(ref mut anchor) = self.code_anchor {
+            anchor.invalidate();
+        }
+    }
+
+    pub fn mark_suspicious(&mut self) {
+        self.status = FactStatus::Suspicious;
+        self.last_updated_at = Utc::now();
+    }
+
+    pub fn is_stale(&self) -> bool {
+        self.status == FactStatus::Stale
+    }
+
+    pub fn is_suspicious(&self) -> bool {
+        self.status == FactStatus::Suspicious
+    }
+
+    pub fn is_active(&self) -> bool {
+        self.status == FactStatus::Active
     }
 }
 
@@ -984,6 +1036,10 @@ pub struct PreferencePair {
     pub rejected: String,
     pub source_session_id: String,
     pub created_at: DateTime<Utc>,
+    #[serde(default)]
+    pub oracle_verified: bool,
+    #[serde(default)]
+    pub verification_source: Option<String>,
 }
 
 impl PreferencePair {
@@ -1000,6 +1056,8 @@ impl PreferencePair {
             rejected: rejected.into(),
             source_session_id: source_session_id.into(),
             created_at: Utc::now(),
+            oracle_verified: false,
+            verification_source: None,
         }
     }
 
@@ -1010,6 +1068,22 @@ impl PreferencePair {
 
     pub fn with_created_at(mut self, created_at: DateTime<Utc>) -> Self {
         self.created_at = created_at;
+        self
+    }
+
+    pub fn with_oracle_verified(mut self, verified: bool) -> Self {
+        self.oracle_verified = verified;
+        self
+    }
+
+    pub fn with_verification_source(mut self, source: impl Into<String>) -> Self {
+        self.verification_source = Some(source.into());
+        self
+    }
+
+    pub fn with_verification(mut self, verified: bool, source: Option<String>) -> Self {
+        self.oracle_verified = verified;
+        self.verification_source = source;
         self
     }
 }
@@ -1023,6 +1097,10 @@ pub struct KtoSample {
     pub label: bool,
     pub source_session_id: String,
     pub created_at: DateTime<Utc>,
+    #[serde(default)]
+    pub oracle_verified: bool,
+    #[serde(default)]
+    pub verification_source: Option<String>,
 }
 
 impl KtoSample {
@@ -1039,6 +1117,8 @@ impl KtoSample {
             label,
             source_session_id: source_session_id.into(),
             created_at: Utc::now(),
+            oracle_verified: false,
+            verification_source: None,
         }
     }
 
@@ -1049,6 +1129,22 @@ impl KtoSample {
 
     pub fn with_created_at(mut self, created_at: DateTime<Utc>) -> Self {
         self.created_at = created_at;
+        self
+    }
+
+    pub fn with_oracle_verified(mut self, verified: bool) -> Self {
+        self.oracle_verified = verified;
+        self
+    }
+
+    pub fn with_verification_source(mut self, source: impl Into<String>) -> Self {
+        self.verification_source = Some(source.into());
+        self
+    }
+
+    pub fn with_verification(mut self, verified: bool, source: Option<String>) -> Self {
+        self.oracle_verified = verified;
+        self.verification_source = source;
         self
     }
 }
@@ -1062,6 +1158,10 @@ pub struct SftSample {
     pub output: String,
     pub source_session_id: String,
     pub created_at: DateTime<Utc>,
+    #[serde(default)]
+    pub oracle_verified: bool,
+    #[serde(default)]
+    pub verification_source: Option<String>,
 }
 
 impl SftSample {
@@ -1078,6 +1178,8 @@ impl SftSample {
             output: output.into(),
             source_session_id: source_session_id.into(),
             created_at: Utc::now(),
+            oracle_verified: false,
+            verification_source: None,
         }
     }
 
@@ -1088,6 +1190,22 @@ impl SftSample {
 
     pub fn with_created_at(mut self, created_at: DateTime<Utc>) -> Self {
         self.created_at = created_at;
+        self
+    }
+
+    pub fn with_oracle_verified(mut self, verified: bool) -> Self {
+        self.oracle_verified = verified;
+        self
+    }
+
+    pub fn with_verification_source(mut self, source: impl Into<String>) -> Self {
+        self.verification_source = Some(source.into());
+        self
+    }
+
+    pub fn with_verification(mut self, verified: bool, source: Option<String>) -> Self {
+        self.oracle_verified = verified;
+        self.verification_source = source;
         self
     }
 }
@@ -1278,6 +1396,8 @@ pub struct CodeAnchor {
     #[serde(default)]
     pub git_commit_hash: Option<String>,
     pub ast_node_hash: String,
+    #[serde(default)]
+    pub content_hash: Option<String>,
     pub start_line: u32,
     pub end_line: u32,
     pub valid_from: DateTime<Utc>,
@@ -1302,12 +1422,18 @@ impl CodeAnchor {
             symbol_type,
             git_commit_hash: None,
             ast_node_hash: ast_node_hash.into(),
+            content_hash: None,
             start_line,
             end_line,
             valid_from: Utc::now(),
             valid_until: None,
             is_valid: true,
         }
+    }
+
+    pub fn with_content_hash(mut self, hash: impl Into<String>) -> Self {
+        self.content_hash = Some(hash.into());
+        self
     }
 
     pub fn with_git_commit(mut self, commit_hash: impl Into<String>) -> Self {
@@ -1351,6 +1477,85 @@ impl CodeAnchor {
 
     pub fn is_active(&self) -> bool {
         self.is_active_at(Utc::now())
+    }
+}
+
+/// Audit record capturing every JTMS belief revision and contradiction resolution event.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct JtmsAuditRow {
+    pub id: Uuid,
+    pub winning_fact_id: Uuid,
+    pub losing_fact_id: Uuid,
+    pub resolution_type: String,
+    pub reason: String,
+    #[serde(default)]
+    pub contradiction_cues: Vec<String>,
+    #[serde(default)]
+    pub similarity: f32,
+    pub timestamp: DateTime<Utc>,
+    #[serde(default)]
+    pub metadata: serde_json::Value,
+}
+
+impl JtmsAuditRow {
+    pub fn new(
+        winning_fact_id: Uuid,
+        losing_fact_id: Uuid,
+        resolution_type: impl Into<String>,
+        reason: impl Into<String>,
+    ) -> Self {
+        Self {
+            id: Uuid::new_v4(),
+            winning_fact_id,
+            losing_fact_id,
+            resolution_type: resolution_type.into(),
+            reason: reason.into(),
+            contradiction_cues: Vec::new(),
+            similarity: 0.0,
+            timestamp: Utc::now(),
+            metadata: serde_json::json!({}),
+        }
+    }
+
+    pub fn with_cues(mut self, cues: Vec<String>) -> Self {
+        self.contradiction_cues = cues;
+        self
+    }
+
+    pub fn with_similarity(mut self, similarity: f32) -> Self {
+        self.similarity = similarity;
+        self
+    }
+
+    pub fn with_metadata(mut self, metadata: serde_json::Value) -> Self {
+        self.metadata = metadata;
+        self
+    }
+}
+
+/// Explicit dependency edge between semantic facts in the JTMS belief graph.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct FactDependency {
+    pub id: Uuid,
+    pub dependent_fact_id: Uuid,
+    pub prerequisite_fact_id: Uuid,
+    pub dependency_type: String,
+    pub created_at: DateTime<Utc>,
+}
+
+impl FactDependency {
+    pub fn new(
+        dependent_fact_id: Uuid,
+        prerequisite_fact_id: Uuid,
+        dependency_type: impl Into<String>,
+    ) -> Self {
+        Self {
+            id: Uuid::new_v4(),
+            dependent_fact_id,
+            prerequisite_fact_id,
+            dependency_type: dependency_type.into(),
+            created_at: Utc::now(),
+        }
     }
 }
 

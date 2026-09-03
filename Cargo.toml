@@ -7,7 +7,6 @@ members = [
     "crates/strata-reasoning",
     "crates/strata-cli",
     "crates/strata-evals",
-    "crates/strata-server",
 ]
 
 [workspace.package]
@@ -23,7 +22,6 @@ strata-memory = { path = "crates/strata-memory" }
 strata-tools = { path = "crates/strata-tools" }
 strata-reasoning = { path = "crates/strata-reasoning" }
 strata-cli = { path = "crates/strata-cli" }
-strata-server = { path = "crates/strata-server" }
 
 
 # Async & Runtime
@@ -41,14 +39,8 @@ serde_json = "1.0.139"
 uuid = { version = "1.13", features = ["v4", "serde"] }
 chrono = { version = "0.4.39", features = ["serde"] }
 
-# SQLite, Postgres & Cloud Storage
+# Local Storage & SQLite
 rusqlite = { version = "0.33", features = ["bundled", "bundled-full"] }
-tokio-postgres = { version = "0.7.13", features = ["with-uuid-1", "with-chrono-0_4", "with-serde_json-1"] }
-deadpool-postgres = { version = "0.14.1", features = ["serde"] }
-tokio-postgres-rustls = "0.13.0"
-rustls = { version = "0.23", features = ["ring"] }
-webpki-roots = "0.26"
-pgvector = { version = "0.4", default-features = false, features = ["postgres"] }
 
 # Embeddings
 fastembed = "4.5.1"
@@ -64,10 +56,9 @@ opener = "0.7.2"
 toml = "0.8.19"
 petgraph = { version = "0.7", features = ["serde-1"] }
 
-# Auth & Security
-argon2 = "0.5.3"
-jsonwebtoken = "9.3.0"
+# Cryptography & Hashing
 sha2 = "0.10.8"
+blake3 = "1.5.5"
 rand = "0.8.5"
 hex = "0.4.3"
 
