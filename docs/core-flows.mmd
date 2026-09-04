@@ -1,0 +1,31 @@
+flowchart TB
+    U["Goal / User"] --> O["Rust Orchestrator"]
+    O --> W["Working Memory"]
+    O --> R["Hybrid Retrieval"]
+    R --> ME["Episodic Memory"]
+    R --> MS["Semantic Memory"]
+    R --> MP["Procedural Memory"]
+    W --> WM["World Model: Beliefs & Predictions"]
+    R --> WM
+    WM --> P["Planner: Subgoal DAG"]
+    P --> RE["Reasoner: Hypotheses & Search"]
+    RE --> V{"Verifier & Risk Assessor"}
+    V -->|"low confidence"| I["Investigate / Retrieve / Escalate"]
+    I --> R
+    V -->|"approved"| G["Tool Gateway"]
+    G --> T["Tools / Simulator / Robot"]
+    T --> OBS["Observation & Outcome"]
+    OBS --> O
+    OBS --> LOG["Event Log & Checkpoint"]
+    LOG --> C["Consolidation"]
+    C --> ME
+    C --> MS
+    C --> MP
+    C --> L["Continual Learning: Replay & Skills"]
+    L --> P
+    L --> WM
+
+    classDef persistent fill:#e8f1ff,stroke:#2563eb,color:#111827;
+    classDef decision fill:#fff7db,stroke:#ca8a04,color:#111827;
+    class ME,MS,MP,WM,LOG persistent;
+    class V decision;
