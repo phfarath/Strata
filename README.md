@@ -150,6 +150,12 @@ strata init
 ```
 This scaffolds the local `.strata/` cache, enables SQLite WAL mode, and compiles multi-host rule adapters.
 
+### 4. Real-Time Terminal Observability (TUI)
+Inspect cognitive health, ACT-R memory decay curves, failure defense radar, JTMS v2 belief trees, and AST code anchors in an interactive terminal dashboard:
+```bash
+strata ui
+```
+
 ### (Optional) Manual MCP Configuration
 
 Strata serves native Model Context Protocol (MCP) tools directly over stdio:

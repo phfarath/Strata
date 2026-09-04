@@ -191,8 +191,12 @@ enum Commands {
     Feedback(FeedbackArgs),
 
     /// View cognitive observability dashboard, Ebbinghaus decay curves, ACT-R activations, and anti-patterns
-    #[command(name = "observe", alias = "stats", alias = "decay", alias = "dashboard", alias = "tui")]
+    #[command(name = "observe", alias = "stats", alias = "decay")]
     Observe(ObserveArgs),
+
+    /// Interactive terminal dashboard (TUI) with real-time cognitive metrics, JTMS graph, and AST anchors
+    #[command(name = "ui", alias = "tui", alias = "dashboard")]
+    Ui,
 
     /// Analyze architectural causal blast radius, ripple effects, and breaking risk before editing code
     #[command(name = "blast-radius", alias = "causal", alias = "impact", alias = "world-model")]
@@ -527,6 +531,10 @@ async fn main() -> Result<()> {
         Commands::Observe(args) => {
             let store = engine.store_arc();
             run_observe(args, store).await?;
+        }
+
+        Commands::Ui => {
+            strata_cli::tui::run_tui(engine, &db_path).await?;
         }
 
         Commands::BlastRadius(args) => {

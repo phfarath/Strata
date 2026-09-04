@@ -1,4 +1,4 @@
-﻿<!-- STRATA_MEMORY_START -->
+<!-- STRATA_MEMORY_START -->
 ## Strata Persistent Memory Protocol
 - Consult Strata memory tools (`memory_search`, `memory_get`) before planning non-trivial tasks.
 - Check known failure anti-patterns before running destructive or complex operations.
@@ -32,6 +32,7 @@ Strata Open Core runs 100% local-first on the developer's machine:
 - **Run all unit & integration tests**: `cargo test --workspace`
 - **Run the local MCP Server via Stdio**: `cargo run -p strata-cli --bin strata -- mcp`
 - **Run with MCP Inspector**: `npx @modelcontextprotocol/inspector cargo run -p strata-cli --bin strata -- mcp`
+- **Launch the interactive Terminal TUI**: `cargo run -p strata-cli --bin strata -- ui`
 
 > Note: The managed multi-tenant cloud backend and Docker stack are maintained separately in [`phfarath/strata-cloud`](https://github.com/phfarath/strata-cloud).
 

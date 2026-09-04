@@ -1,10 +1,12 @@
 pub mod commands;
 pub mod config;
 pub mod mcp;
+pub mod tui;
 
 pub use commands::*;
 pub use config::*;
 pub use mcp::*;
+pub use tui::*;
 
 #[cfg(test)]
 mod tests {
