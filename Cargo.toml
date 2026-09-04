@@ -14,6 +14,14 @@ version = "0.1.0"
 edition = "2021"
 authors = ["Strata Contributors"]
 license = "MIT OR Apache-2.0"
+description = "Local-first persistent memory engine and cognitive runtime for AI coding agents"
+repository = "https://github.com/phfarath/Strata"
+homepage = "https://github.com/phfarath/Strata"
+documentation = "https://docs.rs/strata-cli"
+readme = "README.md"
+keywords = ["memory", "mcp", "ai-agents", "cognitive", "cursor"]
+categories = ["command-line-utilities", "development-tools"]
+
 
 [workspace.dependencies]
 # Internal crates

@@ -1,11 +1,11 @@
-﻿<div align="center">
+<div align="center">
 
 # Strata
 
 ### The Local-First Persistent Memory Engine & Cognitive Runtime for AI Coding Agents
 
 [![Rust 2021](https://img.shields.io/badge/rust-2021_edition-DEA584.svg?style=flat-square&logo=rust)](https://www.rust-lang.org/)
-[![Tests](https://img.shields.io/badge/tests-105%2F105%20passing%20(100%25)-34D399.svg?style=flat-square)]()
+[![Tests](https://img.shields.io/badge/tests-118%2F118%20passing%20(100%25)-34D399.svg?style=flat-square)]()
 [![MCP Universal](https://img.shields.io/badge/MCP-2024--11--05%20%7C%202025--11--25%20%7C%202026--07--28-60A5FA.svg?style=flat-square&logo=anthropic)](https://modelcontextprotocol.io/)
 [![Storage](https://img.shields.io/badge/storage-SQLite%20Offline--First%20%2B%20FTS5-A78BFA.svg?style=flat-square&logo=sqlite)](https://www.sqlite.org/)
 [![License](https://img.shields.io/badge/license-MIT%20%2F%20Apache--2.0-FBBF24.svg?style=flat-square)]()
@@ -121,21 +121,36 @@ flowchart TD
 
 ### 1. Installation
 
-#### Cargo (All Platforms)
+#### One-Line Universal Install (Zero Prerequisites)
+```bash
+# macOS and Linux
+curl -fsSL https://raw.githubusercontent.com/phfarath/Strata/main/install.sh | sh
+
+# Windows (PowerShell)
+irm https://raw.githubusercontent.com/phfarath/Strata/main/install.ps1 | iex
+```
+
+#### Via Cargo
 ```bash
 cargo install strata-cli
 ```
 
-*Pre-built binaries for macOS, Linux, and Windows are also available in [GitHub Releases](https://github.com/phfarath/Strata/releases).*
+*Pre-built standalone binaries for all architectures are also available in [GitHub Releases](https://github.com/phfarath/Strata/releases).*
 
-### 2. Initialize in Your Repository
+### 2. Auto-Configure MCP in 1 Command
+Automatically inject Strata into your installed coding agents (Cursor, Claude Desktop, Windsurf) without touching JSON files manually:
+```bash
+strata mcp install
+```
+
+### 3. Initialize in Your Repository
 ```bash
 cd your-project
 strata init
 ```
-This generates the local `.strata/` cache, configures SQLite with WAL mode, and compiles multi-host rule adapters.
+This scaffolds the local `.strata/` cache, enables SQLite WAL mode, and compiles multi-host rule adapters.
 
-### 3. Connect to Your Coding Agents via MCP
+### (Optional) Manual MCP Configuration
 
 Strata serves native Model Context Protocol (MCP) tools directly over stdio:
 
@@ -217,6 +232,8 @@ Strata turns everyday developer-agent iterations into fine-tuning datasets:
 | :--- | :--- | :--- |
 | `strata init` | Scaffold local SQLite database and agent instructions | `strata init` |
 | `strata mcp` | Launch the universal JSON-RPC Stdio MCP Server | `strata mcp` |
+| `strata mcp install` | Auto-configure MCP in Cursor, Claude Desktop, and Windsurf | `strata mcp install` |
+| `strata mcp uninstall` | Safely remove Strata from host editor configs | `strata mcp uninstall` |
 | `strata search` | Hybrid Reciprocal Rank Fusion (FTS5 BM25 + FastEmbed) | `strata search "auth middleware"` |
 | `strata remember` | Store a semantic fact, anti-pattern, or architectural decision | `strata remember "Never bypass JWT auth"` |
 | `strata reconcile` | Scan workspace against Git Merkle tree to detect relocated/stale code | `strata reconcile --auto-relink` |

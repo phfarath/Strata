@@ -26,6 +26,7 @@ use strata_cli::{
         init::{run_init, InitOptions},
         key::{run_key, KeyArgs},
         login::{run_login, run_logout, LoginArgs},
+        mcp_install::{run_mcp_install, run_mcp_uninstall, McpInstallOptions, McpUninstallOptions},
         observe::{run_observe, ObserveArgs},
         plan::{run_plan, PlanArgs},
         promote::{run_promote, PromoteArgs},
@@ -68,8 +69,11 @@ enum Commands {
         force: bool,
     },
 
-    /// Run the Stdio JSON-RPC MCP Server serving memory tools
-    Mcp,
+    /// Run the Stdio JSON-RPC MCP Server, or manage MCP integration for host editors
+    Mcp {
+        #[command(subcommand)]
+        action: Option<McpAction>,
+    },
 
     /// Execute lifecycle hooks for agent integrations
     Hook {
@@ -254,6 +258,36 @@ enum Commands {
     Reconcile(ReconcileArgs),
 }
 
+#[derive(Subcommand, Debug)]
+pub enum McpAction {
+    /// Install Strata MCP server configuration into host editors (Cursor, Claude Desktop, Windsurf)
+    #[command(name = "install", alias = "setup")]
+    Install {
+        #[arg(long, help = "Target editor: 'cursor', 'claude', 'windsurf', or 'all'")]
+        client: Option<String>,
+
+        #[arg(long, help = "Install into global user configuration directory")]
+        global: bool,
+
+        #[arg(long, default_value = ".", help = "Target workspace directory")]
+        workspace: PathBuf,
+    },
+
+    /// Uninstall Strata MCP server configuration from host editors
+    #[command(name = "uninstall", alias = "remove")]
+    Uninstall {
+        #[arg(long, help = "Target editor: 'cursor', 'claude', 'windsurf', or 'all'")]
+        client: Option<String>,
+
+        #[arg(long, help = "Uninstall from global user configuration directory")]
+        global: bool,
+
+        #[arg(long, default_value = ".", help = "Target workspace directory")]
+        workspace: PathBuf,
+    },
+}
+
+
 
 #[tokio::main]
 async fn main() -> Result<()> {
@@ -278,6 +312,26 @@ async fn main() -> Result<()> {
             target_host: host.clone(),
             force: *force,
         });
+    }
+
+    // Fast-path for MCP installation / uninstallation subcommands (does not require SQLite DB)
+    if let Commands::Mcp { action: Some(ref action) } = cli.command {
+        match action {
+            McpAction::Install { client, global, workspace } => {
+                return run_mcp_install(McpInstallOptions {
+                    client: client.clone(),
+                    global: *global,
+                    workspace_dir: workspace.clone(),
+                });
+            }
+            McpAction::Uninstall { client, global, workspace } => {
+                return run_mcp_uninstall(McpUninstallOptions {
+                    client: client.clone(),
+                    global: *global,
+                    workspace_dir: workspace.clone(),
+                });
+            }
+        }
     }
 
     // Fast-path for Plan (can execute standalone or with scheduler)
@@ -331,10 +385,11 @@ async fn main() -> Result<()> {
     match cli.command {
         Commands::Init { .. } | Commands::Plan(_) | Commands::Auth(_) | Commands::Key(_) | Commands::Login(_) | Commands::Logout | Commands::CallGraph { .. } | Commands::Workspace(_) | Commands::Architecture(_) => unreachable!(),
 
-        Commands::Mcp => {
+        Commands::Mcp { action: None } => {
             let server = McpServer::new(engine);
             server.run_stdio().await?;
         }
+        Commands::Mcp { action: Some(_) } => unreachable!(),
 
         Commands::Hook { hook } => {
             handle_hook(hook, engine).await?;
