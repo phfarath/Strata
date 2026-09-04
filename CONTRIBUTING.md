@@ -49,8 +49,14 @@ cd Strata
 # 2. Verify compilation
 cargo check --workspace
 
-# 3. Run all unit and integration tests
+# 3. Run all unit and integration tests (105+ tests)
 cargo test --workspace
+```
+
+### Testing the MCP Server Locally
+You can test the MCP JSON-RPC server directly via stdio using the official `@modelcontextprotocol/inspector`:
+```bash
+npx @modelcontextprotocol/inspector cargo run -p strata-cli --bin strata -- mcp
 ```
 
 ---
@@ -98,6 +104,18 @@ When submitting a Pull Request, please ensure:
 - [ ] New logic is covered by unit tests or eval scenarios in `crates/strata-evals`.
 - [ ] `cargo fmt` has been executed across the workspace.
 - [ ] The PR description clearly explains the **motivation**, **approach**, and provides **steps to verify**.
+
+---
+
+## 🏷️ Area Labels
+
+Issues and pull requests are organized using area tags:
+- `area:core`: Schemas, traits, state definitions, event types.
+- `area:memory`: SQLite, vector retrieval, ACT-R decay, Merkle anchors.
+- `area:tools`: Tree-Sitter AST, Call Graph analyzer, Monorepo isolator.
+- `area:reasoning`: JTMS v2 belief revision, causal graph, cognitive tiering.
+- `area:cli`: Terminal commands, MCP server protocol.
+- `area:evals`: Deterministic benchmarks, evaluation scenarios.
 
 ---
 
