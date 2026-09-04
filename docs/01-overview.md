@@ -1,25 +1,26 @@
-# Overview
+# System Overview
 
-## Problema
+## Problem Statement
 
-Agentes baseados apenas em contexto de conversa têm memória limitada, não atualizam competências de forma controlada, não distinguem certeza de especulação e perdem coerência em tarefas longas. O Cognitive Agent Runtime adiciona uma camada persistente em volta do modelo.
+Autonomous agents constrained solely to ephemeral in-context attention windows exhibit bounded working memory, lack disciplined mechanisms for competence acquisition, fail to demarcate epistemic certainty from stochastic speculation, and suffer context drift over extended operational horizons. Strata addresses these limitations by providing a persistent, deterministic cognitive runtime encapsulating the foundation model.
 
-## Objetivo
+## Core Objectives
 
-1. Manter memória com proveniência e esquecimento deliberado.
-2. Planejar, agir, observar e corrigir-se em ciclos longos.
-3. Aprender com experiência sem degradar capacidades anteriores.
-4. Construir e atualizar crenças sobre o mundo por evidência.
-5. Declarar incerteza e bloquear ações de risco elevado.
-6. Operar em ferramentas digitais antes de avançar para simuladores físicos.
+1. **Epistemic Memory & Deliberate Forgetting**: Maintain structured memory with cryptographically anchored provenance, bi-temporal validity, and principled decay.
+2. **Long-Horizon Closed-Loop Execution**: Execute continuous perception–cognition–action loops (plan, act, observe, self-correct) across extended multi-step trajectories.
+3. **Continual Competence Consolidation**: Extract operational skills and consolidate experiential trajectories without catastrophic forgetting or negative transfer.
+4. **Evidence-Grounded World Modeling**: Synthesize, evaluate, and dynamically update a causal belief graph via formal epistemic justification.
+5. **Calibrated Uncertainty & Fail-Safe Gating**: Formally quantify epistemic uncertainty and enforce deterministic gating on high-risk, irreversible operations.
+6. **Progressive Embodiment Staging**: Target deterministic digital tooling, operating system APIs, and codebases prior to expanding into simulated or physical embodiment environments.
 
-## Hipótese central
+## Central Hypothesis
 
-Separar memória, modelo do mundo, planejamento, verificação e execução reduz falhas de contexto e permite avaliar cada subsistema de forma mensurável.
+Explicitly decoupling memory persistence, world-model belief representation, deliberate planning, formal verification, and transactional execution mitigates context-window saturation and failure modes, enabling isolated, quantitative benchmarking of each cognitive subsystem.
 
-## Não objetivos
+## Non-Goals
 
-- Treinar um modelo fundacional do zero.
-- Autonomia irrestrita.
-- Promover toda interação a memória permanente.
-- Executar ações externas sem política, autorização e auditoria.
+- **Foundation Model Pre-Training**: Pre-training foundational large language models from scratch.
+- **Unconstrained Autonomy**: Permitting open-ended, unbounded execution without policy-governed boundaries.
+- **Indiscriminate Ingestion**: Ingesting raw operational telemetry or transient interactions directly into permanent memory.
+- **Unmediated Side Effects**: Executing external operations without capability tokens, fine-grained access policies, and tamper-evident cryptographic audit logs.
+

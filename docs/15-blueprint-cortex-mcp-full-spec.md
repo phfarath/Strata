@@ -1,56 +1,56 @@
-# Strata Cortex — Especificação Arquitetural Completa & Integração MCP
+# Strata Cortex — Complete Architectural Specification & MCP Integration
 
-> **Visão Geral**: Este documento consolida a arquitetura completa do **Strata Cortex**, integrando todas as inovações, resoluções de dores e vantagens competitivas mapeadas no benchmarking de mercado (Mem0, Supermemory, Zep/Graphiti, Letta, LangMem, Cursor, Claude Code e Windsurf).
+> **Executive Overview**: This document consolidates the complete architectural specification of **Strata Cortex**, unifying the innovations, pain-point resolutions, and competitive differentiators mapped during cross-industry benchmarking (Mem0, Supermemory, Zep/Graphiti, Letta, LangMem, Cursor, Claude Code, and Windsurf).
 
 ---
 
-## 🏛️ 1. Macroarquitetura do Sistema
+## 1. System Macroarchitecture
 
 ```mermaid
 graph TD
-    subgraph Host_Clients [Agentes & IDEs Conectados]
+    subgraph Host_Clients [Connected Host Agents & IDEs]
         C1[Cursor IDE]
         C2[Claude Code CLI]
         C3[Windsurf Cascade]
         C4[Codex / Gemini CLI / Antigravity]
     end
 
-    subgraph MCP_Transport [Camada de Transporte & Hooks]
-        M1[Servidor MCP Multi-Versão Stdio/IPC]
-        M2[CLI Hooks & Command Interceptor]
-        M3[Multi-Host Compiler .mdc / CLAUDE.md / AGENTS.md]
+    subgraph MCP_Transport [Transport Layer & Interception Hooks]
+        M1[Multi-Version Stdio/IPC MCP Server]
+        M2[CLI Execution Hooks & Command Interceptor]
+        M3[Multi-Host Prompt Compiler .mdc / CLAUDE.md / AGENTS.md]
     end
 
-    subgraph Cognitive_Core [Strata Cortex Engine - Rust Native]
+    subgraph Cognitive_Core [Strata Cortex Engine - Native Rust]
         direction TB
-        subgraph Ingestion [Ingestão & Parsing]
+        subgraph Ingestion [Ingestion & Code Parsing]
             T1[Tree-Sitter AST Parser]
-            T2[Git Merkle Tree Anchor]
-            T3[Silent Error / Anti-Pattern Interceptor]
+            T2[Git Merkle Tree Code Anchor]
+            T3[Silent Error & Anti-Pattern Interceptor]
         end
         
-        subgraph Memory_Tiers [Tri-Tier Memory Model]
-            K1[Core Tier - Regras/Invariantes - Decay Congelado]
-            K2[Working Tier - Sessão Ativa / Símbolos Quentes]
-            K3[Peripheral Tier - Histórico Expiraç. Exponencial]
+        subgraph Memory_Tiers [Tri-Tier Cognitive Model]
+            K1[Core Tier - Invariants/Rules - Frozen Decay]
+            K2[Working Tier - Active Session / Hot Symbols]
+            K3[Peripheral Tier - History Exponential Decay]
         end
         
-        subgraph Logic_Decay [Manutenção da Verdade & Decaimento]
+        subgraph Logic_Decay [Truth Maintenance & Decay Scheduling]
             J1[Bi-Temporal JTMS valid_from / valid_until / replaced_by]
-            A1[Motor ACT-R + Ebbinghaus Determinístico em Rust]
+            A1[Deterministic ACT-R + Ebbinghaus Engine in Rust]
             R1[Context Selection Engine Token Budget < 500 tokens]
         end
         
-        subgraph Training_Loop [Alinhamento Contínuo]
-            D1[Trajectory Collector]
+        subgraph Training_Loop [Continual Alignment Engine]
+            D1[Execution Trajectory Collector]
             D2[DPO / KTO / SFT Dataset Miner]
         end
     end
 
-    subgraph Storage [Persistência 100% Local-First]
-        S1[(SQLite WAL + FTS5 BM25 + Vector Embeddings)]
-        S2[(Cold Storage / Compressed Archive)]
-        S3[(CDC Sync Log Monotônico - Opcional Cloud)]
+    subgraph Storage [100% Local-First Persistence Layer]
+        S1[(SQLite WAL + FTS5 BM25 + ONNX Embeddings)]
+        S2[(Compressed Cold Storage Archive)]
+        S3[(Monotonic CDC Sync Log - Optional Cloud Backend)]
     end
 
     Host_Clients <--> MCP_Transport
@@ -64,45 +64,46 @@ graph TD
 
 ---
 
-## 🧠 2. O Modelo Cognitivo de 3 Camadas (Tri-Tier Memory Model)
+## 2. Tri-Tier Cognitive Memory Model
 
-Diferente dos concorrentes que tratam todas as memórias com o mesmo peso, o Strata implementa **três tiers estritos de retenção e relevância**:
+Unlike naive memory solutions that assign equal retrieval weight to all stored facts, Strata implements a **tri-tier cognitive memory hierarchy** governing retention, salience, and eviction dynamics:
 
-| Tier | Escopo | Dinâmica de Decaimento | Token Budget | Destino na Expiração |
+| Memory Tier | Architectural Scope | Decay Dynamics | Token Budget | Eviction / Archival Policy |
 | :--- | :--- | :--- | :--- | :--- |
-| **1. Core Tier** | Diretrizes fundamentais do projeto, regras de segurança, invariantes de arquitetura e constraints críticas. | $\alpha = 0$ (Decaimento congelado, retenção permanente $1.0$). | Até 150 tokens | Nunca expira (apenas atualizado via JTMS). |
-| **2. Working Tier** | Símbolos, arquivos tocados, comandos recentes, diffs e contexto imediato da tarefa ativa. | Recência imediata (FIFO + Saliência de Tarefa). Reseta no final da sessão. | Até 250 tokens | Destilado para Semântico/Procedural ou descartado. |
-| **3. Peripheral Tier** | Histórico conversacional, decisões contextuais passadas, logs de depuração e fatos secundários. | Decaimento exponencial $R(t) = \exp(-t/S_m)$ via ACT-R e Ebbinghaus. | Restante do Budget (Rankeado por score) | Arquivado para Cold Storage compactado em disco quando score $< \theta_{prune}$. |
+| **1. Core Tier** | Fundamental project directives, security baselines, architectural invariants, and mission-critical constraints. | $\alpha = 0$ (Frozen decay; permanent retention score $1.0$). | Up to 150 tokens | Never evicts; updated strictly via formal JTMS belief revision. |
+| **2. Working Tier** | Active symbols, recently touched file paths, current execution traces, git diffs, and immediate task context. | Task-dependent recency (FIFO queue + task-salience multiplier; flushes at session termination). | Up to 250 tokens | Distilled into Semantic/Procedural records or safely pruned. |
+| **3. Peripheral Tier** | Conversational history, past contextual decisions, auxiliary debug outputs, and secondary facts. | Deterministic exponential decay $R(t) = \exp(-t/S_m)$ via ACT-R and Ebbinghaus functions. | Remainder of Budget (Ranked dynamically by salience score) | Evicted to compressed on-disk Cold Storage when score $< \theta_{\text{prune}}$. |
 
 ---
 
-## 🔍 3. AST Parsing Nativo & Ancoragem Git Merkle Tree
+## 3. Native AST Parsing & Git Merkle Tree Anchoring
 
-Para eliminar a desvantagem de motores genéricos (que tratam código como texto solto), o Strata ancora memórias diretamente na estrutura de código:
+To eliminate the fundamental defect of generic memory engines—which treat source code as unformatted, drifting natural language chunks—Strata anchors code-derived memories directly to abstract syntax tree nodes and Git Merkle trees.
 
-### 3.1 Identificador Universal de Símbolo (`SymbolPath`)
-Toda memória gerada a partir do código recebe um ponteiro estruturado:
+### 3.1 Universal Symbol Identifier (`SymbolPath`)
+Every memory record derived from or referencing codebase entities receives a structured cryptographic pointer:
+
 ```rust
 pub struct CodeAnchor {
-    pub file_path: String,          // ex: "crates/strata-memory/src/store.rs"
-    pub symbol_path: String,        // ex: "strata_memory::store::MemoryStore::search"
+    pub file_path: String,          // e.g., "crates/strata-memory/src/store.rs"
+    pub symbol_path: String,        // e.g., "strata_memory::store::MemoryStore::search"
     pub symbol_type: SymbolType,    // Function | Struct | Trait | Module | Const
-    pub git_commit_hash: String,    // Hash Merkle no momento da criação
-    pub ast_node_hash: String,      // Hash do nó Tree-Sitter (detecta refatoração mesmo com commit novo)
+    pub git_commit_hash: String,    // Merkle commit hash at anchor creation
+    pub ast_node_hash: String,      // Tree-Sitter AST hash (detects refactorings across commits)
 }
 ```
 
-### 3.2 Validação Bi-Temporal via Merkle Tree
-1. Quando um arquivo é modificado, o parser Tree-Sitter extrai os nós alterados em $< 5\text{ms}$.
-2. Se o `ast_node_hash` do símbolo mudou, a memória associada recebe um timestamp de `valid_until = now()` e o JTMS dispara uma re-validação ou marcação de obsolescência, impedindo que o agente alucine contratos de funções que já mudaram.
+### 3.2 Bi-Temporal Validation via Merkle Tree Invalidation
+1. When a source file is altered, the Tree-Sitter parser extracts modified AST node hashes in $< 5\text{ms}$.
+2. If the `ast_node_hash` for a symbol diverges from its recorded anchor, the associated memory record is assigned a validity boundary of `valid_until = now()`. The JTMS triggers an automatic deprecation warning or re-verification cycle, preventing connected agents from hallucinating deprecated function signatures or obsolete architectural contracts.
 
 ---
 
-## 🛑 4. Memória Negativa & Captura Silenciosa de Anti-Padrões (O Maior Gap de Mercado)
+## 4. Negative Memory & Silent Anti-Pattern Interception
 
-O Strata intercepta comandos de terminal e ferramentas para **garantir que nenhum agente repita o mesmo erro**:
+Software engineering agents routinely repeat documented failures across distinct conversational sessions. Strata intercepts terminal and tool execution pipelines to capture structured failure modes, preventing identical regressions across agent runs.
 
-### Schema de Memória Negativa (`AntiPattern`):
+### Negative Memory Schema (`AntiPattern`):
 ```json
 {
   "id": "anti_rust_dyn_port_8192",
@@ -121,20 +122,20 @@ O Strata intercepta comandos de terminal e ferramentas para **garantir que nenhu
 }
 ```
 
-### Injeção Preempitiva de Baixo Custo (< 50 tokens):
-Quando o agente inicia uma tarefa relacionada a `deploy` ou toca no `railway.toml`, o Strata injeta diretamente no prompt:
+### Preemptive Low-Overhead Injection (< 50 tokens):
+When an agent initiates an action involving deployment workflows or modifies `railway.toml`, Strata injects an immediate, high-priority constraint directly into the prompt context:
 > `[KNOWN ANTI-PATTERN]: DO NOT hardcode PORT 8080. Always bind dynamically to std::env::var("PORT"). (Triggered by: railway.toml)`
 
 ---
 
-## ⚖️ 5. JTMS Bi-Temporal & Resolução de Contradições
+## 5. Bi-Temporal JTMS & Deterministic Contradiction Resolution
 
-O Strata gerencia o ciclo de vida da verdade através do modelo bi-temporal integrado com JTMS:
+Strata models belief lifecycles through a formal bi-temporal framework integrated with a Justification-based Truth Maintenance System (JTMS):
 
 ```text
-       Tempo do Mundo Real (Validade da Regra de Negócio)
+       Real-World Valid Time (Domain Rule Validity)
   ├───────────────────────────────┼───────────────────────────────►
-  [Regra V1: REST API]             [Regra V2: gRPC + Protobuf]
+  [Rule V1: REST API]             [Rule V2: gRPC + Protobuf]
   valid_from: 2025-01-01          valid_from: 2026-08-19
   valid_until: 2026-08-19         valid_until: ∞
   Status: OUT (Deprecated)        Status: IN (Active)
@@ -142,36 +143,36 @@ O Strata gerencia o ciclo de vida da verdade através do modelo bi-temporal inte
               └──────── replaced_by ──────────┘
 ```
 
-- **Tempo Transacional**: Gravado no SQLite com `created_at` imutável.
-- **Tempo Válido**: `valid_from` e `valid_until` controlam se a diretriz é historicamente auditável ou ativamente injetada no prompt atual.
+- **Transaction Time**: Immutable record timestamp stored in SQLite (`created_at`).
+- **Valid Time**: Interval defined by `valid_from` and `valid_until` determining whether an engineering rule is historically preserved for compliance/audits or actively eligible for live prompt injection.
 
 ---
 
-## 📊 6. Motor Determinístico de Decaimento (Zero Token Overhead)
+## 6. Deterministic Decay Engine (Zero Token Overhead)
 
-Em vez de pagar chamadas de LLM para ranquear memórias, o Cortex calcula a saliência cognitiva em microssegundos:
+Rather than consuming costly LLM inference calls to score memory relevance, Cortex calculates cognitive salience in microseconds on pure CPU:
 
 $$\text{FinalScore}(m) = w_v \cdot \text{Sim}_{\text{cos}}(q, m) + w_b \cdot \text{BM25}(q, m) + w_a \cdot A_m(t) + w_e \cdot R_m(t) + w_p \cdot \mathbb{I}_{\text{AntiPattern}}$$
 
-Onde:
-- $A_m(t) = \alpha \ln\left(\sum_{k=1}^n t_k^{-d}\right) + \beta I_m + \gamma C_m$ (Ativação ACT-R)
-- $R_m(t) = \exp\left(-\frac{t}{S_m}\right)$ (Retenção Ebbinghaus)
-- $\mathbb{I}_{\text{AntiPattern}}$: Boost multiplicativo imediato se for um guardrail negativo para o contexto atual.
+Where:
+- $A_m(t) = \alpha \ln\left(\sum_{k=1}^n t_k^{-d}\right) + \beta I_m + \gamma C_m$ (ACT-R base-level cognitive activation)
+- $R_m(t) = \exp\left(-\frac{t}{S_m}\right)$ (Ebbinghaus memory retention curve)
+- $\mathbb{I}_{\text{AntiPattern}}$: Immediate multiplicative boost applied whenever a guardrail pattern matches the current task context.
 
 ---
 
-## 🤖 7. Mineração Autônoma de Datasets de Alinhamento (DPO / KTO / SFT)
+## 7. Autonomous Alignment Dataset Mining (DPO / KTO / SFT)
 
-O Strata transforma a atividade de codificação do dia a dia em pares de preferência de alta qualidade:
+Strata converts ambient developer execution traces into gold-standard preference pairs without human labeling overhead:
 
 ```text
-Agent Session #409 (Bugfix in Memory Cache)
- ├── Tentativa 1: Mutex<HashMap> -> Deadlock em thread assíncrona (cargo test FALHOU)
- ├── Tentativa 2: RwLock<HashMap> -> Data race em escrita concorrente (cargo test FALHOU)
- └── Tentativa 3: DashMap / ArcSwap -> 100% dos testes passaram (cargo test PASSOU)
+Agent Execution Trajectory #409 (Bugfix in Memory Cache)
+ ├── Attempt 1: Mutex<HashMap> -> Deadlock in async worker thread (cargo test FAILED)
+ ├── Attempt 2: RwLock<HashMap> -> Data race during concurrent writes (cargo test FAILED)
+ └── Attempt 3: DashMap / ArcSwap -> 100% tests passed (cargo test PASSED)
 ```
 
-**Resultado minerado automaticamente para `dpo_dataset.jsonl`:**
+**Mined Preference Pair Exported to `dpo_dataset.jsonl`:**
 ```json
 {
   "prompt": "Implement high-concurrency read-heavy memory cache for Strata in Rust",
@@ -187,15 +188,15 @@ Agent Session #409 (Bugfix in Memory Cache)
 
 ---
 
-## 🔌 8. Especificação das 5 Ferramentas MCP Universais
+## 8. Specification of the 5 Universal MCP Tools
 
-O servidor MCP (`strata-cli mcp`) expõe o Cortex com contratos estritos:
+The Strata MCP server (`strata-cli mcp`) exposes the Cortex engine via strict JSON-RPC contracts:
 
 ```json
 [
   {
     "name": "memory_search",
-    "description": "Busca híbrida (Vetorial + FTS5 BM25 + Grafo) filtrada por relevância cognitiva e budget de tokens.",
+    "description": "Hybrid multi-modal search (Vector + FTS5 BM25 + Graph) filtered by cognitive salience and strict token budget constraints.",
     "parameters": {
       "query": "string",
       "limit": "integer (default 5)",
@@ -205,14 +206,14 @@ O servidor MCP (`strata-cli mcp`) expõe o Cortex com contratos estritos:
   },
   {
     "name": "memory_get",
-    "description": "Recupera o registro atômico com grafo de evidências, justificação JTMS e proveniência causal.",
+    "description": "Retrieves an atomic memory record with evidence graph, JTMS justification dependencies, and causal provenance links.",
     "parameters": {
       "id": "string"
     }
   },
   {
     "name": "memory_write",
-    "description": "Grava uma nova memória (Semântica, Procedural, Anti-Padrão ou Regra de Projeto) com ancoragem opcional de AST.",
+    "description": "Persists a new memory record (Semantic, Procedural, AntiPattern, or CoreRule) with optional Tree-Sitter AST code anchoring.",
     "parameters": {
       "content": "string",
       "memory_type": "Semantic | Procedural | AntiPattern | CoreRule",
@@ -223,7 +224,7 @@ O servidor MCP (`strata-cli mcp`) expõe o Cortex com contratos estritos:
   },
   {
     "name": "memory_digest",
-    "description": "Gera um resumo compacto e compilado do contexto ideal para a tarefa atual, respeitando o token budget.",
+    "description": "Synthesizes a compact, compiled context summary tailored to the active task, strictly adhering to the configured token budget.",
     "parameters": {
       "current_task": "string",
       "active_files": "array of strings",
@@ -232,7 +233,7 @@ O servidor MCP (`strata-cli mcp`) expõe o Cortex com contratos estritos:
   },
   {
     "name": "memory_feedback",
-    "description": "Registra reforço cognitivo (útil / inútil / causou erro) ajustando a estabilidade Ebbinghaus e ACT-R do chunk.",
+    "description": "Records empirical execution reinforcement (Success / Failure / Rejected), calibrating Ebbinghaus stability and ACT-R weights.",
     "parameters": {
       "memory_id": "string",
       "outcome": "Success | Failure | Rejected"
@@ -243,11 +244,11 @@ O servidor MCP (`strata-cli mcp`) expõe o Cortex com contratos estritos:
 
 ---
 
-## 🎯 9. Roadmap de Implementação das Novas Capacidades no Strata
+## 9. Capability Implementation Roadmap
 
-1. [x] **Core Engine em Rust & SQLite WAL**: Implementado e validado (`strata-core`, `strata-memory`).
-2. [x] **JTMS Belief Revision & ACT-R**: Implementado com 49/49 testes passando.
-3. [x] **DPO / KTO Preference Miner**: Pipeline de extração estruturado.
-4. [ ] **Tree-Sitter AST & Merkle Hash Anchor**: Adicionar crate/módulo para indexação estrutural de símbolos.
-5. [ ] **Classificação Estrita de 3 Tiers**: Formalizar os tiers *Core*, *Working* e *Peripheral* com rotina de cold storage no comando `strata prune`.
-6. [ ] **Command Interceptor Middleware**: Criar hook de shell (`strata hook wrap -- <cmd>`) para capturar automaticamente falhas de build e gravar `AntiPatterns`.
+1. [x] **Native Rust Core Engine & SQLite WAL**: Fully implemented and validated (`strata-core`, `strata-memory`).
+2. [x] **JTMS Belief Revision & Deterministic ACT-R**: Validated with comprehensive test coverage (49/49 unit and integration tests passing).
+3. [x] **DPO / KTO Preference Miner**: Trajectory extraction pipeline implemented.
+4. [ ] **Tree-Sitter AST & Merkle Hash Anchor**: Structural symbol indexing module for code entity binding.
+5. [ ] **Strict Tri-Tier Classification & Cold Storage**: Formalization of *Core*, *Working*, and *Peripheral* tiers with automated disk compaction in `strata prune`.
+6. [ ] **Command Interceptor Middleware**: Shell execution wrapper (`strata hook wrap -- <cmd>`) to capture silent build/test failures and generate `AntiPatterns`.

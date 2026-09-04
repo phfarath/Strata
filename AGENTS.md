@@ -1,4 +1,4 @@
-<!-- STRATA_MEMORY_START -->
+﻿<!-- STRATA_MEMORY_START -->
 ## Strata Persistent Memory Protocol
 - Consult Strata memory tools (`memory_search`, `memory_get`) before planning non-trivial tasks.
 - Check known failure anti-patterns before running destructive or complex operations.
@@ -9,35 +9,34 @@
   *Mitigation*: Avoid repeating identical invalid parameters or unverified flags
 
 ### Verified Semantic Facts
-- Protocolo de Contingência Ômega-7
+- Contingency Protocol Omega-7
 - Offline-First CDC Engine
-- Universal MCP Multi-Version
+- Universal MCP Multi-Version Transport
 - Radical Simplicity Principle
-- Mecanismo Out-of-Band de Captura Silenciosa de Erros
-- Arquitetura dos 3 Pontos de Ancoragem do Strata
-- Arquitetura Tri-Tier Cognitiva (Core, Working, Peripheral)
-- Ancoragem AST Tree-Sitter com Merkle Tree Git
-- JTMS Bi-Temporal com Truth Maintenance Determinístico
-- Mineração Autônoma de Datasets DPO/KTO a partir de Trajetórias de Código
-- Native Call Graph & Import Dependency Analyzer em Rust (STRATA-T-16)
-- Multi-Package Monorepo & Workspace Boundaries Isolator (STRATA-T-17)
-- Ambiente Local Docker com Paridade 100% Cloud (PostgreSQL 16, pgvector, Axum Server)
+- Out-of-Band Silent Error Capture Mechanism
+- Strata 3-Point Code Anchoring Architecture
+- Tri-Tier Cognitive Memory Hierarchy (Core, Working, Peripheral)
+- Tree-Sitter AST Anchoring with Git Merkle Tree
+- Bi-Temporal JTMS with Deterministic Truth Maintenance
+- Autonomous DPO/KTO/SFT Dataset Mining from Agent Trajectories
+- Native Call Graph & Import Dependency Analyzer in Rust (STRATA-T-16)
+- Multi-Package Monorepo & Workspace Boundary Isolator (STRATA-T-17)
+- Local-First SQLite Persistence with FastEmbed ONNX Vectors
+- Cloud Parity Multi-Tenant Backend (PostgreSQL 16, pgvector, Axum) in phfarath/strata-cloud
 <!-- STRATA_MEMORY_END -->
 
-## Ambiente Local no Docker (Paridade com Nuvem)
-O repositório possui uma stack Docker Compose pronta que replica exatamente o ambiente de nuvem (Railway + Supabase/Neon PostgreSQL com extensão `pgvector`):
+## Local Development & Testing Workflow
+Strata Open Core runs 100% local-first on the developer's machine:
 
-- **Subir a stack completa**: `docker compose up -d`
-- **Verificar saúde e status**: `curl http://localhost:8080/health` (ou `docker ps`)
-- **Executar suíte de testes E2E local**: `powershell .\docker\test_local_stack.ps1`
-- **Derrubar a stack**: `docker compose down`
+- **Check compilation across workspace**: `cargo check --workspace`
+- **Run all unit & integration tests**: `cargo test --workspace`
+- **Run the local MCP Server via Stdio**: `cargo run -p strata-cli --bin strata -- mcp`
+- **Run with MCP Inspector**: `npx @modelcontextprotocol/inspector cargo run -p strata-cli --bin strata -- mcp`
 
-### Serviços Docker:
-1. `strata-db`: PostgreSQL 16 com extensão `pgvector` e `uuid-ossp` na porta `5432`.
-2. `strata-server`: Servidor Rust Axum com CDC sync, SaaS auth, pgvector embeddings e WebSockets na porta `8080`.
+> Note: The managed multi-tenant cloud backend and Docker stack are maintained separately in [`phfarath/strata-cloud`](https://github.com/phfarath/strata-cloud).
 
-## Diretrizes de Engenharia do Projeto (Strata)
-- **Código Enxuto e Limpo**: Otimizar sempre para o mínimo de código necessário. Evitar boilerplate, abstrações prematuras ou over-engineering.
-- **Simplicidade Radical**: Preferir implementações diretas em Rust com tipos bem desenhados antes de adicionar camadas extras.
-- **Atomicidade e Modularidade**: Cada crate deve ter escopo estrito, sem acoplamento oculto.
-- **TDD Rigoroso**: Todo novo recurso ou comando deve ser construído via ciclo Red -> Green -> Refactor acompanhado de testes unitários e E2E.
+## Engineering Guidelines (Strata)
+- **Lean & Clean Code**: Always optimize for minimal necessary code. Avoid premature abstractions, unnecessary boilerplate, or over-engineering.
+- **Radical Simplicity**: Prefer direct Rust implementations with well-designed types before adding extra abstraction layers.
+- **Atomicity & Modularity**: Each crate must have a strict, well-defined scope with no hidden coupling.
+- **Strict TDD**: Every new feature, command, or bug fix must follow the Red -> Green -> Refactor cycle accompanied by unit and integration tests.
