@@ -22,7 +22,7 @@ pub struct WorkspaceMonorepoEval;
 
 impl WorkspaceMonorepoEval {
     pub async fn run_eval() -> Result<WorkspaceMonorepoEvalResult, StrataError> {
-        let temp_dir = std::env::temp_dir().join("strata_eval_workspace_monorepo");
+        let temp_dir = std::env::temp_dir().join(format!("strata_eval_workspace_monorepo_{}", uuid::Uuid::new_v4()));
         let _ = std::fs::create_dir_all(&temp_dir);
 
         // 1. Setup multi-package workspace filesystem structure
