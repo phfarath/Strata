@@ -1,0 +1,33 @@
+name: Strata Guard
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened]
+
+concurrency:
+  group: strata-guard-${{ github.workflow }}-${{ github.head_ref || github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+  pull-requests: write
+  issues: write
+
+jobs:
+  guard:
+    name: Strata Causal PR Review
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Run Strata Guard
+        uses: ./.github/actions/strata-guard
+        with:
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          pr-title: ${{ github.event.pull_request.title }}
+          base-ref: ${{ github.base_ref }}
+          comment-on-pr: 'true'
+          fail-on-critical: 'false'

@@ -1,0 +1,171 @@
+name: 'Strata Guard'
+description: 'Automated PR reviewer using Strata cognitive memory, causal world model, and failure patterns'
+author: 'Strata Contributors'
+
+inputs:
+  github-token:
+    description: 'GitHub token for posting PR comments and interacting with GitHub API'
+    required: false
+    default: ${{ github.token }}
+  pr-title:
+    description: 'Pull request title for querying failure anti-patterns and memory associations'
+    required: false
+    default: ${{ github.event.pull_request.title }}
+  base-ref:
+    description: 'Base branch ref for git diff computation'
+    required: false
+    default: ${{ github.base_ref }}
+  comment-on-pr:
+    description: 'Whether to post or update a sticky review comment on the PR'
+    required: false
+    default: 'true'
+  fail-on-critical:
+    description: 'Whether to fail the action step if overall risk level is Critical'
+    required: false
+    default: 'false'
+  strata-bin:
+    description: 'Path to pre-built strata executable. If omitted, strata CLI is built via cargo.'
+    required: false
+    default: ''
+
+outputs:
+  risk-level:
+    description: 'Overall architectural risk level (Low, Moderate, Elevated, Critical)'
+    value: ${{ steps.review.outputs.risk-level }}
+  risk-score:
+    description: 'Pre-code risk score as a percentage integer (0-100)'
+    value: ${{ steps.review.outputs.risk-score }}
+  safe-to-apply:
+    description: 'Whether the patch simulation indicates the change is safe to apply'
+    value: ${{ steps.review.outputs.safe-to-apply }}
+  report-markdown:
+    description: 'Full markdown formatted review report'
+    value: ${{ steps.review.outputs.report-markdown }}
+
+runs:
+  using: 'composite'
+  steps:
+    - name: Locate or Determine Strata Binary
+      id: strata-binary
+      shell: bash
+      env:
+        CUSTOM_BIN: ${{ inputs.strata-bin }}
+      run: |
+        if [ -n "$CUSTOM_BIN" ] && [ -x "$CUSTOM_BIN" ]; then
+          echo "Using custom Strata binary: $CUSTOM_BIN"
+          echo "STRATA_BIN=$CUSTOM_BIN" >> "$GITHUB_ENV"
+          echo "build_needed=false" >> "$GITHUB_OUTPUT"
+        elif [ -f "./target/release/strata" ]; then
+          echo "Found existing Strata release binary at ./target/release/strata"
+          echo "STRATA_BIN=./target/release/strata" >> "$GITHUB_ENV"
+          echo "build_needed=false" >> "$GITHUB_OUTPUT"
+        elif [ -f "./target/release/strata.exe" ]; then
+          echo "Found existing Strata release binary at ./target/release/strata.exe"
+          echo "STRATA_BIN=./target/release/strata.exe" >> "$GITHUB_ENV"
+          echo "build_needed=false" >> "$GITHUB_OUTPUT"
+        else
+          echo "No pre-built Strata binary found. Build needed."
+          echo "build_needed=true" >> "$GITHUB_OUTPUT"
+        fi
+
+    - name: Set up Rust toolchain
+      if: steps.strata-binary.outputs.build_needed == 'true'
+      uses: dtolnay/rust-toolchain@stable
+
+    - name: Rust Cache
+      if: steps.strata-binary.outputs.build_needed == 'true'
+      uses: Swatinem/rust-cache@v2
+      with:
+        key: strata-guard-cli
+
+    - name: Build Strata CLI
+      if: steps.strata-binary.outputs.build_needed == 'true'
+      shell: bash
+      run: |
+        echo "Building strata-cli in release mode..."
+        cargo build --release -p strata-cli --bin strata
+        if [ -f "./target/release/strata" ]; then
+          BIN="./target/release/strata"
+        else
+          BIN="./target/release/strata.exe"
+        fi
+        echo "STRATA_BIN=$BIN" >> "$GITHUB_ENV"
+        echo "Successfully built Strata at $BIN"
+
+    - name: Resolve Changed Files
+      id: diff
+      shell: bash
+      env:
+        BASE_REF: ${{ inputs.base-ref }}
+      run: |
+        if [ -n "${BASE_REF}" ]; then
+          echo "Fetching base ref: origin/${BASE_REF}..."
+          git fetch origin "${BASE_REF}" --depth=1 || true
+          DIFF_REF="origin/${BASE_REF}"
+        else
+          DIFF_REF="HEAD~1"
+        fi
+
+        echo "Computing git diff against ${DIFF_REF}..."
+        CHANGED_FILES=$(git diff --name-only "${DIFF_REF}...HEAD" 2>/dev/null || echo "")
+
+        if [ -z "$CHANGED_FILES" ]; then
+          CHANGED_FILES=$(git diff --name-only HEAD~1...HEAD 2>/dev/null || echo "")
+        fi
+
+        CSV_FILES=$(echo "$CHANGED_FILES" | tr '\r\n' '\n' | grep -v '^$' | paste -sd, - || echo "")
+        echo "Resolved changed files: $CSV_FILES"
+        echo "files=$CSV_FILES" >> "$GITHUB_OUTPUT"
+
+    - name: Run Causal Blast Radius Analysis
+      shell: bash
+      env:
+        FILES: ${{ steps.diff.outputs.files }}
+      run: |
+        mkdir -p .strata-reports
+        EXE="${STRATA_BIN:-./target/release/strata}"
+        if [ ! -f "$EXE" ] && [ -f "./target/release/strata.exe" ]; then
+          EXE="./target/release/strata.exe"
+        fi
+
+        if [ -n "$FILES" ]; then
+          echo "Executing: $EXE blast-radius --files \"$FILES\" --json"
+          $EXE blast-radius --files "$FILES" --json > .strata-reports/blast-radius.json || {
+            echo '{"modified_targets":[],"total_impacted_nodes":0,"highest_risk_score":0.0,"breaking_risks_count":0,"triggered_anti_patterns":[],"safe_to_apply":true,"blast_reports":[]}' > .strata-reports/blast-radius.json
+          }
+        else
+          echo "No modified files detected in diff. Generating clean baseline report."
+          echo '{"modified_targets":[],"total_impacted_nodes":0,"highest_risk_score":0.0,"breaking_risks_count":0,"triggered_anti_patterns":[],"safe_to_apply":true,"blast_reports":[]}' > .strata-reports/blast-radius.json
+        fi
+
+    - name: Search Failure Anti-Patterns & Cognitive Memory
+      shell: bash
+      env:
+        PR_TITLE: ${{ inputs.pr-title }}
+      run: |
+        mkdir -p .strata-reports
+        EXE="${STRATA_BIN:-./target/release/strata}"
+        if [ ! -f "$EXE" ] && [ -f "./target/release/strata.exe" ]; then
+          EXE="./target/release/strata.exe"
+        fi
+
+        QUERY="${PR_TITLE:-pull request review}"
+        echo "Executing: $EXE hook user-prompt --query \"$QUERY\" --json"
+        $EXE hook user-prompt --query "$QUERY" --json > .strata-reports/hook-prompt.json || {
+          echo '{"known_failures":[],"memories":[],"query":""}' > .strata-reports/hook-prompt.json
+        }
+
+    - name: Strata Guard Reviewer & Sticky Comment
+      id: review
+      uses: actions/github-script@v7
+      env:
+        COMMENT_ON_PR: ${{ inputs.comment-on-pr }}
+        FAIL_ON_CRITICAL: ${{ inputs.fail-on-critical }}
+        PR_TITLE: ${{ inputs.pr-title }}
+      with:
+        github-token: ${{ inputs.github-token }}
+        script: |
+          const path = require('path');
+          const scriptPath = path.resolve(process.env.GITHUB_ACTION_PATH || '.', 'reviewer.js');
+          const reviewer = require(scriptPath);
+          await reviewer({ github, context, core });
