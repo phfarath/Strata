@@ -15,6 +15,7 @@ use strata_core::schemas::{
     SyncDelta,
 };
 
+use strata_core::a2a::{AgentPresence, LeaseAcquireResult, ResourceLease};
 use strata_core::state::{
     FailurePattern, FailureSeverity, MemoryRecord, MemoryTier, MemoryType, Scope,
 };
@@ -25,6 +26,12 @@ use crate::embedding::{bytes_to_embedding, embedding_to_bytes};
 
 pub struct SqliteStore {
     conn: Arc<Mutex<Connection>>,
+}
+
+impl std::fmt::Debug for SqliteStore {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("SqliteStore").finish()
+    }
 }
 
 impl SqliteStore {
@@ -554,6 +561,28 @@ impl SqliteStore {
 
             CREATE INDEX IF NOT EXISTS idx_fact_deps_dependent ON fact_dependencies(dependent_fact_id);
             CREATE INDEX IF NOT EXISTS idx_fact_deps_prereq ON fact_dependencies(prerequisite_fact_id);
+
+            -- Agent Presence Table for Stigmergic Workspace Coordination
+            CREATE TABLE IF NOT EXISTS agent_presence (
+                agent_id TEXT PRIMARY KEY,
+                host TEXT NOT NULL,
+                pid INTEGER NOT NULL,
+                active_task TEXT,
+                heartbeat_at INTEGER NOT NULL
+            );
+
+            CREATE INDEX IF NOT EXISTS idx_agent_presence_hb ON agent_presence(heartbeat_at);
+
+            -- Resource Leases Table for Cross-Agent Conflict Prevention
+            CREATE TABLE IF NOT EXISTS resource_leases (
+                resource_id TEXT PRIMARY KEY,
+                agent_id TEXT NOT NULL,
+                lease_expires_at INTEGER NOT NULL,
+                metadata TEXT
+            );
+
+            CREATE INDEX IF NOT EXISTS idx_resource_leases_expires ON resource_leases(lease_expires_at);
+            CREATE INDEX IF NOT EXISTS idx_resource_leases_agent ON resource_leases(agent_id);
             ",
         )
         .map_err(|e| StrataError::Database(format!("Failed to execute schema migration: {e}")))?;
@@ -3993,6 +4022,271 @@ impl SqliteStore {
         } else {
             Ok(None)
         }
+    }
+
+    // ==========================================
+    // Agent-to-Agent (A2A) Stigmergic Leases & Presence Operations
+    // ==========================================
+
+    /// Upserts agent presence and heartbeat.
+    pub fn record_agent_presence(&self, presence: &AgentPresence) -> Result<(), StrataError> {
+        let conn = self
+            .conn
+            .lock()
+            .map_err(|_| StrataError::Database("Lock poisoned on SQLite connection".to_string()))?;
+
+        conn.execute(
+            "INSERT INTO agent_presence (agent_id, host, pid, active_task, heartbeat_at)
+             VALUES (?1, ?2, ?3, ?4, ?5)
+             ON CONFLICT(agent_id) DO UPDATE SET
+                 host = excluded.host,
+                 pid = excluded.pid,
+                 active_task = excluded.active_task,
+                 heartbeat_at = excluded.heartbeat_at",
+            params![
+                presence.agent_id,
+                presence.host,
+                presence.pid,
+                presence.active_task,
+                presence.heartbeat_at
+            ],
+        )
+        .map_err(|e| StrataError::Database(format!("Failed to record agent presence: {e}")))?;
+
+        Ok(())
+    }
+
+    /// Retrieves all active agents whose last heartbeat is within `ttl_seconds`.
+    pub fn get_active_agents(&self, ttl_seconds: i64) -> Result<Vec<AgentPresence>, StrataError> {
+        let conn = self
+            .conn
+            .lock()
+            .map_err(|_| StrataError::Database("Lock poisoned on SQLite connection".to_string()))?;
+
+        let now = Utc::now().timestamp();
+        let cutoff = now - ttl_seconds;
+
+        let mut stmt = conn
+            .prepare(
+                "SELECT agent_id, host, pid, active_task, heartbeat_at
+                 FROM agent_presence
+                 WHERE heartbeat_at >= ?1
+                 ORDER BY heartbeat_at DESC",
+            )
+            .map_err(|e| StrataError::Database(e.to_string()))?;
+
+        let rows = stmt
+            .query_map(params![cutoff], |row| {
+                Ok(AgentPresence {
+                    agent_id: row.get(0)?,
+                    host: row.get(1)?,
+                    pid: row.get(2)?,
+                    active_task: row.get(3)?,
+                    heartbeat_at: row.get(4)?,
+                })
+            })
+            .map_err(|e| StrataError::Database(e.to_string()))?;
+
+        let mut list = Vec::new();
+        for r in rows {
+            list.push(r.map_err(|e| StrataError::Database(e.to_string()))?);
+        }
+
+        Ok(list)
+    }
+
+    /// Removes an agent presence record (e.g. on clean agent exit).
+    pub fn remove_agent_presence(&self, agent_id: &str) -> Result<bool, StrataError> {
+        let conn = self
+            .conn
+            .lock()
+            .map_err(|_| StrataError::Database("Lock poisoned on SQLite connection".to_string()))?;
+
+        let rows = conn
+            .execute(
+                "DELETE FROM agent_presence WHERE agent_id = ?1",
+                params![agent_id],
+            )
+            .map_err(|e| StrataError::Database(format!("Failed to remove agent presence: {e}")))?;
+
+        Ok(rows > 0)
+    }
+
+    /// Atomically acquires or renews a lease on a resource with a given TTL.
+    ///
+    /// If the resource is unleased or expired, or already held by the same agent,
+    /// the lease is acquired/renewed and `LeaseAcquireResult::Acquired` is returned.
+    ///
+    /// If another agent holds an unexpired lease, `LeaseAcquireResult::Conflict` is returned.
+    pub fn acquire_or_renew_lease(
+        &self,
+        resource_id: &str,
+        agent_id: &str,
+        ttl_seconds: i64,
+        metadata: Option<&str>,
+    ) -> Result<LeaseAcquireResult, StrataError> {
+        let conn = self
+            .conn
+            .lock()
+            .map_err(|_| StrataError::Database("Lock poisoned on SQLite connection".to_string()))?;
+
+        let now = Utc::now().timestamp();
+        let expires_at = now + ttl_seconds;
+
+        // Atomic acquire/renew statement
+        let rows_affected = conn
+            .execute(
+                "INSERT INTO resource_leases (resource_id, agent_id, lease_expires_at, metadata)
+             VALUES (?1, ?2, ?3, ?4)
+             ON CONFLICT(resource_id) DO UPDATE SET
+                 agent_id = excluded.agent_id,
+                 lease_expires_at = excluded.lease_expires_at,
+                 metadata = excluded.metadata
+             WHERE lease_expires_at <= ?5 OR agent_id = excluded.agent_id",
+                params![resource_id, agent_id, expires_at, metadata, now],
+            )
+            .map_err(|e| {
+                StrataError::Database(format!("Failed to execute atomic lease statement: {e}"))
+            })?;
+
+        if rows_affected > 0 {
+            Ok(LeaseAcquireResult::Acquired {
+                resource_id: resource_id.to_string(),
+                expires_at,
+            })
+        } else {
+            // Conflict: query who holds the unexpired lease
+            let mut stmt = conn
+                .prepare(
+                    "SELECT agent_id, lease_expires_at FROM resource_leases WHERE resource_id = ?1",
+                )
+                .map_err(|e| StrataError::Database(e.to_string()))?;
+
+            let conflict_info = stmt
+                .query_row(params![resource_id], |row| {
+                    let held_by: String = row.get(0)?;
+                    let held_until: i64 = row.get(1)?;
+                    Ok((held_by, held_until))
+                })
+                .optional()
+                .map_err(|e| StrataError::Database(e.to_string()))?;
+
+            if let Some((held_by, held_until)) = conflict_info {
+                let remaining_seconds = (held_until - now).max(0);
+                Ok(LeaseAcquireResult::Conflict {
+                    resource_id: resource_id.to_string(),
+                    held_by,
+                    remaining_seconds,
+                })
+            } else {
+                // Highly improbable edge case: row was deleted immediately after
+                Ok(LeaseAcquireResult::Acquired {
+                    resource_id: resource_id.to_string(),
+                    expires_at,
+                })
+            }
+        }
+    }
+
+    /// Releases a lease if held by the given agent.
+    pub fn release_lease(&self, resource_id: &str, agent_id: &str) -> Result<bool, StrataError> {
+        let conn = self
+            .conn
+            .lock()
+            .map_err(|_| StrataError::Database("Lock poisoned on SQLite connection".to_string()))?;
+
+        let rows = conn
+            .execute(
+                "DELETE FROM resource_leases WHERE resource_id = ?1 AND agent_id = ?2",
+                params![resource_id, agent_id],
+            )
+            .map_err(|e| StrataError::Database(format!("Failed to release lease: {e}")))?;
+
+        Ok(rows > 0)
+    }
+
+    /// Fetches a lease for a resource.
+    pub fn get_lease(&self, resource_id: &str) -> Result<Option<ResourceLease>, StrataError> {
+        let conn = self
+            .conn
+            .lock()
+            .map_err(|_| StrataError::Database("Lock poisoned on SQLite connection".to_string()))?;
+
+        let mut stmt = conn
+            .prepare(
+                "SELECT resource_id, agent_id, lease_expires_at, metadata
+             FROM resource_leases WHERE resource_id = ?1",
+            )
+            .map_err(|e| StrataError::Database(e.to_string()))?;
+
+        let lease = stmt
+            .query_row(params![resource_id], |row| {
+                Ok(ResourceLease {
+                    resource_id: row.get(0)?,
+                    agent_id: row.get(1)?,
+                    lease_expires_at: row.get(2)?,
+                    metadata: row.get(3)?,
+                })
+            })
+            .optional()
+            .map_err(|e| StrataError::Database(e.to_string()))?;
+
+        Ok(lease)
+    }
+
+    /// Returns all unexpired leases.
+    pub fn list_active_leases(&self) -> Result<Vec<ResourceLease>, StrataError> {
+        let conn = self
+            .conn
+            .lock()
+            .map_err(|_| StrataError::Database("Lock poisoned on SQLite connection".to_string()))?;
+
+        let now = Utc::now().timestamp();
+
+        let mut stmt = conn
+            .prepare(
+                "SELECT resource_id, agent_id, lease_expires_at, metadata
+             FROM resource_leases
+             WHERE lease_expires_at > ?1
+             ORDER BY lease_expires_at ASC",
+            )
+            .map_err(|e| StrataError::Database(e.to_string()))?;
+
+        let rows = stmt
+            .query_map(params![now], |row| {
+                Ok(ResourceLease {
+                    resource_id: row.get(0)?,
+                    agent_id: row.get(1)?,
+                    lease_expires_at: row.get(2)?,
+                    metadata: row.get(3)?,
+                })
+            })
+            .map_err(|e| StrataError::Database(e.to_string()))?;
+
+        let mut list = Vec::new();
+        for r in rows {
+            list.push(r.map_err(|e| StrataError::Database(e.to_string()))?);
+        }
+
+        Ok(list)
+    }
+
+    /// Prunes expired leases from the database.
+    pub fn prune_expired_leases(&self) -> Result<usize, StrataError> {
+        let conn = self
+            .conn
+            .lock()
+            .map_err(|_| StrataError::Database("Lock poisoned on SQLite connection".to_string()))?;
+
+        let now = Utc::now().timestamp();
+        let rows = conn
+            .execute(
+                "DELETE FROM resource_leases WHERE lease_expires_at <= ?1",
+                params![now],
+            )
+            .map_err(|e| StrataError::Database(format!("Failed to prune expired leases: {e}")))?;
+
+        Ok(rows)
     }
 }
 

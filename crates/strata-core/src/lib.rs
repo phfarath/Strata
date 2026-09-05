@@ -1,3 +1,4 @@
+pub mod a2a;
 pub mod errors;
 pub mod events;
 pub mod schemas;
@@ -5,6 +6,7 @@ pub mod state;
 pub mod traits;
 
 // Re-exports for convenience
+pub use a2a::{AgentPresence, LeaseAcquireResult, ResourceLease};
 pub use errors::StrataError;
 pub use events::{
     CanonicalEvent, DataClassification, ErrorObserved, Event, EventId, EventPayload,

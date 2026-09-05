@@ -1,0 +1,10 @@
+{
+  "mcpServers": {
+    "strata": {
+      "args": [
+        "mcp"
+      ],
+      "command": "strata"
+    }
+  }
+}

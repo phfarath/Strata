@@ -7,6 +7,7 @@ pub mod consolidation;
 pub mod decay;
 pub mod embedding;
 pub mod jtms;
+pub mod leases;
 pub mod pipeline;
 pub mod retrieval;
 pub mod store;
@@ -48,6 +49,7 @@ pub use embedding::{
     FastEmbedProvider, MockEmbeddingProvider,
 };
 pub use jtms::{ConflictMatch, ConflictResolution, TruthMaintenanceSystem};
+pub use leases::StigmergyCoordinator;
 pub use pipeline::{ConsolidationPipeline, ConsolidationResult, PipelineConfig};
 pub use retrieval::{HybridRanker, HybridRankerConfig};
 pub use store::SqliteStore;
@@ -110,6 +112,11 @@ impl SqliteMemoryEngine {
     /// Get an Arc reference to the underlying `SqliteStore`.
     pub fn store_arc(&self) -> Arc<SqliteStore> {
         Arc::clone(&self.store)
+    }
+
+    /// Access the StigmergyCoordinator for agent presence, heartbeats, and atomic leases.
+    pub fn stigmergy(&self) -> StigmergyCoordinator {
+        StigmergyCoordinator::new(Arc::clone(&self.store))
     }
 
     /// Get the active embedding provider.

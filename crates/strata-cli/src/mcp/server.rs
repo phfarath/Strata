@@ -4,14 +4,17 @@ use tracing::{debug, error, info};
 use uuid::Uuid;
 
 use strata_core::{
+    a2a::AgentPresence,
     state::{MemoryRecord, MemoryType, Scope},
     traits::MemoryEngine,
 };
+use strata_memory::{SqliteMemoryEngine, StigmergyCoordinator};
 
 use super::protocol::*;
 
 pub struct McpServer {
     memory_engine: Arc<dyn MemoryEngine>,
+    stigmergy: Option<StigmergyCoordinator>,
     server_name: String,
     server_version: String,
 }
@@ -20,9 +23,25 @@ impl McpServer {
     pub fn new(memory_engine: Arc<dyn MemoryEngine>) -> Self {
         Self {
             memory_engine,
+            stigmergy: None,
             server_name: "strata-mcp".to_string(),
             server_version: env!("CARGO_PKG_VERSION").to_string(),
         }
+    }
+
+    pub fn new_with_engine(engine: Arc<SqliteMemoryEngine>) -> Self {
+        let coordinator = engine.stigmergy();
+        Self {
+            memory_engine: engine,
+            stigmergy: Some(coordinator),
+            server_name: "strata-mcp".to_string(),
+            server_version: env!("CARGO_PKG_VERSION").to_string(),
+        }
+    }
+
+    pub fn with_stigmergy(mut self, coordinator: StigmergyCoordinator) -> Self {
+        self.stigmergy = Some(coordinator);
+        self
     }
 
     pub fn tool_definitions() -> Vec<ToolDefinition> {
@@ -340,6 +359,89 @@ impl McpServer {
                         }
                     },
                     "required": ["id", "approved_by_human"]
+                }),
+            },
+            ToolDefinition {
+                name: "lease_acquire".to_string(),
+                description: "Atomically acquire or renew an exclusive temporal lease on a workspace resource (e.g. 'crate:strata-cli', 'file:src/mcp/server.rs') to prevent cross-agent collisions. Auto-expires with TTL if process terminates.".to_string(),
+                input_schema: serde_json::json!({
+                    "type": "object",
+                    "properties": {
+                        "resource_id": {
+                            "type": "string",
+                            "description": "Unique identifier of the resource to lease (e.g. 'crate:strata-cli', 'file:src/main.rs')"
+                        },
+                        "agent_id": {
+                            "type": "string",
+                            "description": "Identifier of the requesting agent (e.g. 'cursor', 'claude-code')"
+                        },
+                        "ttl_seconds": {
+                            "type": "integer",
+                            "description": "Duration of lease in seconds before auto-expiration (default: 30)"
+                        },
+                        "metadata": {
+                            "type": "string",
+                            "description": "Optional description of the task or modification planned"
+                        }
+                    },
+                    "required": ["resource_id", "agent_id"]
+                }),
+            },
+            ToolDefinition {
+                name: "lease_release".to_string(),
+                description: "Explicitly release an exclusive temporal lease on a workspace resource upon task completion.".to_string(),
+                input_schema: serde_json::json!({
+                    "type": "object",
+                    "properties": {
+                        "resource_id": {
+                            "type": "string",
+                            "description": "Resource ID to release"
+                        },
+                        "agent_id": {
+                            "type": "string",
+                            "description": "Agent identifier that holds the lease"
+                        }
+                    },
+                    "required": ["resource_id", "agent_id"]
+                }),
+            },
+            ToolDefinition {
+                name: "agent_who".to_string(),
+                description: "List all active agents currently working in the workspace, their hosts, active tasks, and active resource leases (Stigmergic Workspace Awareness).".to_string(),
+                input_schema: serde_json::json!({
+                    "type": "object",
+                    "properties": {
+                        "ttl_seconds": {
+                            "type": "integer",
+                            "description": "Freshness window in seconds for active agent presence (default: 60)"
+                        }
+                    }
+                }),
+            },
+            ToolDefinition {
+                name: "agent_heartbeat".to_string(),
+                description: "Register or refresh an agent's presence, process ID, and active task in the shared workspace state.".to_string(),
+                input_schema: serde_json::json!({
+                    "type": "object",
+                    "properties": {
+                        "agent_id": {
+                            "type": "string",
+                            "description": "Identifier of the agent (e.g. 'cursor-session-1', 'claude-terminal')"
+                        },
+                        "host": {
+                            "type": "string",
+                            "description": "Host environment ('cursor', 'claude-code', 'gemini-cli', 'windsurf', etc.)"
+                        },
+                        "pid": {
+                            "type": "integer",
+                            "description": "Process ID of the agent (default: 0)"
+                        },
+                        "active_task": {
+                            "type": "string",
+                            "description": "Optional headline of the task the agent is actively executing"
+                        }
+                    },
+                    "required": ["agent_id", "host"]
                 }),
             },
         ]
@@ -961,6 +1063,145 @@ impl McpServer {
                         CallToolResult::error(format!("Memory record with ID '{id}' not found"))
                     }
                     Err(e) => CallToolResult::error(format!("Failed to fetch memory: {e}")),
+                }
+            }
+            "lease_acquire" => {
+                let coordinator = match &self.stigmergy {
+                    Some(c) => c,
+                    None => {
+                        return CallToolResult::error(
+                            "Stigmergic coordination requires a local SQLite storage engine",
+                        )
+                    }
+                };
+
+                let resource_id = match args.get("resource_id").and_then(|v| v.as_str()) {
+                    Some(r) => r,
+                    None => {
+                        return CallToolResult::error("Missing required parameter: resource_id")
+                    }
+                };
+                let agent_id = match args.get("agent_id").and_then(|v| v.as_str()) {
+                    Some(a) => a,
+                    None => return CallToolResult::error("Missing required parameter: agent_id"),
+                };
+                let ttl_seconds = args
+                    .get("ttl_seconds")
+                    .and_then(|v| v.as_i64())
+                    .unwrap_or(30);
+                let metadata = args.get("metadata").and_then(|v| v.as_str());
+
+                match coordinator.acquire_lease(resource_id, agent_id, ttl_seconds, metadata) {
+                    Ok(result) => match serde_json::to_string_pretty(&result) {
+                        Ok(json) => CallToolResult::text(json),
+                        Err(e) => CallToolResult::error(format!("Serialization error: {e}")),
+                    },
+                    Err(e) => CallToolResult::error(format!("Failed to acquire lease: {e}")),
+                }
+            }
+            "lease_release" => {
+                let coordinator = match &self.stigmergy {
+                    Some(c) => c,
+                    None => {
+                        return CallToolResult::error(
+                            "Stigmergic coordination requires a local SQLite storage engine",
+                        )
+                    }
+                };
+
+                let resource_id = match args.get("resource_id").and_then(|v| v.as_str()) {
+                    Some(r) => r,
+                    None => {
+                        return CallToolResult::error("Missing required parameter: resource_id")
+                    }
+                };
+                let agent_id = match args.get("agent_id").and_then(|v| v.as_str()) {
+                    Some(a) => a,
+                    None => return CallToolResult::error("Missing required parameter: agent_id"),
+                };
+
+                match coordinator.release_lease(resource_id, agent_id) {
+                    Ok(released) => CallToolResult::text(
+                        serde_json::json!({
+                            "resource_id": resource_id,
+                            "agent_id": agent_id,
+                            "released": released
+                        })
+                        .to_string(),
+                    ),
+                    Err(e) => CallToolResult::error(format!("Failed to release lease: {e}")),
+                }
+            }
+            "agent_who" => {
+                let coordinator = match &self.stigmergy {
+                    Some(c) => c,
+                    None => {
+                        return CallToolResult::error(
+                            "Stigmergic coordination requires a local SQLite storage engine",
+                        )
+                    }
+                };
+
+                let ttl_seconds = args
+                    .get("ttl_seconds")
+                    .and_then(|v| v.as_i64())
+                    .unwrap_or(60);
+
+                let agents_res = coordinator.active_agents(ttl_seconds);
+                let leases_res = coordinator.active_leases();
+
+                match (agents_res, leases_res) {
+                    (Ok(agents), Ok(leases)) => {
+                        let out = serde_json::json!({
+                            "active_agents": agents,
+                            "active_leases": leases,
+                        });
+                        match serde_json::to_string_pretty(&out) {
+                            Ok(json) => CallToolResult::text(json),
+                            Err(e) => CallToolResult::error(format!("Serialization error: {e}")),
+                        }
+                    }
+                    (Err(e), _) | (_, Err(e)) => {
+                        CallToolResult::error(format!("Failed to retrieve workspace status: {e}"))
+                    }
+                }
+            }
+            "agent_heartbeat" => {
+                let coordinator = match &self.stigmergy {
+                    Some(c) => c,
+                    None => {
+                        return CallToolResult::error(
+                            "Stigmergic coordination requires a local SQLite storage engine",
+                        )
+                    }
+                };
+
+                let agent_id = match args.get("agent_id").and_then(|v| v.as_str()) {
+                    Some(a) => a,
+                    None => return CallToolResult::error("Missing required parameter: agent_id"),
+                };
+                let host = match args.get("host").and_then(|v| v.as_str()) {
+                    Some(h) => h,
+                    None => return CallToolResult::error("Missing required parameter: host"),
+                };
+                let pid = args.get("pid").and_then(|v| v.as_u64()).unwrap_or(0) as u32;
+                let active_task = args.get("active_task").and_then(|v| v.as_str());
+
+                let mut presence = AgentPresence::new(agent_id, host, pid);
+                if let Some(task) = active_task {
+                    presence = presence.with_active_task(task);
+                }
+
+                match coordinator.heartbeat(&presence) {
+                    Ok(()) => CallToolResult::text(
+                        serde_json::json!({
+                            "status": "ok",
+                            "agent_id": agent_id,
+                            "heartbeat_at": presence.heartbeat_at
+                        })
+                        .to_string(),
+                    ),
+                    Err(e) => CallToolResult::error(format!("Failed to record heartbeat: {e}")),
                 }
             }
             unknown_tool => CallToolResult::error(format!("Unknown tool: '{unknown_tool}'")),
