@@ -26,9 +26,10 @@ pub async fn run_all_scenarios() -> Result<()> {
     WorkspaceMonorepoEval::run_eval().await?;
     ArchitectureClusteringEval::run_eval().await?;
     HitlCoreApprovalEval::run_eval().await?;
+    run_a2a_stigmergic_leases_scenario().await?;
 
     println!("\n========================================================");
-    println!("🎉 ALL EVAL SCENARIOS PASSED (16/16)");
+    println!("🎉 ALL EVAL SCENARIOS PASSED (17/17)");
     println!("========================================================\n");
 
     Ok(())
@@ -161,5 +162,12 @@ mod tests {
         assert!(res.core_retention_frozen);
         assert!(res.immune_to_pruning);
         assert!(res.is_sub_50ms);
+    }
+
+    #[tokio::test]
+    async fn test_eval_a2a_stigmergic_leases() {
+        run_a2a_stigmergic_leases_scenario()
+            .await
+            .expect("A2A stigmergic leases scenario failed");
     }
 }

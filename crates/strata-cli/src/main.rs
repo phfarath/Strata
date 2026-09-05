@@ -13,6 +13,7 @@ use strata_memory::SqliteMemoryEngine;
 
 use strata_cli::{
     commands::{
+        a2a::{run_a2a, A2aArgs},
         architecture::{run_architecture, ArchitectureArgs},
         auth::{run_auth, AuthArgs},
         blast_radius::{run_blast_radius, BlastRadiusArgs},
@@ -298,6 +299,10 @@ enum Commands {
         alias = "sync-anchors"
     )]
     Reconcile(ReconcileArgs),
+
+    /// Agent-to-Agent (A2A) stigmergic coordination and temporal resource leases
+    #[command(name = "a2a", alias = "stigmergy", alias = "leases")]
+    A2a(A2aArgs),
 }
 
 #[derive(Subcommand, Debug)]
@@ -459,7 +464,7 @@ async fn main() -> Result<()> {
         | Commands::Architecture(_) => unreachable!(),
 
         Commands::Mcp { action: None } => {
-            let server = McpServer::new(engine);
+            let server = McpServer::new_with_engine(Arc::clone(&engine));
             server.run_stdio().await?;
         }
         Commands::Mcp { action: Some(_) } => unreachable!(),
@@ -693,6 +698,11 @@ async fn main() -> Result<()> {
         Commands::Reconcile(args) => {
             let store = engine.store_arc();
             run_reconcile(args, store).await?;
+        }
+
+        Commands::A2a(args) => {
+            let coordinator = engine.stigmergy();
+            run_a2a(args, coordinator).await?;
         }
     }
 

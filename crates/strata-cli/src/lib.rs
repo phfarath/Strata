@@ -418,4 +418,130 @@ pub fn process_data(msg: &str) {
 
         let _ = std::fs::remove_dir_all(&temp_dir);
     }
+
+    #[tokio::test]
+    async fn test_cli_a2a_command_workflow() {
+        use strata_memory::SqliteStore;
+        use strata_memory::StigmergyCoordinator;
+
+        let store = Arc::new(SqliteStore::open_in_memory().unwrap());
+        let coordinator = StigmergyCoordinator::new(store);
+
+        // 1. Acquire lease via CLI
+        let acquire_args = A2aArgs {
+            action: Some(A2aAction::Acquire {
+                resource: "crate:strata-cli".to_string(),
+                agent: "agent-cursor".to_string(),
+                ttl: 30,
+                metadata: Some("Refactoring CLI".to_string()),
+                json: true,
+            }),
+            ttl: 60,
+            json: true,
+        };
+        let res = run_a2a(acquire_args, coordinator.clone()).await;
+        assert!(res.is_ok());
+
+        // 2. Status inspection via CLI
+        let status_args = A2aArgs {
+            action: Some(A2aAction::Status {
+                ttl: 60,
+                json: true,
+            }),
+            ttl: 60,
+            json: true,
+        };
+        let res_status = run_a2a(status_args, coordinator.clone()).await;
+        assert!(res_status.is_ok());
+
+        // 3. Release lease via CLI
+        let release_args = A2aArgs {
+            action: Some(A2aAction::Release {
+                resource: "crate:strata-cli".to_string(),
+                agent: "agent-cursor".to_string(),
+                json: true,
+            }),
+            ttl: 60,
+            json: true,
+        };
+        let res_release = run_a2a(release_args, coordinator.clone()).await;
+        assert!(res_release.is_ok());
+    }
+
+    #[tokio::test]
+    async fn test_mcp_stigmergy_tools_execution() {
+        use strata_memory::SqliteMemoryEngine;
+
+        let engine = Arc::new(SqliteMemoryEngine::open_in_memory(None).unwrap());
+        let server = McpServer::new_with_engine(Arc::clone(&engine));
+
+        // 1. Verify tool definitions
+        let defs = McpServer::tool_definitions();
+        assert!(defs.iter().any(|t| t.name == "lease_acquire"));
+        assert!(defs.iter().any(|t| t.name == "lease_release"));
+        assert!(defs.iter().any(|t| t.name == "agent_who"));
+        assert!(defs.iter().any(|t| t.name == "agent_heartbeat"));
+
+        // 2. Heartbeat tool
+        let hb_res = server
+            .execute_tool(
+                "agent_heartbeat",
+                serde_json::json!({
+                    "agent_id": "cursor-01",
+                    "host": "cursor",
+                    "pid": 9999,
+                    "active_task": "editing mcp"
+                }),
+            )
+            .await;
+        assert!(hb_res.is_error != Some(true));
+
+        // 3. Lease acquire tool
+        let acq_res = server
+            .execute_tool(
+                "lease_acquire",
+                serde_json::json!({
+                    "resource_id": "file:crates/strata-cli/src/main.rs",
+                    "agent_id": "cursor-01",
+                    "ttl_seconds": 60,
+                    "metadata": "updating CLI commands"
+                }),
+            )
+            .await;
+        assert!(acq_res.is_error != Some(true));
+
+        // 4. Agent who tool
+        let who_res = server
+            .execute_tool("agent_who", serde_json::json!({ "ttl_seconds": 60 }))
+            .await;
+        assert!(who_res.is_error != Some(true));
+
+        // 5. Conflict detection: second agent attempts to acquire same file
+        let conflict_res = server
+            .execute_tool(
+                "lease_acquire",
+                serde_json::json!({
+                    "resource_id": "file:crates/strata-cli/src/main.rs",
+                    "agent_id": "claude-02",
+                    "ttl_seconds": 60
+                }),
+            )
+            .await;
+        assert!(conflict_res.is_error != Some(true));
+        let conflict_text = &conflict_res.content[0].text;
+        assert!(conflict_text.contains("\"status\": \"conflict\""));
+        assert!(conflict_text.contains("\"held_by\": \"cursor-01\""));
+
+        // 6. Release tool
+        let rel_res = server
+            .execute_tool(
+                "lease_release",
+                serde_json::json!({
+                    "resource_id": "file:crates/strata-cli/src/main.rs",
+                    "agent_id": "cursor-01"
+                }),
+            )
+            .await;
+        assert!(rel_res.is_error != Some(true));
+    }
 }

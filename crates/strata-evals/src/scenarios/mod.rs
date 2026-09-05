@@ -1,3 +1,4 @@
+pub mod a2a_stigmergic_leases;
 pub mod architecture_clustering;
 pub mod cognitive_feedback_and_alignment;
 pub mod cognitive_observability;
@@ -15,6 +16,7 @@ pub mod silent_failure_avoidance;
 pub mod workspace_monorepo;
 pub mod world_model_causal;
 
+pub use a2a_stigmergic_leases::*;
 pub use architecture_clustering::*;
 pub use cognitive_feedback_and_alignment::*;
 pub use cognitive_observability::*;
