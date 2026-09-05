@@ -68,6 +68,18 @@ impl SqliteStore {
         let _ = conn.pragma_update(None, "foreign_keys", "ON");
         let _ = conn.pragma_update(None, "busy_timeout", 5000);
 
+        // Safe pre-migration for existing databases before indices are declared on newer columns
+        let _ = conn.execute("ALTER TABLE memories ADD COLUMN tier TEXT NOT NULL DEFAULT 'peripheral'", []);
+        let _ = conn.execute("ALTER TABLE memories ADD COLUMN approved_by_human INTEGER NOT NULL DEFAULT 0", []);
+        let _ = conn.execute("ALTER TABLE semantic_facts ADD COLUMN tier TEXT NOT NULL DEFAULT 'peripheral'", []);
+        let _ = conn.execute("ALTER TABLE semantic_facts ADD COLUMN approved_by_human INTEGER NOT NULL DEFAULT 0", []);
+        let _ = conn.execute("ALTER TABLE semantic_facts ADD COLUMN code_anchor_json TEXT DEFAULT NULL", []);
+        let _ = conn.execute("ALTER TABLE semantic_facts ADD COLUMN depends_on_json TEXT NOT NULL DEFAULT '[]'", []);
+        let _ = conn.execute("ALTER TABLE cold_storage_memories ADD COLUMN tier TEXT NOT NULL DEFAULT 'peripheral'", []);
+        let _ = conn.execute("ALTER TABLE cold_storage_memories ADD COLUMN approved_by_human INTEGER NOT NULL DEFAULT 0", []);
+        let _ = conn.execute("ALTER TABLE preference_pairs ADD COLUMN oracle_verified INTEGER DEFAULT 0", []);
+        let _ = conn.execute("ALTER TABLE preference_pairs ADD COLUMN verification_source TEXT", []);
+
         conn.execute_batch(
             "
             -- Canonical Events table
