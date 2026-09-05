@@ -33,7 +33,8 @@ pub async fn run_cross_host_transfer_scenario() -> Result<()> {
             environment: serde_json::json!({ "host": "cursor", "os": "windows" }),
             timestamp: chrono::Utc::now(),
         }),
-    ).with_provenance(cursor_prov.clone());
+    )
+    .with_provenance(cursor_prov.clone());
 
     engine.append(&cursor_start_event).await?;
 
@@ -47,10 +48,17 @@ pub async fn run_cross_host_transfer_scenario() -> Result<()> {
     .with_summary("Architectural Decision: Embedded SQLite with FTS5")
     .with_importance(0.95)
     .with_confidence(1.0)
-    .with_tags(vec!["storage".to_string(), "sqlite".to_string(), "architecture".to_string()]);
+    .with_tags(vec![
+        "storage".to_string(),
+        "sqlite".to_string(),
+        "architecture".to_string(),
+    ]);
 
     let handle = engine.write(&decision_record).await?;
-    println!("  [Cursor] Wrote decision memory [id: {}, title: '{}']", handle.id, handle.title);
+    println!(
+        "  [Cursor] Wrote decision memory [id: {}, title: '{}']",
+        handle.id, handle.title
+    );
 
     // 3. Simulated Host 2: Claude Code Session (afternoon, different session)
     let claude_session = "sess-claude-afternoon-02";
@@ -69,7 +77,8 @@ pub async fn run_cross_host_transfer_scenario() -> Result<()> {
             environment: serde_json::json!({ "host": "claude-code", "os": "windows" }),
             timestamp: chrono::Utc::now(),
         }),
-    ).with_provenance(claude_prov);
+    )
+    .with_provenance(claude_prov);
 
     engine.append(&claude_start_event).await?;
 
@@ -82,20 +91,33 @@ pub async fn run_cross_host_transfer_scenario() -> Result<()> {
     }
 
     let top_match = &retrieved_memories[0];
-    println!("  [Claude Code] Retrieved top memory: '{}' [id: {}]", top_match.summary.as_deref().unwrap_or(&top_match.content), top_match.id);
+    println!(
+        "  [Claude Code] Retrieved top memory: '{}' [id: {}]",
+        top_match.summary.as_deref().unwrap_or(&top_match.content),
+        top_match.id
+    );
 
     // 4. Assertions
     if !top_match.content.contains("embedded SQLite with FTS5") {
-        bail!("Cross-host memory content mismatch. Expected SQLite mention, got: {}", top_match.content);
+        bail!(
+            "Cross-host memory content mismatch. Expected SQLite mention, got: {}",
+            top_match.content
+        );
     }
 
     if top_match.memory_type != MemoryType::Semantic {
-        bail!("Expected MemoryType::Semantic, got {:?}", top_match.memory_type);
+        bail!(
+            "Expected MemoryType::Semantic, got {:?}",
+            top_match.memory_type
+        );
     }
 
     // Claude Code checks session digest
     let digest = engine.digest(claude_session, Some(500)).await?;
-    println!("  [Claude Code] Generated digest: {} pointers available", digest.key_pointers.len());
+    println!(
+        "  [Claude Code] Generated digest: {} pointers available",
+        digest.key_pointers.len()
+    );
 
     println!("  ✓ Cross-host transfer eval scenario PASSED cleanly.");
     Ok(())

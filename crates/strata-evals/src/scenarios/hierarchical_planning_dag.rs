@@ -1,7 +1,7 @@
-use std::sync::Arc;
 use anyhow::{bail, Result};
 use async_trait::async_trait;
 use serde_json::json;
+use std::sync::Arc;
 
 use strata_core::traits::Tool;
 use strata_reasoning::{
@@ -46,7 +46,10 @@ pub async fn run_hierarchical_planning_dag_scenario() -> Result<()> {
     let dag = decomposer.decompose(goal)?;
 
     if dag.node_count() < 5 {
-        bail!("Expected at least 5 nodes in decomposed DAG, got {}", dag.node_count());
+        bail!(
+            "Expected at least 5 nodes in decomposed DAG, got {}",
+            dag.node_count()
+        );
     }
 
     if dag.contains_cycle() {
@@ -69,12 +72,17 @@ pub async fn run_hierarchical_planning_dag_scenario() -> Result<()> {
     for node_id in &waves[0].node_ids {
         let prereqs = dag.get_prerequisites(node_id);
         if !prereqs.is_empty() {
-            bail!("Wave 0 node '{}' has unexpected prerequisites: {:?}", node_id, prereqs);
+            bail!(
+                "Wave 0 node '{}' has unexpected prerequisites: {:?}",
+                node_id,
+                prereqs
+            );
         }
     }
 
     // Verify verification gate is in wave >= 2 and depends on implementation
-    let verify_node = dag.get_node("verify_contract_invariants")
+    let verify_node = dag
+        .get_node("verify_contract_invariants")
         .expect("Expected 'verify_contract_invariants' in decomposed DAG");
     assert_eq!(verify_node.kind, GoalNodeKind::Verification);
 
@@ -104,12 +112,19 @@ pub async fn run_hierarchical_planning_dag_scenario() -> Result<()> {
     }
 
     if report.completed_nodes == 0 {
-        bail!("Expected completed nodes > 0, got {}", report.completed_nodes);
+        bail!(
+            "Expected completed nodes > 0, got {}",
+            report.completed_nodes
+        );
     }
 
     for node in finished_dag.all_nodes() {
         if node.kind != GoalNodeKind::Root && node.status != GoalStatus::Completed {
-            bail!("Goal node '{}' did not complete successfully (status: {:?})", node.id, node.status);
+            bail!(
+                "Goal node '{}' did not complete successfully (status: {:?})",
+                node.id,
+                node.status
+            );
         }
     }
     println!(
@@ -126,8 +141,13 @@ pub async fn run_hierarchical_planning_dag_scenario() -> Result<()> {
 
     let root = GoalNode::root("root", "Test Dynamic Recovery Plan");
     let task_1 = GoalNode::task("task_setup", "Initial environment setup");
-    let mut verify_gate = GoalNode::verification("verify_schema_invariants", "Schema contract verification")
-        .with_metadata(json!({ "simulate_error": "AssertionError: database schema migration invariant violated" }));
+    let mut verify_gate = GoalNode::verification(
+        "verify_schema_invariants",
+        "Schema contract verification",
+    )
+    .with_metadata(
+        json!({ "simulate_error": "AssertionError: database schema migration invariant violated" }),
+    );
     verify_gate.retry_count = 0;
     verify_gate.max_retries = 0; // Trigger replanner immediately
 
@@ -155,7 +175,10 @@ pub async fn run_hierarchical_planning_dag_scenario() -> Result<()> {
     }
 
     if !rec_report.success {
-        bail!("Expected dynamic recovery to succeed, but report failed: {}", rec_report.summary);
+        bail!(
+            "Expected dynamic recovery to succeed, but report failed: {}",
+            rec_report.summary
+        );
     }
 
     if !recovered_dag.contains_node("verify_schema_invariants_mitigation_fix") {
@@ -200,29 +223,46 @@ pub async fn run_hierarchical_planning_dag_scenario() -> Result<()> {
     println!("  [Test E] Testing Tool Gateway integrations (goal_decompose, dag_execute)...");
 
     let decompose_tool = GoalDecomposeTool::new();
-    let decomp_res = decompose_tool.execute(json!({
-        "goal": "Migrate SQLite store to distributed pgvector cluster",
-        "include_verification": true
-    })).await.map_err(|e| anyhow::anyhow!("GoalDecomposeTool execution failed: {:?}", e))?;
+    let decomp_res = decompose_tool
+        .execute(json!({
+            "goal": "Migrate SQLite store to distributed pgvector cluster",
+            "include_verification": true
+        }))
+        .await
+        .map_err(|e| anyhow::anyhow!("GoalDecomposeTool execution failed: {:?}", e))?;
 
     if decomp_res.get("status").and_then(|v| v.as_str()) != Some("success") {
-        bail!("GoalDecomposeTool did not return success status: {:?}", decomp_res);
+        bail!(
+            "GoalDecomposeTool did not return success status: {:?}",
+            decomp_res
+        );
     }
 
-    let dag_val = decomp_res.get("dag").cloned().expect("Expected 'dag' in tool output");
+    let dag_val = decomp_res
+        .get("dag")
+        .cloned()
+        .expect("Expected 'dag' in tool output");
 
     let execute_tool = DagExecuteTool::new();
-    let exec_res = execute_tool.execute(json!({
-        "dag": dag_val,
-        "max_concurrency": 3,
-        "auto_recover": true
-    })).await.map_err(|e| anyhow::anyhow!("DagExecuteTool execution failed: {:?}", e))?;
+    let exec_res = execute_tool
+        .execute(json!({
+            "dag": dag_val,
+            "max_concurrency": 3,
+            "auto_recover": true
+        }))
+        .await
+        .map_err(|e| anyhow::anyhow!("DagExecuteTool execution failed: {:?}", e))?;
 
     if exec_res.get("status").and_then(|v| v.as_str()) != Some("success") {
-        bail!("DagExecuteTool did not return success status: {:?}", exec_res);
+        bail!(
+            "DagExecuteTool did not return success status: {:?}",
+            exec_res
+        );
     }
 
-    let rep = exec_res.get("report").expect("Expected report in DagExecuteTool output");
+    let rep = exec_res
+        .get("report")
+        .expect("Expected report in DagExecuteTool output");
     if rep.get("success").and_then(|v| v.as_bool()) != Some(true) {
         bail!("DagExecuteTool reported failure: {:?}", rep);
     }

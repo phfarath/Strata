@@ -1,11 +1,11 @@
-use std::io::{self, Write};
-use std::sync::Arc;
 use anyhow::{Context, Result};
 use clap::Args;
+use std::io::{self, Write};
+use std::sync::Arc;
 use uuid::Uuid;
 
-use strata_core::state::{MemoryRecord, MemoryTier};
 use strata_core::schemas::SemanticFact;
+use strata_core::state::{MemoryRecord, MemoryTier};
 use strata_memory::SqliteMemoryEngine;
 
 #[derive(Debug, Clone, Args)]
@@ -15,15 +15,28 @@ pub struct PromoteArgs {
     pub id: String,
 
     /// Target entity type: 'memory' (default) or 'fact' (semantic fact)
-    #[arg(long, default_value = "memory", help = "Entity type: 'memory' or 'fact'")]
+    #[arg(
+        long,
+        default_value = "memory",
+        help = "Entity type: 'memory' or 'fact'"
+    )]
     pub entity_type: String,
 
     /// Optional justification or policy rationale for promotion
-    #[arg(long, short = 'r', help = "Optional rationale or policy context for Core promotion")]
+    #[arg(
+        long,
+        short = 'r',
+        help = "Optional rationale or policy context for Core promotion"
+    )]
     pub reason: Option<String>,
 
     /// Bypass interactive confirmation prompt (non-interactive CI/CD mode)
-    #[arg(long, short = 'y', alias = "force", help = "Bypass interactive confirmation prompt")]
+    #[arg(
+        long,
+        short = 'y',
+        alias = "force",
+        help = "Bypass interactive confirmation prompt"
+    )]
     pub yes: bool,
 
     /// Output result as raw JSON
@@ -35,7 +48,8 @@ pub async fn run_promote(args: PromoteArgs, engine: Arc<SqliteMemoryEngine>) -> 
     let id = Uuid::parse_str(&args.id)
         .with_context(|| format!("Invalid UUID format for id: '{}'", args.id))?;
 
-    let is_fact = args.entity_type.to_lowercase() == "fact" || args.entity_type.to_lowercase() == "semantic";
+    let is_fact =
+        args.entity_type.to_lowercase() == "fact" || args.entity_type.to_lowercase() == "semantic";
 
     if is_fact {
         promote_semantic_fact(&id, &args, engine).await
@@ -44,7 +58,11 @@ pub async fn run_promote(args: PromoteArgs, engine: Arc<SqliteMemoryEngine>) -> 
     }
 }
 
-async fn promote_memory_record(id: &Uuid, args: &PromoteArgs, engine: Arc<SqliteMemoryEngine>) -> Result<()> {
+async fn promote_memory_record(
+    id: &Uuid,
+    args: &PromoteArgs,
+    engine: Arc<SqliteMemoryEngine>,
+) -> Result<()> {
     let store = engine.store();
     let mem = store
         .get_memory(id)?
@@ -61,14 +79,19 @@ async fn promote_memory_record(id: &Uuid, args: &PromoteArgs, engine: Arc<Sqlite
             });
             println!("{}", serde_json::to_string_pretty(&res)?);
         } else {
-            println!("ℹ️  Memory '{}' is already in permanent Core Tier (approved_by_human = true).", id);
+            println!(
+                "ℹ️  Memory '{}' is already in permanent Core Tier (approved_by_human = true).",
+                id
+            );
         }
         return Ok(());
     }
 
     if !args.yes {
         render_memory_modal(&mem, args.reason.as_deref());
-        print!("\n  [?] Promote this memory to permanent Core Tier (frozen retention, R=1.0)? [y/N]: ");
+        print!(
+            "\n  [?] Promote this memory to permanent Core Tier (frozen retention, R=1.0)? [y/N]: "
+        );
         io::stdout().flush()?;
 
         let mut input = String::new();
@@ -84,7 +107,9 @@ async fn promote_memory_record(id: &Uuid, args: &PromoteArgs, engine: Arc<Sqlite
                 });
                 println!("{}", serde_json::to_string_pretty(&res)?);
             } else {
-                println!("\n❌ [ABORTED] Promotion cancelled by user. Memory remains in current tier.\n");
+                println!(
+                    "\n❌ [ABORTED] Promotion cancelled by user. Memory remains in current tier.\n"
+                );
             }
             return Ok(());
         }
@@ -122,7 +147,11 @@ async fn promote_memory_record(id: &Uuid, args: &PromoteArgs, engine: Arc<Sqlite
     Ok(())
 }
 
-async fn promote_semantic_fact(id: &Uuid, args: &PromoteArgs, engine: Arc<SqliteMemoryEngine>) -> Result<()> {
+async fn promote_semantic_fact(
+    id: &Uuid,
+    args: &PromoteArgs,
+    engine: Arc<SqliteMemoryEngine>,
+) -> Result<()> {
     let store = engine.store();
     let fact = store
         .get_semantic_fact(id)?
@@ -202,8 +231,12 @@ async fn promote_semantic_fact(id: &Uuid, args: &PromoteArgs, engine: Arc<Sqlite
 
 fn render_memory_modal(mem: &MemoryRecord, reason: Option<&str>) {
     println!("\n╔══════════════════════════════════════════════════════════════════════════════════════╗");
-    println!("║                  🛡️  STRATA CORE TIER PROMOTION APPROVAL MODAL                       ║");
-    println!("╚══════════════════════════════════════════════════════════════════════════════════════╝");
+    println!(
+        "║                  🛡️  STRATA CORE TIER PROMOTION APPROVAL MODAL                       ║"
+    );
+    println!(
+        "╚══════════════════════════════════════════════════════════════════════════════════════╝"
+    );
     println!("  Memory ID:          {}", mem.id);
     println!("  Memory Type:        {}", mem.memory_type);
     println!("  Scope:              {}", mem.scope);
@@ -215,7 +248,9 @@ fn render_memory_modal(mem: &MemoryRecord, reason: Option<&str>) {
     if let Some(r) = reason {
         println!("  Rationale:          {}", r);
     }
-    println!("────────────────────────────────────────────────────────────────────────────────────────");
+    println!(
+        "────────────────────────────────────────────────────────────────────────────────────────"
+    );
     println!("  Content Preview:");
     for line in mem.content.lines().take(6) {
         println!("    {}", line);
@@ -223,16 +258,26 @@ fn render_memory_modal(mem: &MemoryRecord, reason: Option<&str>) {
     if mem.content.lines().count() > 6 {
         println!("    [truncated]...");
     }
-    println!("────────────────────────────────────────────────────────────────────────────────────────");
-    println!("  ⚠️  WARNING: Core Tier memories are never pruned and anchor all future agent reasoning.");
+    println!(
+        "────────────────────────────────────────────────────────────────────────────────────────"
+    );
+    println!(
+        "  ⚠️  WARNING: Core Tier memories are never pruned and anchor all future agent reasoning."
+    );
     println!("               Only promote verified architectural invariants and golden rules.");
-    println!("────────────────────────────────────────────────────────────────────────────────────────");
+    println!(
+        "────────────────────────────────────────────────────────────────────────────────────────"
+    );
 }
 
 fn render_fact_modal(fact: &SemanticFact, reason: Option<&str>) {
     println!("\n╔══════════════════════════════════════════════════════════════════════════════════════╗");
-    println!("║               🛡️  STRATA CORE TIER PROMOTION APPROVAL MODAL (FACT)                   ║");
-    println!("╚══════════════════════════════════════════════════════════════════════════════════════╝");
+    println!(
+        "║               🛡️  STRATA CORE TIER PROMOTION APPROVAL MODAL (FACT)                   ║"
+    );
+    println!(
+        "╚══════════════════════════════════════════════════════════════════════════════════════╝"
+    );
     println!("  Fact ID:            {}", fact.id);
     println!("  Category:           {}", fact.category);
     println!("  Scope:              {}", fact.scope);
@@ -241,10 +286,18 @@ fn render_fact_modal(fact: &SemanticFact, reason: Option<&str>) {
     if let Some(r) = reason {
         println!("  Rationale:          {}", r);
     }
-    println!("────────────────────────────────────────────────────────────────────────────────────────");
+    println!(
+        "────────────────────────────────────────────────────────────────────────────────────────"
+    );
     println!("  Statement:          {}", fact.statement);
-    println!("────────────────────────────────────────────────────────────────────────────────────────");
-    println!("  ⚠️  WARNING: Core Tier facts permanently guide multi-agent decisions and cannot decay.");
+    println!(
+        "────────────────────────────────────────────────────────────────────────────────────────"
+    );
+    println!(
+        "  ⚠️  WARNING: Core Tier facts permanently guide multi-agent decisions and cannot decay."
+    );
     println!("               Only promote verified architectural invariants and golden rules.");
-    println!("────────────────────────────────────────────────────────────────────────────────────────");
+    println!(
+        "────────────────────────────────────────────────────────────────────────────────────────"
+    );
 }

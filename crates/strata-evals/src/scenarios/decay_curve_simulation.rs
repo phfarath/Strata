@@ -109,7 +109,7 @@ pub async fn run_decay_curve_simulation_scenario() -> Result<()> {
     .with_importance(0.15)
     .with_confidence(0.5);
     low_record.created_at = month_ago;
-    let _ = store.insert_or_update_memory(&low_record)?;
+    store.insert_or_update_memory(&low_record)?;
 
     // Run pruning with threshold = 0.25
     let prune_report = calculator.prune_expired(&store, Some(0.25), Some(now))?;

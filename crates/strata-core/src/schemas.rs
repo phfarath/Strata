@@ -1,7 +1,7 @@
-use std::fmt;
-use std::str::FromStr;
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
+use std::fmt;
+use std::str::FromStr;
 use uuid::Uuid;
 
 use crate::state::{MemoryTier, Scope};
@@ -151,21 +151,16 @@ impl EpisodicMemory {
 }
 
 /// Truth maintenance status of a semantic fact.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize, Default)]
 #[serde(rename_all = "snake_case")]
 pub enum FactStatus {
+    #[default]
     Active,
     Deprecated,
     Outlier,
     Candidate,
     Stale,
     Suspicious,
-}
-
-impl Default for FactStatus {
-    fn default() -> Self {
-        FactStatus::Active
-    }
 }
 
 impl fmt::Display for FactStatus {
@@ -211,7 +206,11 @@ pub struct EvidenceRef {
 }
 
 impl EvidenceRef {
-    pub fn new(source_type: impl Into<String>, source_id: impl Into<String>, confidence: f32) -> Self {
+    pub fn new(
+        source_type: impl Into<String>,
+        source_id: impl Into<String>,
+        confidence: f32,
+    ) -> Self {
         Self {
             source_type: source_type.into(),
             source_id: source_id.into(),
@@ -417,7 +416,11 @@ pub struct ParameterDef {
 }
 
 impl ParameterDef {
-    pub fn new(name: impl Into<String>, param_type: impl Into<String>, description: impl Into<String>) -> Self {
+    pub fn new(
+        name: impl Into<String>,
+        param_type: impl Into<String>,
+        description: impl Into<String>,
+    ) -> Self {
         Self {
             name: name.into(),
             param_type: param_type.into(),
@@ -447,7 +450,12 @@ pub struct ProceduralStep {
 }
 
 impl ProceduralStep {
-    pub fn new(order: u32, tool: impl Into<String>, action: impl Into<String>, arguments: serde_json::Value) -> Self {
+    pub fn new(
+        order: u32,
+        tool: impl Into<String>,
+        action: impl Into<String>,
+        arguments: serde_json::Value,
+    ) -> Self {
         Self {
             order,
             tool: tool.into(),
@@ -742,7 +750,6 @@ impl MemoryFeedback {
             created_at: Utc::now(),
         }
     }
-
 
     pub fn with_score(mut self, score: f32) -> Self {
         self.score = Some(score.clamp(0.0, 1.0));
@@ -1558,5 +1565,3 @@ impl FactDependency {
         }
     }
 }
-
-

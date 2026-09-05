@@ -1,6 +1,6 @@
+use anyhow::{Context, Result};
 use std::fs;
 use std::path::{Path, PathBuf};
-use anyhow::{Context, Result};
 use tracing::info;
 
 pub const STRATA_MARKER_START: &str = "<!-- STRATA_MEMORY_START -->";
@@ -21,28 +21,24 @@ pub fn run_init(options: InitOptions) -> Result<()> {
 
     let mut configured = Vec::new();
 
-    if target == "all" || target == "cursor" {
-        if configure_cursor(root, options.force)? {
-            configured.push("Cursor (.cursor/rules/strata.mdc, .cursor/mcp.json)");
-        }
+    if (target == "all" || target == "cursor") && configure_cursor(root, options.force)? {
+        configured.push("Cursor (.cursor/rules/strata.mdc, .cursor/mcp.json)");
     }
 
-    if target == "all" || target == "claude" || target == "claude-code" {
-        if configure_claude_code(root, options.force)? {
-            configured.push("Claude Code (.claude/settings.json, CLAUDE.md)");
-        }
+    if (target == "all" || target == "claude" || target == "claude-code")
+        && configure_claude_code(root, options.force)?
+    {
+        configured.push("Claude Code (.claude/settings.json, CLAUDE.md)");
     }
 
-    if target == "all" || target == "codex" {
-        if configure_codex(root, options.force)? {
-            configured.push("Codex (AGENTS.md, .codex/config.toml)");
-        }
+    if (target == "all" || target == "codex") && configure_codex(root, options.force)? {
+        configured.push("Codex (AGENTS.md, .codex/config.toml)");
     }
 
-    if target == "all" || target == "gemini" || target == "antigravity" {
-        if configure_gemini(root, options.force)? {
-            configured.push("Gemini/Antigravity (.gemini/GEMINI.md)");
-        }
+    if (target == "all" || target == "gemini" || target == "antigravity")
+        && configure_gemini(root, options.force)?
+    {
+        configured.push("Gemini/Antigravity (.gemini/GEMINI.md)");
     }
 
     println!("\n✨ Strata initialized successfully!");

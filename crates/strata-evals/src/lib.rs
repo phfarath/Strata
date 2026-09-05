@@ -163,4 +163,3 @@ mod tests {
         assert!(res.is_sub_50ms);
     }
 }
-

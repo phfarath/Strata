@@ -1,7 +1,7 @@
-use std::sync::Arc;
-use std::time::Duration;
 use anyhow::Result;
 use clap::Args;
+use std::sync::Arc;
+use std::time::Duration;
 use tokio::time::sleep;
 use tracing::{error, info, warn};
 
@@ -10,7 +10,11 @@ use strata_memory::{SqliteStore, SyncEngine};
 
 #[derive(Args, Debug, Clone)]
 pub struct DaemonArgs {
-    #[arg(long, default_value_t = 30, help = "Synchronization loop interval in seconds")]
+    #[arg(
+        long,
+        default_value_t = 30,
+        help = "Synchronization loop interval in seconds"
+    )]
     pub interval: u64,
 
     #[arg(long, help = "Remote synchronization endpoint URL")]
@@ -25,19 +29,23 @@ pub struct DaemonArgs {
 
 pub async fn run_daemon(args: DaemonArgs, store: Arc<SqliteStore>) -> Result<()> {
     let mut config = SyncConfig::new(&args.workspace);
-    config.endpoint = args.endpoint.or_else(|| std::env::var("STRATA_SYNC_ENDPOINT").ok());
-    config.token = args.token.or_else(|| std::env::var("STRATA_SYNC_TOKEN").ok());
+    config.endpoint = args
+        .endpoint
+        .or_else(|| std::env::var("STRATA_SYNC_ENDPOINT").ok());
+    config.token = args
+        .token
+        .or_else(|| std::env::var("STRATA_SYNC_TOKEN").ok());
 
     let interval_secs = args.interval.max(1);
     let sync_engine = SyncEngine::new(store, config.clone());
 
     info!(
         "Starting Strata background sync daemon (interval: {}s, workspace: '{}', endpoint: {:?})",
-        interval_secs,
-        config.workspace_id,
-        config.endpoint
+        interval_secs, config.workspace_id, config.endpoint
     );
-    println!("🚀 Strata background sync daemon running (< 10MB RAM footprint). Press Ctrl+C to stop.");
+    println!(
+        "🚀 Strata background sync daemon running (< 10MB RAM footprint). Press Ctrl+C to stop."
+    );
 
     loop {
         tokio::select! {

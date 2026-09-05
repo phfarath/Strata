@@ -1,5 +1,5 @@
-use std::sync::Arc;
 use anyhow::Result;
+use std::sync::Arc;
 use strata_core::{
     state::{MemoryType, Scope},
     traits::MemoryEngine,
@@ -29,7 +29,10 @@ pub async fn run_search(options: SearchOptions, engine: Arc<dyn MemoryEngine>) -
         .await?;
 
     let filtered: Vec<_> = if let Some(mt) = parsed_type {
-        results.into_iter().filter(|r| r.memory_type == mt).collect()
+        results
+            .into_iter()
+            .filter(|r| r.memory_type == mt)
+            .collect()
     } else {
         results
     };
@@ -44,7 +47,11 @@ pub async fn run_search(options: SearchOptions, engine: Arc<dyn MemoryEngine>) -
         return Ok(());
     }
 
-    println!("\n🔍 Found {} memories matching \"{}\":\n", filtered.len(), options.query);
+    println!(
+        "\n🔍 Found {} memories matching \"{}\":\n",
+        filtered.len(),
+        options.query
+    );
     for (i, rec) in filtered.iter().enumerate() {
         let handle = rec.to_handle(None);
         println!(

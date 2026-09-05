@@ -2,15 +2,12 @@ use anyhow::Result;
 use chrono::{Duration, Utc};
 use uuid::Uuid;
 
-
 use strata_core::events::{
-    Event, EventPayload, ObservationReceived, SessionEnded, SessionStarted, TaskCompleted,
-    TaskStarted, ToolInvoked, ToolResultReceived, ErrorObserved,
+    ErrorObserved, Event, EventPayload, ObservationReceived, SessionEnded, SessionStarted,
+    TaskCompleted, TaskStarted, ToolInvoked, ToolResultReceived,
 };
 use strata_core::schemas::FactStatus;
-use strata_memory::{
-    ConsolidationPipeline, MockEmbeddingProvider, PipelineConfig, SqliteStore,
-};
+use strata_memory::{ConsolidationPipeline, MockEmbeddingProvider, PipelineConfig, SqliteStore};
 use strata_reasoning::OpenRouterAdapter;
 
 #[tokio::test]
@@ -183,7 +180,10 @@ async fn test_live_openrouter_consolidation() -> Result<()> {
     }
 
     println!("📥 Ingested {} raw events into SQLite store.", events.len());
-    println!("🤖 Calling OpenRouter Free Tier (model: {}) for offline cognitive distillation...", openrouter.model());
+    println!(
+        "🤖 Calling OpenRouter Free Tier (model: {}) for offline cognitive distillation...",
+        openrouter.model()
+    );
 
     // 3. Run Consolidation Pipeline using OpenRouter Live
     let result = pipeline
@@ -193,31 +193,48 @@ async fn test_live_openrouter_consolidation() -> Result<()> {
     println!("\n✅ [CONSOLIDATION COMPLETED SUCCESSFULLY]");
     println!("--------------------------------------------------------");
     println!("📊 Events Processed:        {}", result.events_processed);
-    println!("📖 Episodic Memories:       {}", result.episodic_memories.len());
+    println!(
+        "📖 Episodic Memories:       {}",
+        result.episodic_memories.len()
+    );
     for (i, ep) in result.episodic_memories.iter().enumerate() {
         println!("   [{}] Summary:     {}", i + 1, ep.summary);
         println!("       Goals:       {:?}", ep.goals);
         println!("       Obstacles:   {:?}", ep.obstacles);
         println!("       Outcomes:    {:?}", ep.outcomes);
-        println!("       Signals:     success={:.2}, frustration={:.2}, novelty={:.2}, importance={:.2}",
-            ep.signals.success, ep.signals.frustration, ep.signals.novelty, ep.signals.importance);
+        println!(
+            "       Signals:     success={:.2}, frustration={:.2}, novelty={:.2}, importance={:.2}",
+            ep.signals.success, ep.signals.frustration, ep.signals.novelty, ep.signals.importance
+        );
     }
 
-    println!("\n💡 Semantic Facts Created:  {}", result.semantic_facts.len());
+    println!(
+        "\n💡 Semantic Facts Created:  {}",
+        result.semantic_facts.len()
+    );
     for (i, fact) in result.semantic_facts.iter().enumerate() {
         println!("   [{}] Statement:   {}", i + 1, fact.statement);
         println!("       Category:    {}", fact.category);
         println!("       Status:      {:?} (v{})", fact.status, fact.version);
-        println!("       Importance:  {:.2}, Confidence: {:.2}", fact.importance, fact.confidence);
+        println!(
+            "       Importance:  {:.2}, Confidence: {:.2}",
+            fact.importance, fact.confidence
+        );
     }
 
-    println!("\n🛠️ Procedural Skills:       {}", result.procedural_skills.len());
+    println!(
+        "\n🛠️ Procedural Skills:       {}",
+        result.procedural_skills.len()
+    );
     for (i, skill) in result.procedural_skills.iter().enumerate() {
         println!("   [{}] Skill Name:  {}", i + 1, skill.name);
         println!("       Description: {}", skill.description);
         println!("       Steps ({} total):", skill.steps.len());
         for step in &skill.steps {
-            println!("         {}. [tool: {}] action: {}", step.order, step.tool, step.action);
+            println!(
+                "         {}. [tool: {}] action: {}",
+                step.order, step.tool, step.action
+            );
         }
     }
 
@@ -227,9 +244,15 @@ async fn test_live_openrouter_consolidation() -> Result<()> {
 
     // 4. Verify SQLite storage persistence
     let stored_facts = store.get_all_semantic_facts(None, Some(FactStatus::Active), 10)?;
-    assert!(!stored_facts.is_empty(), "Semantic facts must be persisted to SQLite");
+    assert!(
+        !stored_facts.is_empty(),
+        "Semantic facts must be persisted to SQLite"
+    );
     let stored_episodes = store.get_all_episodic_memories(None, 10)?;
-    assert!(!stored_episodes.is_empty(), "Episodic memories must be persisted to SQLite");
+    assert!(
+        !stored_episodes.is_empty(),
+        "Episodic memories must be persisted to SQLite"
+    );
 
     println!("\n✨ Live OpenRouter consolidation verified end-to-end with SQLite persistence!\n");
 

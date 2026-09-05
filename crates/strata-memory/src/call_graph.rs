@@ -3,8 +3,8 @@ use serde::{Deserialize, Serialize};
 use tree_sitter::{Node, Parser};
 use uuid::Uuid;
 
-use strata_core::errors::StrataError;
 use crate::ast::LanguageKind;
+use strata_core::errors::StrataError;
 
 /// Categorization of a call edge or dependency reference.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
@@ -165,13 +165,16 @@ impl CallGraphAnalyzer {
         file_path: &str,
     ) -> Result<Vec<CallEdge>, StrataError> {
         let ts_lang = lang.tree_sitter_language().ok_or_else(|| {
-            StrataError::Validation(format!("Unsupported language for call graph analysis: {:?}", lang))
+            StrataError::Validation(format!(
+                "Unsupported language for call graph analysis: {:?}",
+                lang
+            ))
         })?;
 
         let mut parser = Parser::new();
-        parser
-            .set_language(&ts_lang)
-            .map_err(|e| StrataError::Internal(format!("Failed to set tree-sitter language: {e}")))?;
+        parser.set_language(&ts_lang).map_err(|e| {
+            StrataError::Internal(format!("Failed to set tree-sitter language: {e}"))
+        })?;
 
         let tree = parser
             .parse(source_code, None)
@@ -181,13 +184,31 @@ impl CallGraphAnalyzer {
 
         match lang {
             LanguageKind::Rust => {
-                self.extract_rust_calls(tree.root_node(), source_code, file_path, "<top-level>", &mut edges);
+                self.extract_rust_calls(
+                    tree.root_node(),
+                    source_code,
+                    file_path,
+                    "<top-level>",
+                    &mut edges,
+                );
             }
             LanguageKind::TypeScript | LanguageKind::JavaScript => {
-                self.extract_ts_calls(tree.root_node(), source_code, file_path, "<top-level>", &mut edges);
+                self.extract_ts_calls(
+                    tree.root_node(),
+                    source_code,
+                    file_path,
+                    "<top-level>",
+                    &mut edges,
+                );
             }
             LanguageKind::Python => {
-                self.extract_python_calls(tree.root_node(), source_code, file_path, "<top-level>", &mut edges);
+                self.extract_python_calls(
+                    tree.root_node(),
+                    source_code,
+                    file_path,
+                    "<top-level>",
+                    &mut edges,
+                );
             }
             LanguageKind::Unknown => {}
         }
@@ -280,11 +301,12 @@ impl CallGraphAnalyzer {
                     }
                 } else if func_kind == "scoped_identifier" {
                     if let Ok(callee) = func_node.utf8_text(source.as_bytes()) {
-                        let call_type = if callee.ends_with("::new") || callee.ends_with("::default") {
-                            CallType::ConstructorCall
-                        } else {
-                            CallType::FunctionCall
-                        };
+                        let call_type =
+                            if callee.ends_with("::new") || callee.ends_with("::default") {
+                                CallType::ConstructorCall
+                            } else {
+                                CallType::FunctionCall
+                            };
                         edges.push(CallEdge::new(
                             file_path,
                             current_scope,
@@ -332,7 +354,8 @@ impl CallGraphAnalyzer {
         let kind = node.kind();
 
         // 1. Function / Method declarations to update scope
-        if kind == "function_declaration" || kind == "method_definition" || kind == "arrow_function" {
+        if kind == "function_declaration" || kind == "method_definition" || kind == "arrow_function"
+        {
             let func_name = node
                 .child_by_field_name("name")
                 .and_then(|n| n.utf8_text(source.as_bytes()).ok())
@@ -554,8 +577,12 @@ fn validate_token(t: &str) -> bool {
         // 1. Verify Imports
         let imports = graph.file_imports("src/executor.rs");
         assert_eq!(imports.len(), 2);
-        assert!(imports.iter().any(|e| e.callee_symbol.contains("std::sync::Arc")));
-        assert!(imports.iter().any(|e| e.callee_symbol.contains("crate::store::SqliteStore")));
+        assert!(imports
+            .iter()
+            .any(|e| e.callee_symbol.contains("std::sync::Arc")));
+        assert!(imports
+            .iter()
+            .any(|e| e.callee_symbol.contains("crate::store::SqliteStore")));
 
         // 2. Verify Callers of `validate_token`
         let callers = graph.callers_of("validate_token");
@@ -565,13 +592,20 @@ fn validate_token(t: &str) -> bool {
 
         // 3. Verify Constructor Call `SqliteStore::new`
         let callees = graph.callees_of("src/executor.rs", "execute_plan");
-        assert!(callees.iter().any(|e| e.callee_symbol == "SqliteStore::new" && e.call_type == CallType::ConstructorCall));
+        assert!(callees
+            .iter()
+            .any(|e| e.callee_symbol == "SqliteStore::new"
+                && e.call_type == CallType::ConstructorCall));
 
         // 4. Verify Macro Call `println!`
-        assert!(callees.iter().any(|e| e.callee_symbol == "println!" && e.call_type == CallType::MacroCall));
+        assert!(callees
+            .iter()
+            .any(|e| e.callee_symbol == "println!" && e.call_type == CallType::MacroCall));
 
         // 5. Verify Method Call `commit`
-        assert!(callees.iter().any(|e| e.callee_symbol == "commit" && e.call_type == CallType::MethodCall));
+        assert!(callees
+            .iter()
+            .any(|e| e.callee_symbol == "commit" && e.call_type == CallType::MethodCall));
     }
 
     #[test]
@@ -607,11 +641,17 @@ function sanitizeOutput(data: any) {
 
         // 2. Verify Constructor call `Client`
         let callees = graph.callees_of("src/user.ts", "fetchUserData");
-        assert!(callees.iter().any(|e| e.callee_symbol == "Client" && e.call_type == CallType::ConstructorCall));
+        assert!(callees
+            .iter()
+            .any(|e| e.callee_symbol == "Client" && e.call_type == CallType::ConstructorCall));
 
         // 3. Verify Method calls `getToken` and `get`
-        assert!(callees.iter().any(|e| e.callee_symbol == "getToken" && e.call_type == CallType::MethodCall));
-        assert!(callees.iter().any(|e| e.callee_symbol == "get" && e.call_type == CallType::MethodCall));
+        assert!(callees
+            .iter()
+            .any(|e| e.callee_symbol == "getToken" && e.call_type == CallType::MethodCall));
+        assert!(callees
+            .iter()
+            .any(|e| e.callee_symbol == "get" && e.call_type == CallType::MethodCall));
 
         // 4. Verify Callers of `sanitizeOutput`
         let callers = graph.callers_of("sanitizeOutput");
@@ -673,7 +713,10 @@ pub fn factorial(n: u64) -> u64 {
         let recursive = graph.detect_recursive_calls();
 
         assert_eq!(recursive.len(), 1);
-        assert_eq!(recursive[0], ("math.rs".to_string(), "factorial".to_string()));
+        assert_eq!(
+            recursive[0],
+            ("math.rs".to_string(), "factorial".to_string())
+        );
     }
 
     #[test]
@@ -682,10 +725,34 @@ pub fn factorial(n: u64) -> u64 {
 
         let store = SqliteStore::open(":memory:").expect("Failed to create in-memory store");
 
-        let edge1 = CallEdge::new("src/main.rs", "main", "init_engine", 10, CallType::FunctionCall);
-        let edge2 = CallEdge::new("src/main.rs", "main", "start_server", 15, CallType::FunctionCall);
-        let edge3 = CallEdge::new("src/api.rs", "handle_request", "start_server", 42, CallType::FunctionCall);
-        let edge4 = CallEdge::new("src/main.rs", "<top-level>", "crate::engine::init_engine", 2, CallType::Import);
+        let edge1 = CallEdge::new(
+            "src/main.rs",
+            "main",
+            "init_engine",
+            10,
+            CallType::FunctionCall,
+        );
+        let edge2 = CallEdge::new(
+            "src/main.rs",
+            "main",
+            "start_server",
+            15,
+            CallType::FunctionCall,
+        );
+        let edge3 = CallEdge::new(
+            "src/api.rs",
+            "handle_request",
+            "start_server",
+            42,
+            CallType::FunctionCall,
+        );
+        let edge4 = CallEdge::new(
+            "src/main.rs",
+            "<top-level>",
+            "crate::engine::init_engine",
+            2,
+            CallType::Import,
+        );
 
         store
             .insert_call_edges(&[edge1.clone(), edge2.clone(), edge3.clone(), edge4.clone()])
@@ -696,8 +763,12 @@ pub fn factorial(n: u64) -> u64 {
         // Query callers of `start_server`
         let callers = store.get_callers_of_symbol("start_server", 10).unwrap();
         assert_eq!(callers.len(), 2);
-        assert!(callers.iter().any(|e| e.caller_file == "src/main.rs" && e.caller_symbol == "main"));
-        assert!(callers.iter().any(|e| e.caller_file == "src/api.rs" && e.caller_symbol == "handle_request"));
+        assert!(callers
+            .iter()
+            .any(|e| e.caller_file == "src/main.rs" && e.caller_symbol == "main"));
+        assert!(callers
+            .iter()
+            .any(|e| e.caller_file == "src/api.rs" && e.caller_symbol == "handle_request"));
 
         // Query callees from `src/main.rs:main`
         let callees = store.get_callees_of_symbol("src/main.rs", "main").unwrap();

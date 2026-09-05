@@ -49,7 +49,9 @@ mod tests {
             let recs = self.records.lock().await;
             let filtered: Vec<MemoryRecord> = recs
                 .iter()
-                .filter(|r| r.content.contains(query) || r.summary.as_deref().unwrap_or("").contains(query))
+                .filter(|r| {
+                    r.content.contains(query) || r.summary.as_deref().unwrap_or("").contains(query)
+                })
                 .cloned()
                 .collect();
             Ok(filtered)
@@ -73,7 +75,8 @@ mod tests {
         ) -> Result<DigestOutput, StrataError> {
             let recs = self.records.lock().await;
             let fails = self.failures.lock().await;
-            let mut output = DigestOutput::new(session_id, format!("Total memories: {}", recs.len()));
+            let mut output =
+                DigestOutput::new(session_id, format!("Total memories: {}", recs.len()));
             output.recent_decisions = vec!["Adopted Rust workspace".to_string()];
             output.failure_warnings = fails.clone();
             Ok(output)
@@ -146,7 +149,10 @@ mod tests {
             json!({ "type": "object", "properties": { "msg": { "type": "string" } } })
         }
 
-        async fn execute(&self, params: serde_json::Value) -> Result<serde_json::Value, StrataError> {
+        async fn execute(
+            &self,
+            params: serde_json::Value,
+        ) -> Result<serde_json::Value, StrataError> {
             Ok(params)
         }
     }
@@ -167,8 +173,13 @@ mod tests {
             json!({})
         }
 
-        async fn execute(&self, _params: serde_json::Value) -> Result<serde_json::Value, StrataError> {
-            Err(StrataError::ToolError("Simulated database connection error".to_string()))
+        async fn execute(
+            &self,
+            _params: serde_json::Value,
+        ) -> Result<serde_json::Value, StrataError> {
+            Err(StrataError::ToolError(
+                "Simulated database connection error".to_string(),
+            ))
         }
     }
 
@@ -231,10 +242,19 @@ mod tests {
         let gateway = DefaultToolGateway::new().with_policy(policy);
         gateway.register(Arc::new(EchoTool)).await;
 
-        assert!(gateway.invoke_with_session("echo", json!({}), None).await.is_ok());
-        assert!(gateway.invoke_with_session("echo", json!({}), None).await.is_ok());
+        assert!(gateway
+            .invoke_with_session("echo", json!({}), None)
+            .await
+            .is_ok());
+        assert!(gateway
+            .invoke_with_session("echo", json!({}), None)
+            .await
+            .is_ok());
 
-        let err = gateway.invoke_with_session("echo", json!({}), None).await.unwrap_err();
+        let err = gateway
+            .invoke_with_session("echo", json!({}), None)
+            .await
+            .unwrap_err();
         match err {
             StrataError::RateLimitExceeded(_) => {}
             _ => panic!("Expected RateLimitExceeded"),
@@ -253,7 +273,11 @@ mod tests {
         gateway.register(Arc::new(FailingTool)).await;
 
         let err = gateway
-            .invoke_with_session("failing_tool", json!({ "target": "prod_db" }), Some("sess_99"))
+            .invoke_with_session(
+                "failing_tool",
+                json!({ "target": "prod_db" }),
+                Some("sess_99"),
+            )
             .await
             .unwrap_err();
 
@@ -339,7 +363,10 @@ mod tests {
 
         assert_eq!(decompose_res["status"], "success");
         assert!(decompose_res["total_waves"].as_u64().unwrap() >= 3);
-        assert!(decompose_res["ascii_tree"].as_str().unwrap().contains("WAVE 0"));
+        assert!(decompose_res["ascii_tree"]
+            .as_str()
+            .unwrap()
+            .contains("WAVE 0"));
 
         let dag_val = decompose_res["dag"].clone();
 
@@ -376,8 +403,14 @@ mod tests {
 
         assert_eq!(res["status"], "success");
         assert_eq!(res["total_samples"], 1);
-        assert!(res["script_path"].as_str().unwrap().contains("train_lora.py"));
-        assert!(res["modelfile_path"].as_str().unwrap().contains("Modelfile"));
+        assert!(res["script_path"]
+            .as_str()
+            .unwrap()
+            .contains("train_lora.py"));
+        assert!(res["modelfile_path"]
+            .as_str()
+            .unwrap()
+            .contains("Modelfile"));
 
         let _ = std::fs::remove_dir_all(&temp_dir);
     }
@@ -385,9 +418,17 @@ mod tests {
     #[test]
     fn test_antipattern_parser_rust_compiler_and_test_errors() {
         // 1. Cargo package ID mismatch
-        let cargo_pkg_err = "error: package ID specification 'strata-wrong-package' did not match any packages";
-        let fp1 = AntiPatternParser::parse("cargo test -p strata-wrong-package", "", cargo_pkg_err, 101, None, None)
-            .expect("parse cargo package mismatch");
+        let cargo_pkg_err =
+            "error: package ID specification 'strata-wrong-package' did not match any packages";
+        let fp1 = AntiPatternParser::parse(
+            "cargo test -p strata-wrong-package",
+            "",
+            cargo_pkg_err,
+            101,
+            None,
+            None,
+        )
+        .expect("parse cargo package mismatch");
         assert_eq!(fp1.signature, "cargo_package_not_found");
         assert!(fp1.mitigation.contains("exact package name"));
         let guardrail1 = AntiPatternParser::format_surgical_guardrail(&fp1);
@@ -402,11 +443,14 @@ mod tests {
         assert_eq!(fp2.severity, FailureSeverity::High);
 
         // 3. Missing struct field
-        let struct_err = "error[E0063]: missing field `code_anchor` in initializer of `SemanticFact`";
+        let struct_err =
+            "error[E0063]: missing field `code_anchor` in initializer of `SemanticFact`";
         let fp3 = AntiPatternParser::parse("cargo check", "", struct_err, 1, None, None)
             .expect("parse missing struct field");
         assert_eq!(fp3.signature, "rust_missing_struct_field");
-        assert!(fp3.mitigation.contains("Initialize all required struct fields"));
+        assert!(fp3
+            .mitigation
+            .contains("Initialize all required struct fields"));
 
         // 4. Undeclared symbol
         let sym_err = "error[E0433]: cannot find type `CodeAnchorEngine` in this scope\nuse of undeclared type `CodeAnchorEngine`";
@@ -416,8 +460,15 @@ mod tests {
 
         // 5. Cargo test assertion failure
         let test_fail = "running 1 test\ntest test_decay ... FAILED\npanicked at 'assertion `left == right` failed', src/decay.rs:42:5";
-        let fp5 = AntiPatternParser::parse("cargo test --package strata-memory", test_fail, "", 101, None, None)
-            .expect("parse cargo test failure");
+        let fp5 = AntiPatternParser::parse(
+            "cargo test --package strata-memory",
+            test_fail,
+            "",
+            101,
+            None,
+            None,
+        )
+        .expect("parse cargo test failure");
         assert_eq!(fp5.signature, "cargo_test_failure");
     }
 
@@ -430,7 +481,8 @@ mod tests {
         assert_eq!(fp1.signature, "npm_module_not_found");
 
         // 2. TypeScript error
-        let tsc_err = "src/index.ts(12,5): error TS2322: Type 'string' is not assignable to type 'number'.";
+        let tsc_err =
+            "src/index.ts(12,5): error TS2322: Type 'string' is not assignable to type 'number'.";
         let fp2 = AntiPatternParser::parse("tsc --noEmit", "", tsc_err, 2, None, None)
             .expect("parse tsc error");
         assert_eq!(fp2.signature, "tsc_type_error");
@@ -442,15 +494,18 @@ mod tests {
         assert_eq!(fp3.signature, "python_module_not_found");
 
         // 4. Pytest failure
-        let pytest_err = "FAILED tests/test_memory.py::test_decay - AssertionError: assert 0.42 == 0.50";
-        let fp4 = AntiPatternParser::parse("pytest tests/test_memory.py", "", pytest_err, 1, None, None)
-            .expect("parse pytest assertion failure");
+        let pytest_err =
+            "FAILED tests/test_memory.py::test_decay - AssertionError: assert 0.42 == 0.50";
+        let fp4 =
+            AntiPatternParser::parse("pytest tests/test_memory.py", "", pytest_err, 1, None, None)
+                .expect("parse pytest assertion failure");
         assert_eq!(fp4.signature, "pytest_failure");
 
         // 5. Port collision
         let port_err = "Error: listen EADDRINUSE: address already in use :::8080";
-        let fp5 = AntiPatternParser::parse("cargo run --bin strata-server", "", port_err, 1, None, None)
-            .expect("parse port collision");
+        let fp5 =
+            AntiPatternParser::parse("cargo run --bin strata-server", "", port_err, 1, None, None)
+                .expect("parse port collision");
         assert_eq!(fp5.signature, "network_port_collision");
         assert!(fp5.mitigation.contains("DO NOT hardcode static PORT"));
     }
@@ -458,7 +513,8 @@ mod tests {
     #[tokio::test]
     async fn test_command_interceptor_and_out_of_band_recording() {
         let mock_engine = Arc::new(MockMemoryEngine::new());
-        let interceptor = CommandInterceptor::with_engine(Arc::clone(&mock_engine) as Arc<dyn MemoryEngine>);
+        let interceptor =
+            CommandInterceptor::with_engine(Arc::clone(&mock_engine) as Arc<dyn MemoryEngine>);
 
         // Intercept a failed command (e.g. invalid cargo flag)
         let cmd = vec![
@@ -469,7 +525,13 @@ mod tests {
         ];
 
         let result = interceptor
-            .execute_and_intercept(&cmd, None, Some(Duration::from_secs(10)), Some("test_context"), None)
+            .execute_and_intercept(
+                &cmd,
+                None,
+                Some(Duration::from_secs(10)),
+                Some("test_context"),
+                None,
+            )
             .await
             .expect("execute and intercept");
 
@@ -478,7 +540,10 @@ mod tests {
         assert!(result.surgical_guardrail.is_some());
 
         // Verify out-of-band failure recording in engine
-        let failures = mock_engine.get_known_failures(None, None, 10).await.unwrap();
+        let failures = mock_engine
+            .get_known_failures(None, None, 10)
+            .await
+            .unwrap();
         assert_eq!(failures.len(), 1);
         assert_eq!(failures[0].signature, "cargo_package_not_found");
     }
@@ -520,7 +585,10 @@ fn execute_step() {}
         let callers = res["callers"].as_array().unwrap();
         assert_eq!(callers.len(), 1);
         assert_eq!(callers[0]["caller_symbol"], "orchestrate_task");
-        assert!(res["formatted_summary"].as_str().unwrap().contains("Call Graph Analysis"));
+        assert!(res["formatted_summary"]
+            .as_str()
+            .unwrap()
+            .contains("Call Graph Analysis"));
     }
 
     #[tokio::test]
@@ -540,7 +608,10 @@ fn execute_step() {}
         assert_eq!(res["workspace_type"], "cargo_workspace");
         assert!(res["packages_count"].as_u64().unwrap() >= 5);
         assert_eq!(res["resolved_package"]["name"], "strata-core");
-        assert!(res["formatted_summary"].as_str().unwrap().contains("Workspace Boundary Report"));
+        assert!(res["formatted_summary"]
+            .as_str()
+            .unwrap()
+            .contains("Workspace Boundary Report"));
     }
 
     #[tokio::test]
@@ -564,6 +635,9 @@ fn execute_step() {}
         assert_eq!(res["status"], "success");
         assert_eq!(res["workspace_id"], "test-strata-tools");
         assert!(res["clusters_count"].as_u64().unwrap() >= 1);
-        assert!(res["formatted_summary"].as_str().unwrap().contains("High-Level Architecture Map"));
+        assert!(res["formatted_summary"]
+            .as_str()
+            .unwrap()
+            .contains("High-Level Architecture Map"));
     }
 }

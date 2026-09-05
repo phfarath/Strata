@@ -1,8 +1,8 @@
+use chrono::Utc;
 use std::fs;
 use std::path::{Path, PathBuf};
-use chrono::Utc;
-use uuid::Uuid;
 use strata_core::errors::StrataError;
+use uuid::Uuid;
 
 use super::generator::{
     generate_ollama_modelfile, generate_run_script, generate_unsloth_training_script,
@@ -34,23 +34,77 @@ impl TrainingPipeline {
     /// Format an ASCII summary table detailing all hyperparameters and target deployment.
     pub fn format_summary_table(&self, samples_count: usize) -> String {
         let mut table = String::new();
-        table.push_str("┌───────────────────────────────────┬────────────────────────────────────────────┐\n");
-        table.push_str("│ STRATA LORA FINE-TUNING PIPELINE  │ CONFIGURATION PARAMETERS                   │\n");
-        table.push_str("├───────────────────────────────────┼────────────────────────────────────────────┤\n");
-        table.push_str(&format!("│ Base Foundation Model             │ {:<42} │\n", self.config.base_model));
-        table.push_str(&format!("│ Training Optimization Method      │ {:<42} │\n", self.config.method.to_string().to_uppercase()));
-        table.push_str(&format!("│ Model Quantization                │ {:<42} │\n", self.config.quantization.to_string()));
-        table.push_str(&format!("│ LoRA Hyperparameters              │ r={}, alpha={}, dropout={:<18} │\n", self.config.lora_r, self.config.lora_alpha, self.config.lora_dropout));
-        table.push_str(&format!("│ Target Linear Modules             │ {:<42} │\n", format!("{} modules", self.config.target_modules.len())));
-        table.push_str(&format!("│ Max Sequence Context              │ {:<42} │\n", format!("{} tokens", self.config.max_seq_length)));
-        table.push_str(&format!("│ Batch Size & Grad Accum           │ batch={}, accum={} (effective: {}){:>10} │\n", self.config.batch_size, self.config.gradient_accumulation_steps, self.config.batch_size * self.config.gradient_accumulation_steps, ""));
-        table.push_str(&format!("│ Learning Rate                     │ {:<42} │\n", self.config.learning_rate));
-        table.push_str(&format!("│ Max Training Steps                │ {:<42} │\n", self.config.max_steps));
-        table.push_str(&format!("│ Mined Alignment Samples           │ {:<42} │\n", format!("{} samples", samples_count)));
-        table.push_str(&format!("│ GGUF Ollama Export                │ {:<42} │\n", if self.config.export_gguf { format!("Enabled ({})", self.config.gguf_quantization) } else { "Disabled".to_string() }));
-        table.push_str(&format!("│ Target Ollama Model               │ {:<42} │\n", self.config.ollama_model_name.as_deref().unwrap_or("None")));
-        table.push_str(&format!("│ Artifact Output Directory         │ {:<42} │\n", self.config.output_dir));
-        table.push_str("└───────────────────────────────────┴────────────────────────────────────────────┘\n");
+        table.push_str(
+            "┌───────────────────────────────────┬────────────────────────────────────────────┐\n",
+        );
+        table.push_str(
+            "│ STRATA LORA FINE-TUNING PIPELINE  │ CONFIGURATION PARAMETERS                   │\n",
+        );
+        table.push_str(
+            "├───────────────────────────────────┼────────────────────────────────────────────┤\n",
+        );
+        table.push_str(&format!(
+            "│ Base Foundation Model             │ {:<42} │\n",
+            self.config.base_model
+        ));
+        table.push_str(&format!(
+            "│ Training Optimization Method      │ {:<42} │\n",
+            self.config.method.to_string().to_uppercase()
+        ));
+        table.push_str(&format!(
+            "│ Model Quantization                │ {:<42} │\n",
+            self.config.quantization.to_string()
+        ));
+        table.push_str(&format!(
+            "│ LoRA Hyperparameters              │ r={}, alpha={}, dropout={:<18} │\n",
+            self.config.lora_r, self.config.lora_alpha, self.config.lora_dropout
+        ));
+        table.push_str(&format!(
+            "│ Target Linear Modules             │ {:<42} │\n",
+            format!("{} modules", self.config.target_modules.len())
+        ));
+        table.push_str(&format!(
+            "│ Max Sequence Context              │ {:<42} │\n",
+            format!("{} tokens", self.config.max_seq_length)
+        ));
+        table.push_str(&format!(
+            "│ Batch Size & Grad Accum           │ batch={}, accum={} (effective: {}){:>10} │\n",
+            self.config.batch_size,
+            self.config.gradient_accumulation_steps,
+            self.config.batch_size * self.config.gradient_accumulation_steps,
+            ""
+        ));
+        table.push_str(&format!(
+            "│ Learning Rate                     │ {:<42} │\n",
+            self.config.learning_rate
+        ));
+        table.push_str(&format!(
+            "│ Max Training Steps                │ {:<42} │\n",
+            self.config.max_steps
+        ));
+        table.push_str(&format!(
+            "│ Mined Alignment Samples           │ {:<42} │\n",
+            format!("{} samples", samples_count)
+        ));
+        table.push_str(&format!(
+            "│ GGUF Ollama Export                │ {:<42} │\n",
+            if self.config.export_gguf {
+                format!("Enabled ({})", self.config.gguf_quantization)
+            } else {
+                "Disabled".to_string()
+            }
+        ));
+        table.push_str(&format!(
+            "│ Target Ollama Model               │ {:<42} │\n",
+            self.config.ollama_model_name.as_deref().unwrap_or("None")
+        ));
+        table.push_str(&format!(
+            "│ Artifact Output Directory         │ {:<42} │\n",
+            self.config.output_dir
+        ));
+        table.push_str(
+            "└───────────────────────────────────┴────────────────────────────────────────────┘\n",
+        );
         table
     }
 
@@ -77,14 +131,16 @@ impl TrainingPipeline {
         } else {
             let p = output_dir.join("dataset.jsonl");
             if !p.exists() {
-                fs::write(&p, "[]\n")
-                    .map_err(|e| StrataError::Io(format!("Failed to initialize empty dataset: {e}")))?;
+                fs::write(&p, "[]\n").map_err(|e| {
+                    StrataError::Io(format!("Failed to initialize empty dataset: {e}"))
+                })?;
             }
             p
         };
 
         // 2. Synthesize Unsloth Python script
-        let script_content = generate_unsloth_training_script(&self.config, &dataset_path.to_string_lossy());
+        let script_content =
+            generate_unsloth_training_script(&self.config, &dataset_path.to_string_lossy());
         let script_path = output_dir.join("train_lora.py");
         fs::write(&script_path, &script_content)
             .map_err(|e| StrataError::Io(format!("Failed to write train_lora.py: {e}")))?;

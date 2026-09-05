@@ -1,4 +1,4 @@
-﻿use ratatui::{
+use ratatui::{
     layout::{Alignment, Constraint, Direction, Layout, Rect},
     style::{Color, Modifier, Style},
     text::{Line, Span},
@@ -35,7 +35,12 @@ fn render_header(f: &mut Frame, app: &App, area: Rect) {
         .split(area);
 
     let title_line = Line::from(vec![
-        Span::styled("STRATA", Style::default().fg(Theme::PRIMARY).add_modifier(Modifier::BOLD)),
+        Span::styled(
+            "STRATA",
+            Style::default()
+                .fg(Theme::PRIMARY)
+                .add_modifier(Modifier::BOLD),
+        ),
         Span::styled(" │ ", Style::default().fg(Theme::BORDER)),
         Span::styled(&app.workspace_name, Style::default().fg(Theme::TEXT)),
     ]);
@@ -50,7 +55,12 @@ fn render_header(f: &mut Frame, app: &App, area: Rect) {
 
     let status_line = Line::from(vec![
         Span::styled("● ", Style::default().fg(Theme::SUCCESS)),
-        Span::styled("Local", Style::default().fg(Theme::SUCCESS).add_modifier(Modifier::BOLD)),
+        Span::styled(
+            "Local",
+            Style::default()
+                .fg(Theme::SUCCESS)
+                .add_modifier(Modifier::BOLD),
+        ),
     ]);
 
     let status_p = Paragraph::new(status_line)
@@ -81,9 +91,14 @@ fn render_kpis(f: &mut Frame, app: &App, area: Rect) {
         .split(kpi_chunks[0]);
 
     let total_mems = app.report.total_memories;
-    let invariants = app.report.memories.iter().filter(|m| m.is_invariant).count();
+    let invariants = app
+        .report
+        .memories
+        .iter()
+        .filter(|m| m.is_invariant)
+        .count();
     let guardrails = app.report.anti_patterns.len();
-    
+
     let active_mems = app.report.memories.iter().filter(|m| !m.is_expired).count();
     let avg_retention = if total_mems > 0 {
         (active_mems as f32 / total_mems as f32) * 100.0
@@ -93,19 +108,39 @@ fn render_kpis(f: &mut Frame, app: &App, area: Rect) {
 
     let p1 = Paragraph::new(Line::from(vec![
         Span::styled("Memórias: ", Style::default().fg(Theme::TEXT_MUTED)),
-        Span::styled(format!("{}", total_mems), Style::default().fg(Theme::TEXT).add_modifier(Modifier::BOLD)),
+        Span::styled(
+            format!("{}", total_mems),
+            Style::default()
+                .fg(Theme::TEXT)
+                .add_modifier(Modifier::BOLD),
+        ),
     ]));
     let p2 = Paragraph::new(Line::from(vec![
         Span::styled("Core: ", Style::default().fg(Theme::TEXT_MUTED)),
-        Span::styled(format!("{}", invariants), Style::default().fg(Theme::SUCCESS).add_modifier(Modifier::BOLD)),
+        Span::styled(
+            format!("{}", invariants),
+            Style::default()
+                .fg(Theme::SUCCESS)
+                .add_modifier(Modifier::BOLD),
+        ),
     ]));
     let p3 = Paragraph::new(Line::from(vec![
         Span::styled("Guardrails: ", Style::default().fg(Theme::TEXT_MUTED)),
-        Span::styled(format!("{}", guardrails), Style::default().fg(Theme::DANGER).add_modifier(Modifier::BOLD)),
+        Span::styled(
+            format!("{}", guardrails),
+            Style::default()
+                .fg(Theme::DANGER)
+                .add_modifier(Modifier::BOLD),
+        ),
     ]));
     let p4 = Paragraph::new(Line::from(vec![
         Span::styled("Retenção: ", Style::default().fg(Theme::TEXT_MUTED)),
-        Span::styled(format!("{:.0}%", avg_retention), Style::default().fg(Theme::PRIMARY).add_modifier(Modifier::BOLD)),
+        Span::styled(
+            format!("{:.0}%", avg_retention),
+            Style::default()
+                .fg(Theme::PRIMARY)
+                .add_modifier(Modifier::BOLD),
+        ),
     ]));
 
     f.render_widget(p1, cards[0]);
@@ -115,7 +150,11 @@ fn render_kpis(f: &mut Frame, app: &App, area: Rect) {
 
     let gauge_ratio = (avg_retention / 100.0).clamp(0.0, 1.0);
     let gauge = Gauge::default()
-        .gauge_style(Style::default().fg(Theme::SUCCESS).bg(Color::Rgb(30, 41, 59)))
+        .gauge_style(
+            Style::default()
+                .fg(Theme::SUCCESS)
+                .bg(Color::Rgb(30, 41, 59)),
+        )
         .ratio(gauge_ratio as f64)
         .label(format!("Saúde de Retenção: {:.1}%", avg_retention));
     f.render_widget(gauge, kpi_chunks[1]);
@@ -128,9 +167,13 @@ fn render_split(f: &mut Frame, app: &App, area: Rect) {
         .split(area);
 
     // Left List
-    let header_cells = ["Status", "Item", "Retenção"]
-        .iter()
-        .map(|h| Cell::from(*h).style(Style::default().fg(Theme::PRIMARY).add_modifier(Modifier::BOLD)));
+    let header_cells = ["Status", "Item", "Retenção"].iter().map(|h| {
+        Cell::from(*h).style(
+            Style::default()
+                .fg(Theme::PRIMARY)
+                .add_modifier(Modifier::BOLD),
+        )
+    });
     let header = Row::new(header_cells).height(1).bottom_margin(1);
 
     let total = app.total_items();
@@ -145,7 +188,12 @@ fn render_split(f: &mut Frame, app: &App, area: Rect) {
         match app.get_item(idx) {
             Some(DashboardItem::Memory(m)) => {
                 let (status_tag, status_style) = if m.is_invariant {
-                    ("[CORE]", Style::default().fg(Theme::SUCCESS).add_modifier(Modifier::BOLD))
+                    (
+                        "[CORE]",
+                        Style::default()
+                            .fg(Theme::SUCCESS)
+                            .add_modifier(Modifier::BOLD),
+                    )
                 } else if m.is_expired {
                     ("[EXPR]", Style::default().fg(Theme::TEXT_MUTED))
                 } else {
@@ -169,7 +217,9 @@ fn render_split(f: &mut Frame, app: &App, area: Rect) {
             }
             Some(DashboardItem::AntiPattern(ap)) => {
                 let status_tag = "[GUARD]";
-                let status_style = Style::default().fg(Theme::DANGER).add_modifier(Modifier::BOLD);
+                let status_style = Style::default()
+                    .fg(Theme::DANGER)
+                    .add_modifier(Modifier::BOLD);
                 let title_short: String = ap.pattern_name.chars().take(28).collect();
 
                 Row::new(vec![
@@ -192,7 +242,11 @@ fn render_split(f: &mut Frame, app: &App, area: Rect) {
 
     let table = Table::new(
         rows,
-        [Constraint::Length(8), Constraint::Min(24), Constraint::Length(9)],
+        [
+            Constraint::Length(8),
+            Constraint::Min(24),
+            Constraint::Length(9),
+        ],
     )
     .header(header)
     .block(list_block);
@@ -210,7 +264,9 @@ fn render_split(f: &mut Frame, app: &App, area: Rect) {
         match item {
             DashboardItem::Memory(m) => {
                 let badge_style = if m.is_invariant {
-                    Style::default().fg(Theme::SUCCESS).add_modifier(Modifier::BOLD)
+                    Style::default()
+                        .fg(Theme::SUCCESS)
+                        .add_modifier(Modifier::BOLD)
                 } else if m.is_expired {
                     Style::default().fg(Theme::TEXT_MUTED)
                 } else {
@@ -228,7 +284,12 @@ fn render_split(f: &mut Frame, app: &App, area: Rect) {
                 let details = vec![
                     Line::from(vec![
                         Span::styled("Item:   ", Style::default().fg(Theme::TEXT_MUTED)),
-                        Span::styled(&m.title, Style::default().fg(Theme::TEXT).add_modifier(Modifier::BOLD)),
+                        Span::styled(
+                            &m.title,
+                            Style::default()
+                                .fg(Theme::TEXT)
+                                .add_modifier(Modifier::BOLD),
+                        ),
                     ]),
                     Line::from(vec![
                         Span::styled("Escopo: ", Style::default().fg(Theme::TEXT_MUTED)),
@@ -237,49 +298,104 @@ fn render_split(f: &mut Frame, app: &App, area: Rect) {
                         Span::styled(badge_text, badge_style),
                     ]),
                     Line::from(""),
-                    Line::from(Span::styled("── CONTEÚDO ──", Style::default().fg(Theme::TEXT_MUTED))),
+                    Line::from(Span::styled(
+                        "── CONTEÚDO ──",
+                        Style::default().fg(Theme::TEXT_MUTED),
+                    )),
                     Line::from(Span::styled(&m.title, Style::default().fg(Theme::TEXT))),
                     Line::from(""),
                     Line::from(vec![
                         Span::styled("Retenção: ", Style::default().fg(Theme::TEXT_MUTED)),
                         Span::styled(
-                            if m.is_invariant { "100% (Congelada)".to_string() } else { format!("{:.1}%", m.ebbinghaus_retention * 100.0) },
-                            Style::default().fg(if m.is_invariant { Theme::SUCCESS } else { Theme::TEXT })
+                            if m.is_invariant {
+                                "100% (Congelada)".to_string()
+                            } else {
+                                format!("{:.1}%", m.ebbinghaus_retention * 100.0)
+                            },
+                            Style::default().fg(if m.is_invariant {
+                                Theme::SUCCESS
+                            } else {
+                                Theme::TEXT
+                            }),
                         ),
                     ]),
                     Line::from(vec![
                         Span::styled("Aprovação: ", Style::default().fg(Theme::TEXT_MUTED)),
-                        Span::styled(if m.is_invariant { "Aprovado (HITL)" } else { "Automático" }, Style::default().fg(Theme::ACCENT)),
+                        Span::styled(
+                            if m.is_invariant {
+                                "Aprovado (HITL)"
+                            } else {
+                                "Automático"
+                            },
+                            Style::default().fg(Theme::ACCENT),
+                        ),
                     ]),
                     Line::from(""),
-                    Line::from(Span::styled(app.db_path.to_string_lossy(), Style::default().fg(Theme::TEXT_MUTED))),
+                    Line::from(Span::styled(
+                        app.db_path.to_string_lossy(),
+                        Style::default().fg(Theme::TEXT_MUTED),
+                    )),
                 ];
 
-                let p = Paragraph::new(details).block(detail_block).wrap(Wrap { trim: true });
+                let p = Paragraph::new(details)
+                    .block(detail_block)
+                    .wrap(Wrap { trim: true });
                 f.render_widget(p, split_chunks[1]);
             }
             DashboardItem::AntiPattern(ap) => {
                 let details = vec![
                     Line::from(vec![
                         Span::styled("Guardrail: ", Style::default().fg(Theme::TEXT_MUTED)),
-                        Span::styled(&ap.pattern_name, Style::default().fg(Theme::TEXT).add_modifier(Modifier::BOLD)),
+                        Span::styled(
+                            &ap.pattern_name,
+                            Style::default()
+                                .fg(Theme::TEXT)
+                                .add_modifier(Modifier::BOLD),
+                        ),
                     ]),
                     Line::from(vec![
                         Span::styled("Severidade: ", Style::default().fg(Theme::TEXT_MUTED)),
-                        Span::styled(&ap.severity, Style::default().fg(Theme::DANGER).add_modifier(Modifier::BOLD)),
-                        Span::styled(format!(" ({} ocorrências)", ap.occurrences), Style::default().fg(Theme::TEXT_MUTED)),
+                        Span::styled(
+                            &ap.severity,
+                            Style::default()
+                                .fg(Theme::DANGER)
+                                .add_modifier(Modifier::BOLD),
+                        ),
+                        Span::styled(
+                            format!(" ({} ocorrências)", ap.occurrences),
+                            Style::default().fg(Theme::TEXT_MUTED),
+                        ),
                     ]),
                     Line::from(""),
-                    Line::from(Span::styled("── REGRA DE MITIGAÇÃO ──", Style::default().fg(Theme::TEXT_MUTED))),
-                    Line::from(Span::styled(&ap.mitigation, Style::default().fg(Theme::SUCCESS).add_modifier(Modifier::BOLD))),
+                    Line::from(Span::styled(
+                        "── REGRA DE MITIGAÇÃO ──",
+                        Style::default().fg(Theme::TEXT_MUTED),
+                    )),
+                    Line::from(Span::styled(
+                        &ap.mitigation,
+                        Style::default()
+                            .fg(Theme::SUCCESS)
+                            .add_modifier(Modifier::BOLD),
+                    )),
                     Line::from(""),
-                    Line::from(Span::styled("── ASSINATURA DE ERRO ──", Style::default().fg(Theme::TEXT_MUTED))),
-                    Line::from(Span::styled(&ap.signature, Style::default().fg(Theme::DANGER))),
+                    Line::from(Span::styled(
+                        "── ASSINATURA DE ERRO ──",
+                        Style::default().fg(Theme::TEXT_MUTED),
+                    )),
+                    Line::from(Span::styled(
+                        &ap.signature,
+                        Style::default().fg(Theme::DANGER),
+                    )),
                     Line::from(""),
-                    Line::from(Span::styled(app.db_path.to_string_lossy(), Style::default().fg(Theme::TEXT_MUTED))),
+                    Line::from(Span::styled(
+                        app.db_path.to_string_lossy(),
+                        Style::default().fg(Theme::TEXT_MUTED),
+                    )),
                 ];
 
-                let p = Paragraph::new(details).block(detail_block).wrap(Wrap { trim: true });
+                let p = Paragraph::new(details)
+                    .block(detail_block)
+                    .wrap(Wrap { trim: true });
                 f.render_widget(p, split_chunks[1]);
             }
         }
@@ -291,11 +407,26 @@ fn render_split(f: &mut Frame, app: &App, area: Rect) {
 
 fn render_footer(f: &mut Frame, _app: &App, area: Rect) {
     let shortcuts = Line::from(vec![
-        Span::styled("↑/↓", Style::default().fg(Theme::PRIMARY).add_modifier(Modifier::BOLD)),
+        Span::styled(
+            "↑/↓",
+            Style::default()
+                .fg(Theme::PRIMARY)
+                .add_modifier(Modifier::BOLD),
+        ),
         Span::styled(" Navegar   ", Style::default().fg(Theme::TEXT_MUTED)),
-        Span::styled("r", Style::default().fg(Theme::SUCCESS).add_modifier(Modifier::BOLD)),
+        Span::styled(
+            "r",
+            Style::default()
+                .fg(Theme::SUCCESS)
+                .add_modifier(Modifier::BOLD),
+        ),
         Span::styled(" Recarregar   ", Style::default().fg(Theme::TEXT_MUTED)),
-        Span::styled("q", Style::default().fg(Theme::DANGER).add_modifier(Modifier::BOLD)),
+        Span::styled(
+            "q",
+            Style::default()
+                .fg(Theme::DANGER)
+                .add_modifier(Modifier::BOLD),
+        ),
         Span::styled(" Sair", Style::default().fg(Theme::TEXT_MUTED)),
     ]);
 

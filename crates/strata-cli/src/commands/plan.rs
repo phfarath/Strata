@@ -54,12 +54,25 @@ pub async fn run_plan(args: PlanArgs) -> Result<()> {
 
     // Execution mode
     if !args.json {
-        println!("\n╔══════════════════════════════════════════════════════════════════════════════╗");
-        println!("║            🚀 STRATA HIERARCHICAL GOAL DAG SCHEDULER & RUNTIME               ║");
-        println!("╚══════════════════════════════════════════════════════════════════════════════╝\n");
+        println!(
+            "\n╔══════════════════════════════════════════════════════════════════════════════╗"
+        );
+        println!(
+            "║            🚀 STRATA HIERARCHICAL GOAL DAG SCHEDULER & RUNTIME               ║"
+        );
+        println!(
+            "╚══════════════════════════════════════════════════════════════════════════════╝\n"
+        );
         println!("🎯 TARGET OBJECTIVE: \x1b[1;36m{}\x1b[0m", goal);
         println!("⚡ CONCURRENCY CAP:  {} parallel workers", args.concurrency);
-        println!("🛡️  AUTO-RECOVERY:    {}", if !args.no_recover { "ENABLED (Dynamic DAG patching)" } else { "DISABLED" });
+        println!(
+            "🛡️  AUTO-RECOVERY:    {}",
+            if !args.no_recover {
+                "ENABLED (Dynamic DAG patching)"
+            } else {
+                "DISABLED"
+            }
+        );
         println!("\n⏳ Executing waves asynchronously...\n");
     }
 
@@ -83,7 +96,10 @@ fn render_plan_preview(goal: &str, dag: &strata_reasoning::GoalDag) {
     println!("║              📋 STRATA HIERARCHICAL GOAL DECOMPOSITION PLAN                  ║");
     println!("╚══════════════════════════════════════════════════════════════════════════════╝\n");
     println!("🎯 TARGET OBJECTIVE: \x1b[1;36m{}\x1b[0m", goal);
-    println!("📊 DECOMPOSITION:    {} goals across topological waves", dag.node_count());
+    println!(
+        "📊 DECOMPOSITION:    {} goals across topological waves",
+        dag.node_count()
+    );
     println!("{}", dag.to_ascii_tree());
     println!("💡 TIP: Run with \x1b[1;32m--execute\x1b[0m (or \x1b[1;32m-e\x1b[0m) to execute this Goal DAG wave-by-wave.\n");
 }
@@ -99,8 +115,18 @@ fn render_execution_report(
     println!("────────────────────────────────────────────────────────────────────────────────");
     println!("🆔 PLAN ID:           {}", report.plan_id);
     println!("🌊 EXECUTED WAVES:    {}", report.total_waves);
-    println!("✅ COMPLETED GOALS:   \x1b[1;32m{}\x1b[0m / {}", report.completed_nodes, report.total_nodes);
-    println!("❌ FAILED GOALS:      {}", if report.failed_nodes > 0 { format!("\x1b[1;31m{}\x1b[0m", report.failed_nodes) } else { "0".to_string() });
+    println!(
+        "✅ COMPLETED GOALS:   \x1b[1;32m{}\x1b[0m / {}",
+        report.completed_nodes, report.total_nodes
+    );
+    println!(
+        "❌ FAILED GOALS:      {}",
+        if report.failed_nodes > 0 {
+            format!("\x1b[1;31m{}\x1b[0m", report.failed_nodes)
+        } else {
+            "0".to_string()
+        }
+    );
     println!("⏭️  SKIPPED GOALS:     {}", report.skipped_nodes);
     println!("🔄 RECOVERY ATTEMPTS: {}", report.recovery_attempts);
     println!("⏱️  TOTAL DURATION:    {} ms", report.duration_ms);
@@ -108,6 +134,8 @@ fn render_execution_report(
     if report.success {
         println!("\n🎉 VERDICT: \x1b[1;32mALL GOALS AND VERIFICATION GATES PASSED (100% SUCCESS)\x1b[0m\n");
     } else {
-        println!("\n⚠️  VERDICT: \x1b[1;31mEXECUTION FAILED OR HALTED WITH UNRECOVERED GOALS\x1b[0m\n");
+        println!(
+            "\n⚠️  VERDICT: \x1b[1;31mEXECUTION FAILED OR HALTED WITH UNRECOVERED GOALS\x1b[0m\n"
+        );
     }
 }

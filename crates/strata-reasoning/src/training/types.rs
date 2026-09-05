@@ -1,23 +1,18 @@
-use std::fmt;
-use std::str::FromStr;
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
+use std::fmt;
+use std::str::FromStr;
 use strata_core::errors::StrataError;
 
 /// Fine-tuning optimization method.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
 #[serde(rename_all = "snake_case")]
 pub enum TrainingMethod {
+    #[default]
     Dpo,
     Sft,
     Orpo,
     Kto,
-}
-
-impl Default for TrainingMethod {
-    fn default() -> Self {
-        Self::Dpo
-    }
 }
 
 impl fmt::Display for TrainingMethod {
@@ -49,19 +44,14 @@ impl FromStr for TrainingMethod {
 }
 
 /// Quantization format for base model loading and LoRA training.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
 #[serde(rename_all = "snake_case")]
 pub enum QuantizationType {
+    #[default]
     Bits4,
     Bits8,
     Bits16,
     None,
-}
-
-impl Default for QuantizationType {
-    fn default() -> Self {
-        Self::Bits4
-    }
 }
 
 impl fmt::Display for QuantizationType {

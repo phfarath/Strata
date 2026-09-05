@@ -1,12 +1,12 @@
-use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
-use std::path::{Path, PathBuf};
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
+use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
+use std::path::{Path, PathBuf};
 use uuid::Uuid;
 
-use strata_core::errors::StrataError;
 use crate::ast::LanguageKind;
 use crate::call_graph::{CallEdge, CallGraph, CallGraphAnalyzer, CallType};
+use strata_core::errors::StrataError;
 
 /// Type of member node inside an architectural cluster.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
@@ -121,23 +121,32 @@ impl CommunityDetector {
     }
 
     /// Clusters an existing `CallGraph` into architectural communities.
-    pub fn detect_communities(&self, call_graph: &CallGraph, workspace_id: &str) -> ArchitectureGraphSummary {
+    pub fn detect_communities(
+        &self,
+        call_graph: &CallGraph,
+        workspace_id: &str,
+    ) -> ArchitectureGraphSummary {
         self.detect_from_edges(&call_graph.edges, workspace_id)
     }
 
     /// Clusters a slice of `CallEdge` records into architectural communities.
-    pub fn detect_from_edges(&self, edges: &[CallEdge], workspace_id: &str) -> ArchitectureGraphSummary {
+    pub fn detect_from_edges(
+        &self,
+        edges: &[CallEdge],
+        workspace_id: &str,
+    ) -> ArchitectureGraphSummary {
         let mut node_set: BTreeSet<String> = BTreeSet::new();
         let mut node_to_file: HashMap<String, String> = HashMap::new();
         let mut node_to_type: HashMap<String, MemberType> = HashMap::new();
 
         // 1. Collect all nodes and their attributes
         for edge in edges {
-            let caller_node = if edge.caller_symbol == "<top-level>" || edge.caller_symbol.is_empty() {
-                edge.caller_file.clone()
-            } else {
-                format!("{}::{}", edge.caller_file, edge.caller_symbol)
-            };
+            let caller_node =
+                if edge.caller_symbol == "<top-level>" || edge.caller_symbol.is_empty() {
+                    edge.caller_file.clone()
+                } else {
+                    format!("{}::{}", edge.caller_file, edge.caller_symbol)
+                };
 
             let callee_node = if let Some(ref hint) = edge.callee_file_hint {
                 format!("{}::{}", hint, edge.callee_symbol)
@@ -158,14 +167,18 @@ impl CommunityDetector {
             if let Some(ref hint) = edge.callee_file_hint {
                 node_to_file.insert(callee_node.clone(), hint.clone());
             } else {
-                node_to_file.entry(callee_node.clone()).or_insert_with(|| edge.caller_file.clone());
+                node_to_file
+                    .entry(callee_node.clone())
+                    .or_insert_with(|| edge.caller_file.clone());
             }
 
-            node_to_type.entry(callee_node).or_insert(match edge.call_type {
-                CallType::Import => MemberType::Module,
-                CallType::ConstructorCall => MemberType::Struct,
-                _ => MemberType::Function,
-            });
+            node_to_type
+                .entry(callee_node)
+                .or_insert(match edge.call_type {
+                    CallType::Import => MemberType::Module,
+                    CallType::ConstructorCall => MemberType::Struct,
+                    _ => MemberType::Function,
+                });
         }
 
         let nodes: Vec<String> = node_set.into_iter().collect();
@@ -180,7 +193,9 @@ impl CommunityDetector {
                 modularity: 0.0,
                 clusters: Vec::new(),
                 cross_cluster_edges_count: 0,
-                formatted_summary: "No code symbols or call edges detected for architectural clustering.".to_string(),
+                formatted_summary:
+                    "No code symbols or call edges detected for architectural clustering."
+                        .to_string(),
                 created_at: Utc::now(),
             };
         }
@@ -195,11 +210,12 @@ impl CommunityDetector {
         let mut total_weight = 0.0;
 
         for edge in edges {
-            let caller_node = if edge.caller_symbol == "<top-level>" || edge.caller_symbol.is_empty() {
-                &edge.caller_file
-            } else {
-                &format!("{}::{}", edge.caller_file, edge.caller_symbol)
-            };
+            let caller_node =
+                if edge.caller_symbol == "<top-level>" || edge.caller_symbol.is_empty() {
+                    &edge.caller_file
+                } else {
+                    &format!("{}::{}", edge.caller_file, edge.caller_symbol)
+                };
 
             let callee_node = if let Some(ref hint) = edge.callee_file_hint {
                 format!("{}::{}", hint, edge.callee_symbol)
@@ -207,7 +223,10 @@ impl CommunityDetector {
                 edge.callee_symbol.clone()
             };
 
-            if let (Some(&u), Some(&v)) = (node_idx_map.get(caller_node.as_str()), node_idx_map.get(callee_node.as_str())) {
+            if let (Some(&u), Some(&v)) = (
+                node_idx_map.get(caller_node.as_str()),
+                node_idx_map.get(callee_node.as_str()),
+            ) {
                 let weight = match edge.call_type {
                     CallType::Import => self.config.import_weight,
                     _ => self.config.call_weight,
@@ -372,7 +391,10 @@ impl CommunityDetector {
             for &u in c_members {
                 let node_id = &nodes[u];
                 let file_path = node_to_file.get(node_id).cloned().unwrap_or_default();
-                let m_type = node_to_type.get(node_id).cloned().unwrap_or(MemberType::Function);
+                let m_type = node_to_type
+                    .get(node_id)
+                    .cloned()
+                    .unwrap_or(MemberType::Function);
                 let simple_name = node_id.split("::").last().unwrap_or(node_id).to_string();
 
                 let mut int_deg = 0;
@@ -386,7 +408,9 @@ impl CommunityDetector {
                     } else {
                         ext_deg += 1;
                         external_edges_count += w;
-                        let entry = dep_map.entry(target_cluster).or_insert_with(|| (0, Vec::new()));
+                        let entry = dep_map
+                            .entry(target_cluster)
+                            .or_insert_with(|| (0, Vec::new()));
                         entry.0 += 1;
                         if entry.1.len() < 3 {
                             entry.1.push(format!("{} -> {}", node_id, nodes[v]));
@@ -442,7 +466,9 @@ impl CommunityDetector {
                 for (&v, _) in &adj[u] {
                     let target_cluster = node_to_cluster_idx[v];
                     if target_cluster != c_idx {
-                        let entry = dep_map.entry(target_cluster).or_insert_with(|| (0, Vec::new()));
+                        let entry = dep_map
+                            .entry(target_cluster)
+                            .or_insert_with(|| (0, Vec::new()));
                         entry.0 += 1;
                         if entry.1.len() < 3 {
                             entry.1.push(format!("{} -> {}", nodes[u], nodes[v]));
@@ -489,9 +515,16 @@ impl CommunityDetector {
     }
 
     /// Scans a workspace directory, analyzes all source code files, and builds an architectural clustering map.
-    pub fn detect_from_directory(&self, root_dir: &Path, workspace_id: &str) -> Result<ArchitectureGraphSummary, StrataError> {
+    pub fn detect_from_directory(
+        &self,
+        root_dir: &Path,
+        workspace_id: &str,
+    ) -> Result<ArchitectureGraphSummary, StrataError> {
         if !root_dir.exists() {
-            return Err(StrataError::Validation(format!("Directory does not exist: {}", root_dir.display())));
+            return Err(StrataError::Validation(format!(
+                "Directory does not exist: {}",
+                root_dir.display()
+            )));
         }
 
         let mut files = Vec::new();
@@ -534,16 +567,72 @@ impl CommunityDetector {
 
             let text_to_check = format!("{} {}", m.name.to_lowercase(), m.file_path.to_lowercase());
             for kw in &[
-                "auth", "login", "jwt", "token", "user", "security", "permission", "password",
-                "db", "store", "sqlite", "postgres", "sql", "migration", "repository", "table",
-                "sync", "cdc", "delta", "outbox", "replication", "stream", "event",
-                "api", "route", "handler", "server", "http", "axum", "endpoint", "socket",
-                "cli", "command", "args", "terminal", "prompt", "interactive",
-                "decay", "ebbinghaus", "prune", "memory", "retrieval", "search", "fts",
-                "ast", "anchor", "tree_sitter", "parser", "diff", "merkle",
-                "eval", "bench", "scenario", "test", "verification",
-                "reasoning", "dag", "plan", "train", "lora", "distill",
-                "workspace", "monorepo", "boundary", "package", "crate",
+                "auth",
+                "login",
+                "jwt",
+                "token",
+                "user",
+                "security",
+                "permission",
+                "password",
+                "db",
+                "store",
+                "sqlite",
+                "postgres",
+                "sql",
+                "migration",
+                "repository",
+                "table",
+                "sync",
+                "cdc",
+                "delta",
+                "outbox",
+                "replication",
+                "stream",
+                "event",
+                "api",
+                "route",
+                "handler",
+                "server",
+                "http",
+                "axum",
+                "endpoint",
+                "socket",
+                "cli",
+                "command",
+                "args",
+                "terminal",
+                "prompt",
+                "interactive",
+                "decay",
+                "ebbinghaus",
+                "prune",
+                "memory",
+                "retrieval",
+                "search",
+                "fts",
+                "ast",
+                "anchor",
+                "tree_sitter",
+                "parser",
+                "diff",
+                "merkle",
+                "eval",
+                "bench",
+                "scenario",
+                "test",
+                "verification",
+                "reasoning",
+                "dag",
+                "plan",
+                "train",
+                "lora",
+                "distill",
+                "workspace",
+                "monorepo",
+                "boundary",
+                "package",
+                "crate",
             ] {
                 if text_to_check.contains(kw) {
                     keywords.insert(kw.to_string());
@@ -552,49 +641,78 @@ impl CommunityDetector {
         }
 
         // Check for dominant architectural patterns
-        if keywords.contains("auth") || keywords.contains("login") || keywords.contains("jwt") || keywords.contains("security") {
+        if keywords.contains("auth")
+            || keywords.contains("login")
+            || keywords.contains("jwt")
+            || keywords.contains("security")
+        {
             return (
                 "Authentication & Security".to_string(),
-                "Identity verification, credential management, tokens and access policies.".to_string(),
+                "Identity verification, credential management, tokens and access policies."
+                    .to_string(),
             );
         }
-        if keywords.contains("store") || keywords.contains("sqlite") || keywords.contains("postgres") || keywords.contains("db") {
+        if keywords.contains("store")
+            || keywords.contains("sqlite")
+            || keywords.contains("postgres")
+            || keywords.contains("db")
+        {
             return (
                 "Database & Persistence".to_string(),
-                "Relational storage, entity schemas, migrations and database operations.".to_string(),
+                "Relational storage, entity schemas, migrations and database operations."
+                    .to_string(),
             );
         }
-        if keywords.contains("sync") || keywords.contains("cdc") || keywords.contains("outbox") || keywords.contains("delta") {
+        if keywords.contains("sync")
+            || keywords.contains("cdc")
+            || keywords.contains("outbox")
+            || keywords.contains("delta")
+        {
             return (
                 "Synchronization & CDC Engine".to_string(),
-                "Offline-first change data capture, conflict resolution and sync replication.".to_string(),
+                "Offline-first change data capture, conflict resolution and sync replication."
+                    .to_string(),
             );
         }
-        if keywords.contains("api") || keywords.contains("server") || keywords.contains("axum") || keywords.contains("http") {
+        if keywords.contains("api")
+            || keywords.contains("server")
+            || keywords.contains("axum")
+            || keywords.contains("http")
+        {
             return (
                 "HTTP API & Server Routing".to_string(),
                 "Network endpoints, protocol handlers and server request processing.".to_string(),
             );
         }
-        if keywords.contains("cli") || keywords.contains("command") || keywords.contains("terminal") {
+        if keywords.contains("cli") || keywords.contains("command") || keywords.contains("terminal")
+        {
             return (
                 "CLI & Command Gateway".to_string(),
                 "User command-line interfaces, options parsing and execution commands.".to_string(),
             );
         }
-        if keywords.contains("decay") || keywords.contains("retrieval") || keywords.contains("search") || keywords.contains("fts") {
+        if keywords.contains("decay")
+            || keywords.contains("retrieval")
+            || keywords.contains("search")
+            || keywords.contains("fts")
+        {
             return (
                 "Cognitive Memory & Retrieval".to_string(),
-                "Mathematical decay, full-text lexical search and semantic memory recall.".to_string(),
+                "Mathematical decay, full-text lexical search and semantic memory recall."
+                    .to_string(),
             );
         }
         if keywords.contains("ast") || keywords.contains("anchor") || keywords.contains("parser") {
             return (
                 "AST Code Anchoring & Syntax".to_string(),
-                "Syntax tree parsing, symbol extraction and code anchoring across commits.".to_string(),
+                "Syntax tree parsing, symbol extraction and code anchoring across commits."
+                    .to_string(),
             );
         }
-        if keywords.contains("workspace") || keywords.contains("monorepo") || keywords.contains("package") {
+        if keywords.contains("workspace")
+            || keywords.contains("monorepo")
+            || keywords.contains("package")
+        {
             return (
                 "Workspace & Monorepo Boundaries".to_string(),
                 "Package isolation, dependency analysis and monorepo boundaries.".to_string(),
@@ -603,13 +721,16 @@ impl CommunityDetector {
         if keywords.contains("dag") || keywords.contains("plan") || keywords.contains("reasoning") {
             return (
                 "Planning & Reasoning DAG".to_string(),
-                "Hierarchical goal decomposition, causal reasoning and task execution waves.".to_string(),
+                "Hierarchical goal decomposition, causal reasoning and task execution waves."
+                    .to_string(),
             );
         }
-        if keywords.contains("eval") || keywords.contains("bench") || keywords.contains("scenario") {
+        if keywords.contains("eval") || keywords.contains("bench") || keywords.contains("scenario")
+        {
             return (
                 "Evaluation & Benchmarks".to_string(),
-                "Automated verification scenarios and performance evaluation benchmarks.".to_string(),
+                "Automated verification scenarios and performance evaluation benchmarks."
+                    .to_string(),
             );
         }
 
@@ -638,14 +759,17 @@ impl CommunityDetector {
         cross_edges: usize,
     ) -> String {
         let mut lines = Vec::new();
-        lines.push(format!("### 🏛️ High-Level Architecture Map (`{workspace_id}`)"));
+        lines.push(format!(
+            "### 🏛️ High-Level Architecture Map (`{workspace_id}`)"
+        ));
         lines.push(format!(
             "- **Total Nodes**: {} symbols/files | **Call/Import Edges**: {} | **Modularity (Q)**: {:.3}",
             total_nodes, total_edges, modularity
         ));
         lines.push(format!(
             "- **Extracted Communities**: {} clusters | **Cross-Cluster Boundaries**: {} edges\n",
-            clusters.len(), cross_edges
+            clusters.len(),
+            cross_edges
         ));
 
         for (i, c) in clusters.iter().enumerate() {
@@ -653,7 +777,9 @@ impl CommunityDetector {
             lines.push(format!("> _{}_", c.description));
             lines.push(format!(
                 "- **Metrics**: Cohesion: `{:.2}` | Coupling: `{:.2}` | Members: `{}` items",
-                c.cohesion, c.coupling, c.members.len()
+                c.cohesion,
+                c.coupling,
+                c.members.len()
             ));
 
             // Show top members
@@ -668,7 +794,11 @@ impl CommunityDetector {
             } else {
                 "".to_string()
             };
-            lines.push(format!("- **Key Members**: {}{}", preview_members.join(", "), more_suffix));
+            lines.push(format!(
+                "- **Key Members**: {}{}",
+                preview_members.join(", "),
+                more_suffix
+            ));
 
             // Show inter-cluster dependencies
             if !c.dependencies.is_empty() {
@@ -691,7 +821,12 @@ fn collect_source_files(dir: &Path, files: &mut Vec<PathBuf>) {
         for entry in entries.filter_map(|e| e.ok()) {
             let path = entry.path();
             let name = entry.file_name().to_string_lossy().to_string();
-            if name.starts_with('.') || name == "target" || name == "node_modules" || name == "dist" || name == "build" {
+            if name.starts_with('.')
+                || name == "target"
+                || name == "node_modules"
+                || name == "dist"
+                || name == "build"
+            {
                 continue;
             }
             if path.is_dir() {
@@ -740,18 +875,66 @@ mod tests {
         let mut edges = Vec::new();
 
         // Auth cluster
-        edges.push(CallEdge::new("src/auth/login.rs", "handle_login", "verify_password", 10, CallType::FunctionCall));
-        edges.push(CallEdge::new("src/auth/login.rs", "handle_login", "generate_jwt", 15, CallType::FunctionCall));
-        edges.push(CallEdge::new("src/auth/token.rs", "generate_jwt", "sign_claims", 20, CallType::FunctionCall));
+        edges.push(CallEdge::new(
+            "src/auth/login.rs",
+            "handle_login",
+            "verify_password",
+            10,
+            CallType::FunctionCall,
+        ));
+        edges.push(CallEdge::new(
+            "src/auth/login.rs",
+            "handle_login",
+            "generate_jwt",
+            15,
+            CallType::FunctionCall,
+        ));
+        edges.push(CallEdge::new(
+            "src/auth/token.rs",
+            "generate_jwt",
+            "sign_claims",
+            20,
+            CallType::FunctionCall,
+        ));
 
         // DB cluster
-        edges.push(CallEdge::new("src/db/store.rs", "query_record", "execute_sql", 50, CallType::FunctionCall));
-        edges.push(CallEdge::new("src/db/store.rs", "insert_record", "execute_sql", 55, CallType::FunctionCall));
-        edges.push(CallEdge::new("src/db/pool.rs", "connect_db", "create_pool", 30, CallType::FunctionCall));
-        edges.push(CallEdge::new("src/db/store.rs", "query_record", "connect_db", 60, CallType::FunctionCall));
+        edges.push(CallEdge::new(
+            "src/db/store.rs",
+            "query_record",
+            "execute_sql",
+            50,
+            CallType::FunctionCall,
+        ));
+        edges.push(CallEdge::new(
+            "src/db/store.rs",
+            "insert_record",
+            "execute_sql",
+            55,
+            CallType::FunctionCall,
+        ));
+        edges.push(CallEdge::new(
+            "src/db/pool.rs",
+            "connect_db",
+            "create_pool",
+            30,
+            CallType::FunctionCall,
+        ));
+        edges.push(CallEdge::new(
+            "src/db/store.rs",
+            "query_record",
+            "connect_db",
+            60,
+            CallType::FunctionCall,
+        ));
 
         // Inter-cluster bridge edge: Login calls query_record to find user
-        edges.push(CallEdge::new("src/auth/login.rs", "handle_login", "query_record", 12, CallType::FunctionCall));
+        edges.push(CallEdge::new(
+            "src/auth/login.rs",
+            "handle_login",
+            "query_record",
+            12,
+            CallType::FunctionCall,
+        ));
 
         let detector = CommunityDetector::default();
         let summary = detector.detect_from_edges(&edges, "test-workspace");
@@ -768,7 +951,9 @@ mod tests {
         }
 
         // Verify markdown summary formatting
-        assert!(summary.formatted_summary.contains("High-Level Architecture Map"));
+        assert!(summary
+            .formatted_summary
+            .contains("High-Level Architecture Map"));
         assert!(summary.formatted_summary.contains("Modularity"));
     }
 
@@ -795,8 +980,16 @@ function sendJson(code: number) { return code; }
 
         let analyzer = CallGraphAnalyzer::new();
         let mut all_edges = Vec::new();
-        all_edges.extend(analyzer.analyze_source(rust_auth, LanguageKind::Rust, "src/auth.rs").unwrap());
-        all_edges.extend(analyzer.analyze_source(ts_api, LanguageKind::TypeScript, "src/api.ts").unwrap());
+        all_edges.extend(
+            analyzer
+                .analyze_source(rust_auth, LanguageKind::Rust, "src/auth.rs")
+                .unwrap(),
+        );
+        all_edges.extend(
+            analyzer
+                .analyze_source(ts_api, LanguageKind::TypeScript, "src/api.ts")
+                .unwrap(),
+        );
 
         let detector = CommunityDetector::default();
         let summary = detector.detect_from_edges(&all_edges, "polyglot-workspace");

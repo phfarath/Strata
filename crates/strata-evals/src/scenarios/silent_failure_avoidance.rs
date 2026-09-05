@@ -50,7 +50,8 @@ pub async fn run_silent_failure_avoidance_scenario() -> Result<()> {
             duration_ms: Some(1250),
             timestamp: chrono::Utc::now(),
         }),
-    ).with_provenance(prov.clone());
+    )
+    .with_provenance(prov.clone());
 
     engine.append(&tool_result_event).await?;
 
@@ -67,16 +68,23 @@ pub async fn run_silent_failure_avoidance_scenario() -> Result<()> {
     failure_pattern.scope = Scope::Global;
 
     engine.record_failure(&failure_pattern).await?;
-    println!("  [Engine] Out-of-band captured failure pattern: '{}'", failure_pattern.pattern_name);
+    println!(
+        "  [Engine] Out-of-band captured failure pattern: '{}'",
+        failure_pattern.pattern_name
+    );
 
     // 5. Subsequent session / prompt execution
     let prompt_query = "How do I build the cargo project for Linux target?";
     println!("  [Next Session] Agent evaluates prompt: \"{prompt_query}\"");
 
-    let known_failures = engine.get_known_failures(Some(prompt_query), None, 3).await?;
+    let known_failures = engine
+        .get_known_failures(Some(prompt_query), None, 3)
+        .await?;
 
     if known_failures.is_empty() {
-        bail!("Expected pre-emptive failure warning for query '{prompt_query}', but none was found");
+        bail!(
+            "Expected pre-emptive failure warning for query '{prompt_query}', but none was found"
+        );
     }
 
     let warning = &known_failures[0];
@@ -88,14 +96,19 @@ pub async fn run_silent_failure_avoidance_scenario() -> Result<()> {
     // 6. Verify minimal context overhead
     let alert_text = format!("{}: {}", warning.pattern_name, warning.mitigation);
     let token_estimate = alert_text.split_whitespace().count() * 4 / 3;
-    println!("  [Context Efficiency] Alert token cost: ~{token_estimate} tokens (Target: < 50 tokens)");
+    println!(
+        "  [Context Efficiency] Alert token cost: ~{token_estimate} tokens (Target: < 50 tokens)"
+    );
 
     if token_estimate > 50 {
         bail!("Context bloated! Token estimate was {token_estimate} tokens, expected < 50 tokens");
     }
 
     if !warning.mitigation.contains("Docker/WSL") {
-        bail!("Mitigation advice mismatch. Expected Docker/WSL, got: {}", warning.mitigation);
+        bail!(
+            "Mitigation advice mismatch. Expected Docker/WSL, got: {}",
+            warning.mitigation
+        );
     }
 
     println!("  ✓ Silent failure avoidance eval scenario PASSED cleanly.");

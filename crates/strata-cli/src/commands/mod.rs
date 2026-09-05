@@ -11,6 +11,7 @@ pub mod hook;
 pub mod init;
 pub mod key;
 pub mod login;
+pub mod mcp_install;
 pub mod observe;
 pub mod plan;
 pub mod promote;
@@ -19,7 +20,6 @@ pub mod reconcile;
 pub mod search;
 pub mod sync;
 pub mod sync_hosts;
-pub mod mcp_install;
 pub mod train;
 pub mod workspace;
 
@@ -47,4 +47,3 @@ pub use sync::*;
 pub use sync_hosts::*;
 pub use train::*;
 pub use workspace::*;
-

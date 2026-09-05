@@ -16,14 +16,16 @@ pub mod workspace;
 #[cfg(test)]
 mod tests;
 
+use async_trait::async_trait;
 use std::path::Path;
 use std::sync::Arc;
-use async_trait::async_trait;
 use uuid::Uuid;
 
 use strata_core::errors::StrataError;
 use strata_core::events::{Event, EventId};
-use strata_core::state::{DigestOutput, FailurePattern, MemoryHandle, MemoryRecord, MemoryTier, Scope};
+use strata_core::state::{
+    DigestOutput, FailurePattern, MemoryHandle, MemoryRecord, MemoryTier, Scope,
+};
 use strata_core::traits::{EventStore, MemoryEngine};
 
 pub use alignment::PreferenceMiner;
@@ -49,16 +51,14 @@ pub use jtms::{ConflictMatch, ConflictResolution, TruthMaintenanceSystem};
 pub use pipeline::{ConsolidationPipeline, ConsolidationResult, PipelineConfig};
 pub use retrieval::{HybridRanker, HybridRankerConfig};
 pub use store::SqliteStore;
-pub use workspace::{MonorepoPackage, PackageType, WorkspaceBoundary, WorkspaceBoundaryDetector};
-pub use sync::{calculate_exponential_backoff, compute_version_hash, SyncEngine};
 pub use strata_core::schemas::{
     CodeAnchor, ContextBudgetConfig, ExportFormat, FeedbackEvent, FeedbackRating, HostTargetConfig,
-    ImplicitSignal, KtoSample, MemoryFeedback, PreferencePair, SemanticFact, SftSample, SignalKind, SymbolType,
+    ImplicitSignal, KtoSample, MemoryFeedback, PreferencePair, SemanticFact, SftSample, SignalKind,
+    SymbolType,
 };
+pub use sync::{calculate_exponential_backoff, compute_version_hash, SyncEngine};
+pub use workspace::{MonorepoPackage, PackageType, WorkspaceBoundary, WorkspaceBoundaryDetector};
 pub type DpoPair = PreferencePair;
-
-
-
 
 /// SQLite-backed persistent memory engine implementing `MemoryEngine` and `EventStore`.
 pub struct SqliteMemoryEngine {
@@ -75,8 +75,8 @@ impl SqliteMemoryEngine {
         embedding_provider: Option<Arc<dyn EmbeddingProvider>>,
     ) -> Result<Self, StrataError> {
         let store = Arc::new(SqliteStore::open(path)?);
-        let embedder: Arc<dyn EmbeddingProvider> = embedding_provider
-            .unwrap_or_else(|| Arc::new(MockEmbeddingProvider::default()));
+        let embedder: Arc<dyn EmbeddingProvider> =
+            embedding_provider.unwrap_or_else(|| Arc::new(MockEmbeddingProvider::default()));
 
         Ok(Self {
             store,
@@ -91,8 +91,8 @@ impl SqliteMemoryEngine {
         embedding_provider: Option<Arc<dyn EmbeddingProvider>>,
     ) -> Result<Self, StrataError> {
         let store = Arc::new(SqliteStore::open_in_memory()?);
-        let embedder: Arc<dyn EmbeddingProvider> = embedding_provider
-            .unwrap_or_else(|| Arc::new(MockEmbeddingProvider::default()));
+        let embedder: Arc<dyn EmbeddingProvider> =
+            embedding_provider.unwrap_or_else(|| Arc::new(MockEmbeddingProvider::default()));
 
         Ok(Self {
             store,
@@ -130,7 +130,10 @@ impl SqliteMemoryEngine {
     }
 
     /// Automatically detects monorepo workspace boundaries in the repository.
-    pub fn detect_workspace_boundaries(&self, root_dir: &Path) -> Result<WorkspaceBoundary, StrataError> {
+    pub fn detect_workspace_boundaries(
+        &self,
+        root_dir: &Path,
+    ) -> Result<WorkspaceBoundary, StrataError> {
         WorkspaceBoundaryDetector::detect(root_dir)
     }
 
@@ -177,7 +180,8 @@ impl SqliteMemoryEngine {
         approved_by_human: bool,
         reason: Option<&str>,
     ) -> Result<MemoryRecord, StrataError> {
-        self.store.promote_memory_to_core(id, approved_by_human, reason)
+        self.store
+            .promote_memory_to_core(id, approved_by_human, reason)
     }
 
     /// Promotes a semantic fact to Core Tier with explicit human approval.
@@ -187,7 +191,8 @@ impl SqliteMemoryEngine {
         approved_by_human: bool,
         reason: Option<&str>,
     ) -> Result<SemanticFact, StrataError> {
-        self.store.promote_semantic_fact_to_core(id, approved_by_human, reason)
+        self.store
+            .promote_semantic_fact_to_core(id, approved_by_human, reason)
     }
 }
 
@@ -251,10 +256,17 @@ impl MemoryEngine for SqliteMemoryEngine {
         self.store.insert_or_update_memory(&to_write)?;
 
         // Auto-enqueue CDC sync delta in outbox
-        let workspace = std::env::var("STRATA_WORKSPACE_ID").unwrap_or_else(|_| "default".to_string());
+        let workspace =
+            std::env::var("STRATA_WORKSPACE_ID").unwrap_or_else(|_| "default".to_string());
         if let Ok(payload) = serde_json::to_value(&to_write) {
             let version_hash = sync::compute_version_hash(&payload);
-            let delta = strata_core::schemas::SyncDelta::new(&workspace, 0, "memory_record", payload, version_hash);
+            let delta = strata_core::schemas::SyncDelta::new(
+                &workspace,
+                0,
+                "memory_record",
+                payload,
+                version_hash,
+            );
             let _ = self.store.enqueue_delta(&delta);
         }
 

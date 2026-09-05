@@ -1,6 +1,6 @@
-use std::sync::Arc;
 use anyhow::Result;
 use chrono::Utc;
+use std::sync::Arc;
 use tracing::info;
 
 use strata_core::schemas::FactStatus;
@@ -30,7 +30,9 @@ pub async fn run_prune(opts: PruneOptions, store: Arc<SqliteStore>) -> Result<()
         let mut rep = strata_memory::PruneReport::default();
         let facts = store.get_all_semantic_facts(None, Some(FactStatus::Active), 10000)?;
         for fact in facts {
-            if fact.tier == MemoryTier::Core || fact.importance >= calculator.config.invariant_threshold {
+            if fact.tier == MemoryTier::Core
+                || fact.importance >= calculator.config.invariant_threshold
+            {
                 rep.core_protected += 1;
             } else if fact.tier == MemoryTier::Working {
                 rep.working_active += 1;
@@ -45,7 +47,9 @@ pub async fn run_prune(opts: PruneOptions, store: Arc<SqliteStore>) -> Result<()
 
         let memories = store.get_all_memories(None, None, 10000)?;
         for mem in memories {
-            if mem.tier == MemoryTier::Core || mem.importance >= calculator.config.invariant_threshold {
+            if mem.tier == MemoryTier::Core
+                || mem.importance >= calculator.config.invariant_threshold
+            {
                 rep.core_protected += 1;
             } else if mem.tier == MemoryTier::Working {
                 rep.working_active += 1;
@@ -82,7 +86,11 @@ pub async fn run_prune(opts: PruneOptions, store: Arc<SqliteStore>) -> Result<()
         });
         println!("{}", serde_json::to_string_pretty(&json_report)?);
     } else {
-        let dry_prefix = if opts.dry_run { " [SIMULATION / DRY RUN]" } else { "" };
+        let dry_prefix = if opts.dry_run {
+            " [SIMULATION / DRY RUN]"
+        } else {
+            ""
+        };
         println!("\n🧹 [Strata Tri-Tier Memory Decay & Prune Report{dry_prefix}]");
         println!("══════════════════════════════════════════════════════════");
         println!("Retention Threshold (θ_prune): {:.2}", opts.threshold);
@@ -92,13 +100,31 @@ pub async fn run_prune(opts: PruneOptions, store: Arc<SqliteStore>) -> Result<()
             println!("Scope Filter:                  [All Scopes]");
         }
         println!("──────────────────────────────────────────────────────────");
-        println!("🛡️  Core Tier (Immune/Protected):    {} records", report.core_protected);
-        println!("⚡  Working Tier (Active Session):    {} records", report.working_active);
-        println!("📦  Peripheral -> Cold Storage:       {} records archived", report.memories_archived);
-        println!("🏷️  Semantic Facts Pruned:            {} facts deprecated", report.facts_pruned);
-        println!("💾  Total Cold Storage In-Disk:       {} records", cold_count);
+        println!(
+            "🛡️  Core Tier (Immune/Protected):    {} records",
+            report.core_protected
+        );
+        println!(
+            "⚡  Working Tier (Active Session):    {} records",
+            report.working_active
+        );
+        println!(
+            "📦  Peripheral -> Cold Storage:       {} records archived",
+            report.memories_archived
+        );
+        println!(
+            "🏷️  Semantic Facts Pruned:            {} facts deprecated",
+            report.facts_pruned
+        );
+        println!(
+            "💾  Total Cold Storage In-Disk:       {} records",
+            cold_count
+        );
         println!("──────────────────────────────────────────────────────────");
-        println!("Total Pruned/Archived:               {}\n", report.memories_pruned + report.facts_pruned + report.skills_pruned);
+        println!(
+            "Total Pruned/Archived:               {}\n",
+            report.memories_pruned + report.facts_pruned + report.skills_pruned
+        );
     }
 
     Ok(())

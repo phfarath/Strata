@@ -77,7 +77,7 @@ pub async fn run_tui(engine: Arc<SqliteMemoryEngine>, db_path: &Path) -> Result<
                             app.prev_row();
                         }
                         KeyCode::Char('r') => {
-                            let _ = app.refresh(&engine.store());
+                            let _ = app.refresh(engine.store());
                         }
                         _ => {}
                     }

@@ -1,5 +1,5 @@
-use std::sync::Arc;
 use anyhow::{Context, Result};
+use std::sync::Arc;
 use tracing::info;
 
 use strata_memory::{ConsolidationPipeline, MockEmbeddingProvider, SqliteStore};
@@ -21,7 +21,10 @@ pub async fn run_consolidate(opts: ConsolidateOptions, store: Arc<SqliteStore>) 
         info!("Running consolidation across all recorded sessions");
         store.get_all_events()?
     } else {
-        let session_id = opts.session.clone().unwrap_or_else(|| "default".to_string());
+        let session_id = opts
+            .session
+            .clone()
+            .unwrap_or_else(|| "default".to_string());
         info!("Running consolidation for session '{session_id}'");
         store.get_events(&session_id, None, None)?
     };
@@ -51,9 +54,19 @@ pub async fn run_consolidate(opts: ConsolidateOptions, store: Arc<SqliteStore>) 
             println!("Target Session:          [All Sessions]");
         }
         println!("📊 Events Processed:     {}", result.events_processed);
-        println!("📖 Episodic Memories:    {}", result.episodic_memories.len());
-        println!("💡 Semantic Facts:       {} ({} JTMS updates)", result.semantic_facts.len(), result.conflicts_resolved);
-        println!("🛠️ Procedural Skills:    {}", result.procedural_skills.len());
+        println!(
+            "📖 Episodic Memories:    {}",
+            result.episodic_memories.len()
+        );
+        println!(
+            "💡 Semantic Facts:       {} ({} JTMS updates)",
+            result.semantic_facts.len(),
+            result.conflicts_resolved
+        );
+        println!(
+            "🛠️ Procedural Skills:    {}",
+            result.procedural_skills.len()
+        );
         println!("🧹 Memories Pruned:      {}", result.memories_pruned);
         println!("─────────────────────────────────────────\n");
     }
@@ -61,7 +74,9 @@ pub async fn run_consolidate(opts: ConsolidateOptions, store: Arc<SqliteStore>) 
     Ok(())
 }
 
-pub fn resolve_reasoning_engine(model_slug: Option<&str>) -> Arc<dyn strata_core::traits::ReasoningEngine> {
+pub fn resolve_reasoning_engine(
+    model_slug: Option<&str>,
+) -> Arc<dyn strata_core::traits::ReasoningEngine> {
     // 1. Try OpenRouter (first priority per spec)
     if let Ok(adapter) = OpenRouterAdapter::from_env(model_slug.map(|s| s.to_string())) {
         return Arc::new(adapter);

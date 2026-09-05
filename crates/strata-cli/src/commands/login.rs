@@ -1,6 +1,3 @@
-use std::net::SocketAddr;
-use std::sync::Arc;
-use std::time::Duration;
 use anyhow::{bail, Context, Result};
 use axum::extract::Query;
 use axum::response::Html;
@@ -9,6 +6,9 @@ use axum::Router;
 use clap::Args;
 use rand::Rng;
 use serde::Deserialize;
+use std::net::SocketAddr;
+use std::sync::Arc;
+use std::time::Duration;
 use tokio::net::TcpListener;
 use tokio::sync::oneshot;
 
@@ -16,10 +16,17 @@ use crate::config::StrataConfig;
 
 #[derive(Args, Debug, Clone)]
 pub struct LoginArgs {
-    #[arg(long, env = "STRATA_SYNC_ENDPOINT", help = "Strata Cloud Server URL (default: https://strata.pedrofarath.me)")]
+    #[arg(
+        long,
+        env = "STRATA_SYNC_ENDPOINT",
+        help = "Strata Cloud Server URL (default: https://strata.pedrofarath.me)"
+    )]
     pub endpoint: Option<String>,
 
-    #[arg(long, help = "Do not open default browser automatically (prints URL for manual copy/paste)")]
+    #[arg(
+        long,
+        help = "Do not open default browser automatically (prints URL for manual copy/paste)"
+    )]
     pub no_browser: bool,
 
     #[arg(long, help = "Specific local loopback port for callback")]
@@ -122,9 +129,7 @@ pub async fn run_login(args: LoginArgs) -> Result<()> {
     });
 
     // 6. Form authentication URL
-    let auth_url = format!(
-        "{clean_endpoint}/auth/cli?port={actual_port}&state={expected_state}"
-    );
+    let auth_url = format!("{clean_endpoint}/auth/cli?port={actual_port}&state={expected_state}");
 
     println!("\n⚡ [Strata Cloud Login]");
     println!("══════════════════════════════════════════════════════");
@@ -153,7 +158,9 @@ pub async fn run_login(args: LoginArgs) -> Result<()> {
     let data = match callback_result {
         Ok(Ok(d)) => d,
         Ok(Err(_)) => bail!("Authentication server closed unexpectedly"),
-        Err(_) => bail!("Authentication timed out after 120 seconds. Please run `strata login` again."),
+        Err(_) => {
+            bail!("Authentication timed out after 120 seconds. Please run `strata login` again.")
+        }
     };
 
     // 8. Save configuration to ~/.strata/config.toml

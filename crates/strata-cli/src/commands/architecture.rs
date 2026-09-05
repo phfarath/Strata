@@ -1,6 +1,6 @@
-use std::path::Path;
 use clap::Args;
 use serde::{Deserialize, Serialize};
+use std::path::Path;
 
 use strata_core::errors::StrataError;
 use strata_memory::{ClusteringConfig, CommunityDetector};
@@ -41,9 +41,9 @@ pub struct ArchitectureArgs {
 
 /// Executes the `strata architecture` / `strata cluster` CLI command.
 pub async fn run_architecture(args: ArchitectureArgs) -> Result<(), StrataError> {
-    let ws_id = args.workspace.unwrap_or_else(|| {
-        crate::config::StrataConfig::resolve_workspace(None)
-    });
+    let ws_id = args
+        .workspace
+        .unwrap_or_else(|| crate::config::StrataConfig::resolve_workspace(None));
 
     let config = ClusteringConfig {
         max_iterations: args.max_iterations,
@@ -56,8 +56,11 @@ pub async fn run_architecture(args: ArchitectureArgs) -> Result<(), StrataError>
     let summary = detector.detect_from_directory(Path::new(&args.path), &ws_id)?;
 
     if args.json {
-        let json_val = serde_json::to_string_pretty(&summary)
-            .map_err(|e| StrataError::Internal(format!("Failed to serialize architecture summary to JSON: {e}")))?;
+        let json_val = serde_json::to_string_pretty(&summary).map_err(|e| {
+            StrataError::Internal(format!(
+                "Failed to serialize architecture summary to JSON: {e}"
+            ))
+        })?;
         println!("{json_val}");
     } else {
         println!("{}", summary.formatted_summary);

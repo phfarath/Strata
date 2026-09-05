@@ -1,15 +1,23 @@
-use std::path::PathBuf;
-use std::sync::Arc;
 use anyhow::{Context, Result};
 use clap::Args;
+use std::path::PathBuf;
+use std::sync::Arc;
 use strata_memory::{MultiHostCompiler, SqliteStore};
 
 #[derive(Debug, Clone, Args)]
 pub struct SyncHostsArgs {
-    #[arg(long, default_value = "all", help = "Target hosts: 'cursor', 'claude', 'codex', 'gemini', or comma-separated list")]
+    #[arg(
+        long,
+        default_value = "all",
+        help = "Target hosts: 'cursor', 'claude', 'codex', 'gemini', or comma-separated list"
+    )]
     pub target: String,
 
-    #[arg(long, default_value_t = 1000, help = "Maximum token budget for compiled context")]
+    #[arg(
+        long,
+        default_value_t = 1000,
+        help = "Maximum token budget for compiled context"
+    )]
     pub budget: usize,
 
     #[arg(long, default_value = ".", help = "Target workspace directory")]
@@ -23,7 +31,11 @@ pub async fn run_sync_hosts(args: SyncHostsArgs, store: Arc<SqliteStore>) -> Res
     let targets: Vec<&str> = if args.target.eq_ignore_ascii_case("all") {
         vec!["cursor", "claude", "codex", "gemini"]
     } else {
-        args.target.split(',').map(|s| s.trim()).filter(|s| !s.is_empty()).collect()
+        args.target
+            .split(',')
+            .map(|s| s.trim())
+            .filter(|s| !s.is_empty())
+            .collect()
     };
 
     let compiler = MultiHostCompiler::new(store);

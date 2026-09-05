@@ -1,14 +1,12 @@
-use std::collections::HashMap;
 use anyhow::{bail, Result};
 use petgraph::algo::{is_cyclic_directed, toposort};
 use petgraph::graph::{DiGraph, NodeIndex};
 use petgraph::visit::EdgeRef;
 use petgraph::Direction;
 use serde::{Deserialize, Serialize};
+use std::collections::HashMap;
 
-use super::types::{
-    ExecutionWave, GoalEdge, GoalEdgeKind, GoalNode, GoalNodeKind, GoalStatus,
-};
+use super::types::{ExecutionWave, GoalEdge, GoalEdgeKind, GoalNode, GoalNodeKind, GoalStatus};
 
 /// Serializable representation of a directed goal dependency edge.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
@@ -118,7 +116,9 @@ impl GoalDag {
 
     /// Retrieve a reference to a goal node by ID.
     pub fn get_node(&self, id: &str) -> Option<&GoalNode> {
-        self.node_indices.get(id).and_then(|&idx| self.graph.node_weight(idx))
+        self.node_indices
+            .get(id)
+            .and_then(|&idx| self.graph.node_weight(idx))
     }
 
     /// Retrieve a mutable reference to a goal node by ID.
@@ -166,7 +166,11 @@ impl GoalDag {
                 self.index_to_id.get(&source_idx),
                 self.index_to_id.get(&target_idx),
             ) {
-                list.push((source_id.clone(), target_id.clone(), edge_ref.weight().clone()));
+                list.push((
+                    source_id.clone(),
+                    target_id.clone(),
+                    edge_ref.weight().clone(),
+                ));
             }
         }
         list
@@ -435,7 +439,8 @@ impl GoalDag {
         for &pred_idx in &incoming_preds {
             for &succ_idx in &outgoing_succs {
                 if self.graph.find_edge(pred_idx, succ_idx).is_none() {
-                    self.graph.add_edge(pred_idx, succ_idx, GoalEdge::depends_on());
+                    self.graph
+                        .add_edge(pred_idx, succ_idx, GoalEdge::depends_on());
                 }
             }
         }
@@ -493,9 +498,15 @@ impl GoalDag {
         };
 
         let mut out = String::new();
-        out.push_str("┌────────────────────────────────────────────────────────────────────────┐\n");
-        out.push_str("│  📋 STRATA HIERARCHICAL GOAL DAG EXECUTION PLAN                         │\n");
-        out.push_str("└────────────────────────────────────────────────────────────────────────┘\n");
+        out.push_str(
+            "┌────────────────────────────────────────────────────────────────────────┐\n",
+        );
+        out.push_str(
+            "│  📋 STRATA HIERARCHICAL GOAL DAG EXECUTION PLAN                         │\n",
+        );
+        out.push_str(
+            "└────────────────────────────────────────────────────────────────────────┘\n",
+        );
 
         for wave in &waves {
             let parallel_desc = if wave.node_ids.len() > 1 {

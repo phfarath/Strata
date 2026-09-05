@@ -1,10 +1,10 @@
-use std::sync::Arc;
 use async_trait::async_trait;
+use std::sync::Arc;
 use tokio::sync::Mutex;
 use uuid::Uuid;
 
-use strata_core::errors::StrataError;
 use crate::engine::{ChatMessage, PromptContext, ReasoningEngine, ReasoningOutput, ToolCall};
+use strata_core::errors::StrataError;
 
 /// Mock reasoning engine designed for deterministic, repeatable testing of cognitive loops.
 #[derive(Clone)]
@@ -42,7 +42,8 @@ impl MockReasoningEngine {
 
     pub async fn push_tool_call(&self, name: impl Into<String>, args: serde_json::Value) {
         let call = ToolCall::new(Uuid::new_v4().to_string(), name, args);
-        self.push_response(ReasoningOutput::tool_calls(vec![call])).await;
+        self.push_response(ReasoningOutput::tool_calls(vec![call]))
+            .await;
     }
 
     pub async fn push_tool_calls(&self, calls: Vec<ToolCall>) {
@@ -155,7 +156,10 @@ impl ReasoningEngine for MockReasoningEngine {
                 .last()
                 .map(|m| m.content.as_str())
                 .unwrap_or("default response");
-            Ok(ReasoningOutput::text(format!("Mock response for: {}", last_content)))
+            Ok(ReasoningOutput::text(format!(
+                "Mock response for: {}",
+                last_content
+            )))
         }
     }
 }

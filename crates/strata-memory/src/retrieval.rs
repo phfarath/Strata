@@ -63,7 +63,8 @@ impl HybridRanker {
         if let Some(embedder) = embedding_provider {
             if let Ok(query_embedding) = embedder.embed_text(query).await {
                 // Fetch candidates in scope to score against
-                let all_candidates = store.get_all_memories(scope, memory_types, candidate_limit * 2)?;
+                let all_candidates =
+                    store.get_all_memories(scope, memory_types, candidate_limit * 2)?;
                 for memory in all_candidates {
                     if let Some(ref mem_emb) = memory.embedding {
                         let sim = cosine_similarity(&query_embedding, mem_emb);
@@ -73,7 +74,8 @@ impl HybridRanker {
                     }
                 }
                 // Sort vector results by similarity descending
-                vector_results.sort_by(|a, b| b.1.partial_cmp(&a.1).unwrap_or(std::cmp::Ordering::Equal));
+                vector_results
+                    .sort_by(|a, b| b.1.partial_cmp(&a.1).unwrap_or(std::cmp::Ordering::Equal));
             }
         }
 
@@ -105,14 +107,18 @@ impl HybridRanker {
         for (rank_idx, (record, _bm25_score)) in fts_ranked.iter().enumerate() {
             let rrf_score = w_bm25 * (1.0 / (k + (rank_idx as f32) + 1.0));
             *score_map.entry(record.id).or_insert(0.0) += rrf_score;
-            record_map.entry(record.id).or_insert_with(|| record.clone());
+            record_map
+                .entry(record.id)
+                .or_insert_with(|| record.clone());
         }
 
         // Score Vector results
         for (rank_idx, (record, _sim)) in vector_ranked.iter().enumerate() {
             let rrf_score = w_vec * (1.0 / (k + (rank_idx as f32) + 1.0));
             *score_map.entry(record.id).or_insert(0.0) += rrf_score;
-            record_map.entry(record.id).or_insert_with(|| record.clone());
+            record_map
+                .entry(record.id)
+                .or_insert_with(|| record.clone());
         }
 
         // Apply quality weighting: importance & confidence

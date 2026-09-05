@@ -1,7 +1,7 @@
-﻿use std::fmt;
-use std::str::FromStr;
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
+use std::fmt;
+use std::str::FromStr;
 use uuid::Uuid;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
@@ -47,33 +47,23 @@ impl From<Uuid> for EventId {
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Default)]
 pub enum DataClassification {
     Public,
+    #[default]
     Internal,
     Confidential,
     Restricted,
 }
 
-impl Default for DataClassification {
-    fn default() -> Self {
-        Self::Internal
-    }
-}
-
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Default)]
 pub enum RetentionPolicy {
     Ephemeral,
     Session,
     RetainDays(u32),
+    #[default]
     Permanent,
     Custom(String),
-}
-
-impl Default for RetentionPolicy {
-    fn default() -> Self {
-        Self::Permanent
-    }
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]

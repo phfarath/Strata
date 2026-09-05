@@ -1,8 +1,8 @@
+use anyhow::{bail, Result};
+use async_trait::async_trait;
 use std::collections::HashMap;
 use std::sync::Arc;
 use std::time::Instant;
-use anyhow::{bail, Result};
-use async_trait::async_trait;
 use tokio::sync::Semaphore;
 use tokio::task::JoinSet;
 
@@ -220,7 +220,9 @@ impl DagScheduler {
 
                             if self.auto_recover {
                                 if let Some(failed_node) = failed_node_clone {
-                                    if let Ok(action) = self.replanner.handle_failure(&dag, &failed_node) {
+                                    if let Ok(action) =
+                                        self.replanner.handle_failure(&dag, &failed_node)
+                                    {
                                         recovery_attempts += 1;
                                         match &action {
                                             RecoveryAction::RetryNode { node_id, attempt } => {
@@ -234,15 +236,23 @@ impl DagScheduler {
                                             RecoveryAction::InjectMitigation { .. }
                                             | RecoveryAction::SubstituteNode { .. }
                                             | RecoveryAction::BypassNode { .. } => {
-                                                if self.replanner.apply_recovery(&mut dag, &action).is_ok() {
+                                                if self
+                                                    .replanner
+                                                    .apply_recovery(&mut dag, &action)
+                                                    .is_ok()
+                                                {
                                                     should_replan = true;
                                                 }
                                             }
                                             RecoveryAction::Abort { reason } => {
                                                 // Abort remaining execution
                                                 for n in dag.all_nodes_mut() {
-                                                    if n.status == GoalStatus::Pending || n.status == GoalStatus::Running {
-                                                        n.mark_skipped(format!("Aborted: {reason}"));
+                                                    if n.status == GoalStatus::Pending
+                                                        || n.status == GoalStatus::Running
+                                                    {
+                                                        n.mark_skipped(format!(
+                                                            "Aborted: {reason}"
+                                                        ));
                                                     }
                                                 }
                                                 break;
@@ -285,9 +295,18 @@ impl DagScheduler {
         // Compile final metrics
         let all_nodes = dag.all_nodes();
         let total_nodes = all_nodes.len();
-        let completed_nodes = all_nodes.iter().filter(|n| n.status == GoalStatus::Completed).count();
-        let failed_nodes = all_nodes.iter().filter(|n| n.status == GoalStatus::Failed).count();
-        let skipped_nodes = all_nodes.iter().filter(|n| n.status == GoalStatus::Skipped).count();
+        let completed_nodes = all_nodes
+            .iter()
+            .filter(|n| n.status == GoalStatus::Completed)
+            .count();
+        let failed_nodes = all_nodes
+            .iter()
+            .filter(|n| n.status == GoalStatus::Failed)
+            .count();
+        let skipped_nodes = all_nodes
+            .iter()
+            .filter(|n| n.status == GoalStatus::Skipped)
+            .count();
 
         let success = failed_nodes == 0 && completed_nodes > 0;
 

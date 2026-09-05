@@ -119,7 +119,8 @@ impl DecayCalculator {
 
         // 2. Working Tier maintains high operational retention throughout the active session
         if tier == MemoryTier::Working {
-            let stability = self.calculate_stability(access_times.len() as u32, importance.max(0.7));
+            let stability =
+                self.calculate_stability(access_times.len() as u32, importance.max(0.7));
             return DecayMetrics {
                 activation: 5.0,
                 retention: 0.95,
@@ -129,7 +130,13 @@ impl DecayCalculator {
         }
 
         // 3. Peripheral Tier decays exponentially according to ACT-R & Ebbinghaus curves
-        self.evaluate_decay(importance, confidence, created_at, access_times, current_time)
+        self.evaluate_decay(
+            importance,
+            confidence,
+            created_at,
+            access_times,
+            current_time,
+        )
     }
 
     /// Raw decay evaluation for peripheral memories.
@@ -225,8 +232,10 @@ impl DecayCalculator {
                 );
                 metrics.stability = (metrics.stability * 0.2).max(0.001);
                 metrics.activation -= 2.0;
-                let elapsed_hours = (current_time - fact.last_updated_at).num_seconds().max(0) as f32 / 3600.0;
-                metrics.retention = self.calculate_ebbinghaus_retention(elapsed_hours, metrics.stability);
+                let elapsed_hours =
+                    (current_time - fact.last_updated_at).num_seconds().max(0) as f32 / 3600.0;
+                metrics.retention =
+                    self.calculate_ebbinghaus_retention(elapsed_hours, metrics.stability);
                 if metrics.retention < self.config.prune_threshold {
                     metrics.is_expired = true;
                 }
@@ -246,16 +255,15 @@ impl DecayCalculator {
                 metrics.activation -= 1.0;
                 metrics
             }
-            FactStatus::Active | FactStatus::Candidate | FactStatus::Outlier => {
-                self.evaluate_decay_with_tier(
+            FactStatus::Active | FactStatus::Candidate | FactStatus::Outlier => self
+                .evaluate_decay_with_tier(
                     fact.tier,
                     fact.importance,
                     fact.confidence,
                     fact.created_at,
                     access_times,
                     current_time,
-                )
-            }
+                ),
         }
     }
 
@@ -281,7 +289,9 @@ impl DecayCalculator {
 
             // Only Active Core/Working tier facts are protected from pruning
             if fact.status == FactStatus::Active {
-                if fact.tier == MemoryTier::Core || fact.importance >= self.config.invariant_threshold {
+                if fact.tier == MemoryTier::Core
+                    || fact.importance >= self.config.invariant_threshold
+                {
                     report.core_protected += 1;
                     continue;
                 }
@@ -357,40 +367,22 @@ mod tests {
         let old_time = now - Duration::days(365);
 
         // 1. Core Tier: Frozen decay (R=1.0, activation=10.0, never expired)
-        let core_metrics = calc.evaluate_decay_with_tier(
-            MemoryTier::Core,
-            0.5,
-            1.0,
-            old_time,
-            &[],
-            now,
-        );
+        let core_metrics =
+            calc.evaluate_decay_with_tier(MemoryTier::Core, 0.5, 1.0, old_time, &[], now);
         assert_eq!(core_metrics.retention, 1.0);
         assert_eq!(core_metrics.activation, 10.0);
         assert!(!core_metrics.is_expired);
 
         // 2. Working Tier: Active session retention (R=0.95, activation=5.0, never expired)
-        let working_metrics = calc.evaluate_decay_with_tier(
-            MemoryTier::Working,
-            0.5,
-            1.0,
-            old_time,
-            &[],
-            now,
-        );
+        let working_metrics =
+            calc.evaluate_decay_with_tier(MemoryTier::Working, 0.5, 1.0, old_time, &[], now);
         assert_eq!(working_metrics.retention, 0.95);
         assert_eq!(working_metrics.activation, 5.0);
         assert!(!working_metrics.is_expired);
 
         // 3. Peripheral Tier: Exponential decay (after 365 days, retention ~0, expired)
-        let peripheral_metrics = calc.evaluate_decay_with_tier(
-            MemoryTier::Peripheral,
-            0.5,
-            1.0,
-            old_time,
-            &[],
-            now,
-        );
+        let peripheral_metrics =
+            calc.evaluate_decay_with_tier(MemoryTier::Peripheral, 0.5, 1.0, old_time, &[], now);
         assert!(peripheral_metrics.retention < 0.05);
         assert!(peripheral_metrics.is_expired);
     }
@@ -444,7 +436,9 @@ mod tests {
         let active = store.get_all_memories(None, None, 10).unwrap();
         assert_eq!(active.len(), 2);
         assert!(active.iter().any(|m| m.id == core_mem.id && m.is_core()));
-        assert!(active.iter().any(|m| m.id == working_mem.id && m.is_working()));
+        assert!(active
+            .iter()
+            .any(|m| m.id == working_mem.id && m.is_working()));
         assert!(!active.iter().any(|m| m.id == peripheral_mem.id));
 
         // Cold storage should contain the peripheral memory

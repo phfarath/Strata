@@ -1,7 +1,7 @@
-use std::fs;
-use std::path::{Path, PathBuf};
 use anyhow::{Context, Result};
 use serde::{Deserialize, Serialize};
+use std::fs;
+use std::path::{Path, PathBuf};
 
 pub const DEFAULT_STRATA_ENDPOINT: &str = "https://strata.pedrofarath.me";
 
@@ -52,8 +52,7 @@ impl StrataConfig {
             fs::create_dir_all(parent)
                 .with_context(|| format!("Failed to create directory: {}", parent.display()))?;
         }
-        let content = toml::to_string_pretty(self)
-            .context("Failed to serialize config to TOML")?;
+        let content = toml::to_string_pretty(self).context("Failed to serialize config to TOML")?;
         fs::write(path, content)
             .with_context(|| format!("Failed to write config file to: {}", path.display()))?;
         Ok(())
@@ -96,7 +95,9 @@ impl StrataConfig {
                 return Some(a.trim().to_string());
             }
         }
-        if let Ok(t) = std::env::var("STRATA_SYNC_TOKEN").or_else(|_| std::env::var("STRATA_AUTH_TOKEN")) {
+        if let Ok(t) =
+            std::env::var("STRATA_SYNC_TOKEN").or_else(|_| std::env::var("STRATA_AUTH_TOKEN"))
+        {
             if !t.trim().is_empty() {
                 return Some(t.trim().to_string());
             }
@@ -133,16 +134,23 @@ mod tests {
         let temp_dir = std::env::temp_dir().join(format!("strata-test-{}", uuid::Uuid::new_v4()));
         let config_file = temp_dir.join("config.toml");
 
-        let mut config = StrataConfig::default();
-        config.endpoint = Some("https://custom.strata.dev".to_string());
-        config.token = Some("strata_live_test_12345".to_string());
-        config.workspace_slug = Some("team-alpha".to_string());
-        config.user_email = Some("test@strata.dev".to_string());
+        let config = StrataConfig {
+            endpoint: Some("https://custom.strata.dev".to_string()),
+            token: Some("strata_live_test_12345".to_string()),
+            workspace_slug: Some("team-alpha".to_string()),
+            user_email: Some("test@strata.dev".to_string()),
+            ..Default::default()
+        };
 
-        config.save_to_path(&config_file).expect("Failed to save config");
+        config
+            .save_to_path(&config_file)
+            .expect("Failed to save config");
 
         let loaded = StrataConfig::load_from_path(&config_file).expect("Failed to load config");
-        assert_eq!(loaded.endpoint.as_deref(), Some("https://custom.strata.dev"));
+        assert_eq!(
+            loaded.endpoint.as_deref(),
+            Some("https://custom.strata.dev")
+        );
         assert_eq!(loaded.token.as_deref(), Some("strata_live_test_12345"));
         assert_eq!(loaded.workspace_slug.as_deref(), Some("team-alpha"));
         assert_eq!(loaded.user_email.as_deref(), Some("test@strata.dev"));
@@ -150,4 +158,3 @@ mod tests {
         let _ = std::fs::remove_dir_all(temp_dir);
     }
 }
-

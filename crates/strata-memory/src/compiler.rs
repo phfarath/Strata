@@ -1,7 +1,7 @@
+use serde::{Deserialize, Serialize};
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
-use serde::{Deserialize, Serialize};
 use strata_core::errors::StrataError;
 pub use strata_core::schemas::{ContextBudgetConfig, FactStatus, HostTargetConfig};
 use strata_core::state::{FailureSeverity, MemoryType};
@@ -41,25 +41,39 @@ impl MultiHostCompiler {
 
     /// Compiles context into a unified Markdown block conforming to ContextBudgetConfig.
     pub fn compile_context(&self, config: &ContextBudgetConfig) -> Result<String, StrataError> {
-        let max_tokens = if config.max_tokens == 0 { 2048 } else { config.max_tokens };
+        let max_tokens = if config.max_tokens == 0 {
+            2048
+        } else {
+            config.max_tokens
+        };
 
         // 1. Fetch failure patterns
         let failures = if config.include_failure_patterns {
-            self.store.search_failures(None, None, config.top_k_memories.max(10))?
+            self.store
+                .search_failures(None, None, config.top_k_memories.max(10))?
         } else {
             Vec::new()
         };
 
         // 2. Fetch active semantic facts
-        let facts = self.store.get_all_semantic_facts(None, Some(FactStatus::Active), config.top_k_memories.max(20))?;
+        let facts = self.store.get_all_semantic_facts(
+            None,
+            Some(FactStatus::Active),
+            config.top_k_memories.max(20),
+        )?;
         // 3. Fetch procedural skills
         let skills = if config.include_success_trajectories {
-            self.store.get_all_procedural_skills(None, config.top_k_memories.max(10))?
+            self.store
+                .get_all_procedural_skills(None, config.top_k_memories.max(10))?
         } else {
             Vec::new()
         };
         // 4. Fetch general semantic memories
-        let memories = self.store.get_all_memories(None, Some(&[MemoryType::Semantic]), config.top_k_memories.max(10))?;
+        let memories = self.store.get_all_memories(
+            None,
+            Some(&[MemoryType::Semantic]),
+            config.top_k_memories.max(10),
+        )?;
 
         let mut doc = String::new();
         doc.push_str("## Strata Persistent Memory Protocol\n");
@@ -251,14 +265,19 @@ impl MultiHostCompiler {
     }
 }
 
-fn cursor_rules_file(_workspace: &Path, cursor_dir: &Path, marked_block: &str) -> Result<PathBuf, StrataError> {
+fn cursor_rules_file(
+    _workspace: &Path,
+    cursor_dir: &Path,
+    marked_block: &str,
+) -> Result<PathBuf, StrataError> {
     let target_file = cursor_dir.join("strata.mdc");
     let default_cursor = format!(
         "---\ndescription: Strata Persistent Cognitive Memory & Alignment Context\nglobs: *\nalwaysApply: true\n---\n{marked_block}"
     );
 
     if target_file.exists() {
-        let existing = fs::read_to_string(&target_file).map_err(|e| StrataError::Io(e.to_string()))?;
+        let existing =
+            fs::read_to_string(&target_file).map_err(|e| StrataError::Io(e.to_string()))?;
         if existing.contains(STRATA_MARKER_START) {
             inject_or_write_file(&target_file, marked_block, None)?;
         } else if existing.starts_with("---") {
@@ -268,7 +287,8 @@ fn cursor_rules_file(_workspace: &Path, cursor_dir: &Path, marked_block: &str) -
                 let fm = &existing[..end_fm];
                 let rest = &existing[end_fm..];
                 let new_content = format!("{fm}\n{marked_block}\n{rest}");
-                fs::write(&target_file, new_content.trim_start()).map_err(|e| StrataError::Io(e.to_string()))?;
+                fs::write(&target_file, new_content.trim_start())
+                    .map_err(|e| StrataError::Io(e.to_string()))?;
             } else {
                 inject_or_write_file(&target_file, marked_block, Some(&default_cursor))?;
             }
@@ -283,7 +303,11 @@ fn cursor_rules_file(_workspace: &Path, cursor_dir: &Path, marked_block: &str) -
 }
 
 /// Helper to inject or replace marked content block in a target instruction file.
-fn inject_or_write_file(path: &Path, marked_block: &str, default_full_content: Option<&str>) -> Result<(), StrataError> {
+fn inject_or_write_file(
+    path: &Path,
+    marked_block: &str,
+    default_full_content: Option<&str>,
+) -> Result<(), StrataError> {
     let existing = if path.exists() {
         fs::read_to_string(path).map_err(|e| StrataError::Io(e.to_string()))?
     } else {

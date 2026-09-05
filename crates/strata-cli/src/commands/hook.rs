@@ -1,14 +1,14 @@
-use std::sync::Arc;
+use crate::commands::consolidate::resolve_reasoning_engine;
 use anyhow::Result;
 use clap::Subcommand;
-use tracing::{debug, error, info};
+use std::sync::Arc;
 use strata_core::{
     state::{FailurePattern, FailureSeverity, Scope},
     traits::MemoryEngine,
 };
 use strata_memory::{ConsolidationPipeline, SqliteMemoryEngine};
 use strata_tools::{AntiPatternParser, CommandInterceptor};
-use crate::commands::consolidate::resolve_reasoning_engine;
+use tracing::{debug, error, info};
 
 #[derive(Subcommand, Debug, Clone)]
 pub enum HookCommand {
@@ -91,7 +91,11 @@ pub enum HookCommand {
 
 pub async fn handle_hook(command: HookCommand, engine: Arc<SqliteMemoryEngine>) -> Result<()> {
     match command {
-        HookCommand::SessionStart { session_id, project, json } => {
+        HookCommand::SessionStart {
+            session_id,
+            project,
+            json,
+        } => {
             debug!("Running session-start hook for session '{session_id}'");
             let digest = engine.digest(&session_id, Some(450)).await?;
 
@@ -134,14 +138,20 @@ pub async fn handle_hook(command: HookCommand, engine: Arc<SqliteMemoryEngine>) 
                 if !digest.failure_warnings.is_empty() {
                     output.push_str("⚠️ Known Anti-Patterns / Failures:\n");
                     for f in &digest.failure_warnings {
-                        output.push_str(&format!("  • [{}] {}: {}\n", f.error_type, f.pattern_name, f.mitigation));
+                        output.push_str(&format!(
+                            "  • [{}] {}: {}\n",
+                            f.error_type, f.pattern_name, f.mitigation
+                        ));
                     }
                 }
 
                 if !digest.key_pointers.is_empty() {
                     output.push_str("Pointers:\n");
                     for p in &digest.key_pointers {
-                        output.push_str(&format!("  • ({}) {} [id: {}]\n", p.memory_type, p.title, p.id));
+                        output.push_str(&format!(
+                            "  • ({}) {} [id: {}]\n",
+                            p.memory_type, p.title, p.id
+                        ));
                     }
                 }
 
@@ -149,13 +159,19 @@ pub async fn handle_hook(command: HookCommand, engine: Arc<SqliteMemoryEngine>) 
             }
         }
 
-
-        HookCommand::UserPrompt { query, limit, scope, json } => {
+        HookCommand::UserPrompt {
+            query,
+            limit,
+            scope,
+            json,
+        } => {
             debug!("Running user-prompt hook for query: '{query}'");
             let parsed_scope = scope.as_deref().and_then(|s| s.parse::<Scope>().ok());
 
             let memories = engine.search(&query, parsed_scope.as_ref(), limit).await?;
-            let failures = engine.get_known_failures(Some(&query), parsed_scope.as_ref(), 2).await?;
+            let failures = engine
+                .get_known_failures(Some(&query), parsed_scope.as_ref(), 2)
+                .await?;
 
             if json {
                 let payload = serde_json::json!({
@@ -168,7 +184,8 @@ pub async fn handle_hook(command: HookCommand, engine: Arc<SqliteMemoryEngine>) 
                 let mut sections = Vec::new();
 
                 if !failures.is_empty() {
-                    let mut fail_text = String::from("⚠️ [Strata Pre-emptive Guardrails: Known Anti-Patterns]\n");
+                    let mut fail_text =
+                        String::from("⚠️ [Strata Pre-emptive Guardrails: Known Anti-Patterns]\n");
                     for f in &failures {
                         let surgical = AntiPatternParser::format_surgical_guardrail(f);
                         fail_text.push_str(&format!("  • {surgical}\n"));
@@ -180,7 +197,10 @@ pub async fn handle_hook(command: HookCommand, engine: Arc<SqliteMemoryEngine>) 
                     let mut mem_text = String::from("🧠 [Strata Relevant Context]\n");
                     for m in &memories {
                         let handle = m.to_handle(None);
-                        mem_text.push_str(&format!("  • [{}] {}: {}\n", handle.memory_type, handle.title, handle.summary));
+                        mem_text.push_str(&format!(
+                            "  • [{}] {}: {}\n",
+                            handle.memory_type, handle.title, handle.summary
+                        ));
                     }
                     sections.push(mem_text);
                 }
@@ -211,7 +231,9 @@ pub async fn handle_hook(command: HookCommand, engine: Arc<SqliteMemoryEngine>) 
         }
 
         HookCommand::SessionEnd { session_id } => {
-            info!("Running session-end background consolidation and sync for session '{session_id}'");
+            info!(
+                "Running session-end background consolidation and sync for session '{session_id}'"
+            );
             let store = engine.store_arc();
             let embedder = engine.embedding_provider();
             let reasoning = resolve_reasoning_engine(None);
@@ -220,7 +242,10 @@ pub async fn handle_hook(command: HookCommand, engine: Arc<SqliteMemoryEngine>) 
 
             tokio::spawn(async move {
                 if let Ok(events) = store.get_events(&sid, None, None) {
-                    if let Err(e) = pipeline.run_pipeline(&store, embedder.as_ref(), &events, Some(reasoning.as_ref())).await {
+                    if let Err(e) = pipeline
+                        .run_pipeline(&store, embedder.as_ref(), &events, Some(reasoning.as_ref()))
+                        .await
+                    {
                         error!("Async consolidation failed for session '{sid}': {e}");
                     } else {
                         info!("Async consolidation completed successfully for session '{sid}'");
@@ -236,33 +261,32 @@ pub async fn handle_hook(command: HookCommand, engine: Arc<SqliteMemoryEngine>) 
             });
         }
 
-        HookCommand::PostTool { tool, error, params, context } => {
+        HookCommand::PostTool {
+            tool,
+            error,
+            params,
+            context,
+        } => {
             if let Some(err_msg) = error {
                 if !err_msg.trim().is_empty() {
                     debug!("Out-of-band capturing silent tool failure: tool='{tool}', error='{err_msg}'");
-                    let failure = AntiPatternParser::parse(
-                        &tool,
-                        "",
-                        &err_msg,
-                        1,
-                        context.as_deref(),
-                        None,
-                    )
-                    .unwrap_or_else(|| {
-                        let mut f = FailurePattern::new(
+                    let failure =
+                        AntiPatternParser::parse(&tool, "", &err_msg, 1, context.as_deref(), None)
+                            .unwrap_or_else(|| {
+                                let mut f = FailurePattern::new(
                             format!("{tool}_failure"),
                             format!("{tool} execution error"),
                             err_msg.clone(),
                             "Avoid repeating identical invalid parameters or unverified flags",
                         );
-                        f.error_type = "ToolExecutionError".to_string();
-                        f.trigger_condition = params.unwrap_or_default();
-                        f.severity = FailureSeverity::High;
-                        if let Some(ctx) = context {
-                            f.metadata = serde_json::json!({ "context": ctx });
-                        }
-                        f
-                    });
+                                f.error_type = "ToolExecutionError".to_string();
+                                f.trigger_condition = params.unwrap_or_default();
+                                f.severity = FailureSeverity::High;
+                                if let Some(ctx) = context {
+                                    f.metadata = serde_json::json!({ "context": ctx });
+                                }
+                                f
+                            });
 
                     if let Err(e) = engine.record_failure(&failure).await {
                         error!("Failed to silently record tool failure: {e}");
@@ -271,9 +295,15 @@ pub async fn handle_hook(command: HookCommand, engine: Arc<SqliteMemoryEngine>) 
             }
         }
 
-        HookCommand::Wrap { cwd, context, scope, command } => {
+        HookCommand::Wrap {
+            cwd,
+            context,
+            scope,
+            command,
+        } => {
             let parsed_scope = scope.as_deref().and_then(|s| s.parse::<Scope>().ok());
-            let interceptor = CommandInterceptor::with_engine(Arc::clone(&engine) as Arc<dyn MemoryEngine>);
+            let interceptor =
+                CommandInterceptor::with_engine(Arc::clone(&engine) as Arc<dyn MemoryEngine>);
 
             let res = interceptor
                 .execute_and_intercept(

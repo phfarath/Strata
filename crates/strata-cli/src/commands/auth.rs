@@ -8,7 +8,13 @@ pub struct AuthArgs {
     #[command(subcommand)]
     pub action: AuthAction,
 
-    #[arg(long, global = true, env = "STRATA_SYNC_ENDPOINT", default_value = "https://strata.pedrofarath.me", help = "Strata Cloud Server URL")]
+    #[arg(
+        long,
+        global = true,
+        env = "STRATA_SYNC_ENDPOINT",
+        default_value = "https://strata.pedrofarath.me",
+        help = "Strata Cloud Server URL"
+    )]
     pub endpoint: String,
 }
 
@@ -40,7 +46,12 @@ pub enum AuthAction {
 
     /// Check current authenticated account details and workspaces
     Whoami {
-        #[arg(short, long, env = "STRATA_AUTH_TOKEN", help = "Bearer Session JWT Token")]
+        #[arg(
+            short,
+            long,
+            env = "STRATA_AUTH_TOKEN",
+            help = "Bearer Session JWT Token"
+        )]
         token: Option<String>,
     },
 }
@@ -51,7 +62,12 @@ pub async fn run_auth(args: AuthArgs) -> Result<()> {
         .build()?;
 
     match args.action {
-        AuthAction::Signup { email, password, name, workspace } => {
+        AuthAction::Signup {
+            email,
+            password,
+            name,
+            workspace,
+        } => {
             let payload = serde_json::json!({
                 "email": email,
                 "password": password,
@@ -60,7 +76,10 @@ pub async fn run_auth(args: AuthArgs) -> Result<()> {
             });
 
             let resp = client
-                .post(format!("{}/api/v1/auth/signup", args.endpoint.trim_end_matches('/')))
+                .post(format!(
+                    "{}/api/v1/auth/signup",
+                    args.endpoint.trim_end_matches('/')
+                ))
                 .json(&payload)
                 .send()
                 .await
@@ -94,7 +113,10 @@ pub async fn run_auth(args: AuthArgs) -> Result<()> {
             });
 
             let resp = client
-                .post(format!("{}/api/v1/auth/login", args.endpoint.trim_end_matches('/')))
+                .post(format!(
+                    "{}/api/v1/auth/login",
+                    args.endpoint.trim_end_matches('/')
+                ))
                 .json(&payload)
                 .send()
                 .await
@@ -122,16 +144,22 @@ pub async fn run_auth(args: AuthArgs) -> Result<()> {
             } else {
                 let status = resp.status();
                 let body: Value = resp.json().await.unwrap_or_default();
-                let err_msg = body["error"].as_str().unwrap_or("Invalid email or password");
+                let err_msg = body["error"]
+                    .as_str()
+                    .unwrap_or("Invalid email or password");
                 anyhow::bail!("HTTP {status}: {err_msg}");
             }
         }
         AuthAction::Whoami { token } => {
-            let jwt = token.or_else(|| std::env::var("STRATA_AUTH_TOKEN").ok())
+            let jwt = token
+                .or_else(|| std::env::var("STRATA_AUTH_TOKEN").ok())
                 .context("No session token provided. Pass --token or set STRATA_AUTH_TOKEN")?;
 
             let resp = client
-                .get(format!("{}/api/v1/auth/me", args.endpoint.trim_end_matches('/')))
+                .get(format!(
+                    "{}/api/v1/auth/me",
+                    args.endpoint.trim_end_matches('/')
+                ))
                 .bearer_auth(&jwt)
                 .send()
                 .await
@@ -142,7 +170,10 @@ pub async fn run_auth(args: AuthArgs) -> Result<()> {
                 let user = &data["user"];
                 println!("\n👤 [Strata Cloud Session]");
                 println!("══════════════════════════════════════════════════════");
-                println!("Name:    {}", user["full_name"].as_str().unwrap_or_default());
+                println!(
+                    "Name:    {}",
+                    user["full_name"].as_str().unwrap_or_default()
+                );
                 println!("Email:   {}", user["email"].as_str().unwrap_or_default());
                 println!("Tier:    {}", user["tier"].as_str().unwrap_or_default());
                 if let Some(workspaces) = data["workspaces"].as_array() {

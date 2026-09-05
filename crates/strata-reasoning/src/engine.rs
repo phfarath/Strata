@@ -19,7 +19,11 @@ pub struct ToolCall {
 }
 
 impl ToolCall {
-    pub fn new(id: impl Into<String>, name: impl Into<String>, arguments: serde_json::Value) -> Self {
+    pub fn new(
+        id: impl Into<String>,
+        name: impl Into<String>,
+        arguments: serde_json::Value,
+    ) -> Self {
         Self {
             id: id.into(),
             name: name.into(),
@@ -37,7 +41,12 @@ pub struct ToolResult {
 }
 
 impl ToolResult {
-    pub fn new(call_id: impl Into<String>, name: impl Into<String>, result: serde_json::Value, is_error: bool) -> Self {
+    pub fn new(
+        call_id: impl Into<String>,
+        name: impl Into<String>,
+        result: serde_json::Value,
+        is_error: bool,
+    ) -> Self {
         Self {
             call_id: call_id.into(),
             name: name.into(),
@@ -112,7 +121,11 @@ pub struct ToolDefinition {
 }
 
 impl ToolDefinition {
-    pub fn new(name: impl Into<String>, description: impl Into<String>, parameters: serde_json::Value) -> Self {
+    pub fn new(
+        name: impl Into<String>,
+        description: impl Into<String>,
+        parameters: serde_json::Value,
+    ) -> Self {
         Self {
             name: name.into(),
             description: description.into(),

@@ -38,7 +38,10 @@ impl DynamicReplanner {
         let err_lower = err_msg.to_lowercase();
 
         // 1. Check for transient errors (e.g. timeout, connection reset, resource busy)
-        if (err_lower.contains("timeout") || err_lower.contains("busy") || err_lower.contains("locked") || err_lower.contains("connection reset"))
+        if (err_lower.contains("timeout")
+            || err_lower.contains("busy")
+            || err_lower.contains("locked")
+            || err_lower.contains("connection reset"))
             && failed_node.retry_count < failed_node.max_retries
         {
             return Ok(RecoveryAction::RetryNode {
@@ -71,8 +74,10 @@ impl DynamicReplanner {
                 &mitigation_task_id,
                 format!("Apply mitigation & fix for {}", failed_node.title),
             )
-            .with_description(format!("Automated mitigation for verification failure: {err_msg}"))
-            .with_action(format!("cargo test --fix || echo 'mitigation applied'"));
+            .with_description(format!(
+                "Automated mitigation for verification failure: {err_msg}"
+            ))
+            .with_action("cargo test --fix || echo 'mitigation applied'");
 
             let reverify_task = GoalNode::verification(
                 &reverify_task_id,
@@ -81,13 +86,11 @@ impl DynamicReplanner {
             .with_description("Re-run verification gate after applying mitigation patch")
             .with_action("cargo test --workspace");
 
-            let edges = vec![
-                (
-                    mitigation_task_id.clone(),
-                    reverify_task_id.clone(),
-                    GoalEdgeKind::DependsOn,
-                ),
-            ];
+            let edges = vec![(
+                mitigation_task_id.clone(),
+                reverify_task_id.clone(),
+                GoalEdgeKind::DependsOn,
+            )];
 
             return Ok(RecoveryAction::InjectMitigation {
                 failed_node_id: failed_node.id.clone(),
@@ -102,8 +105,9 @@ impl DynamicReplanner {
                 || err_lower.contains(&pattern.signature.to_lowercase())
             {
                 let fix_id = format!("{}_pattern_mitigation", failed_node.id);
-                let fix_node = GoalNode::task(&fix_id, format!("Mitigate: {}", pattern.pattern_name))
-                    .with_description(format!("Mitigation: {}", pattern.mitigation));
+                let fix_node =
+                    GoalNode::task(&fix_id, format!("Mitigate: {}", pattern.pattern_name))
+                        .with_description(format!("Mitigation: {}", pattern.mitigation));
 
                 return Ok(RecoveryAction::SubstituteNode {
                     failed_node_id: failed_node.id.clone(),
@@ -142,12 +146,13 @@ impl DynamicReplanner {
                 mitigation_nodes,
                 edges,
             } => {
-                dag.patch_inject_mitigation(failed_node_id, mitigation_nodes.clone(), edges.clone())?;
+                dag.patch_inject_mitigation(
+                    failed_node_id,
+                    mitigation_nodes.clone(),
+                    edges.clone(),
+                )?;
             }
-            RecoveryAction::BypassNode {
-                failed_node_id,
-                ..
-            } => {
+            RecoveryAction::BypassNode { failed_node_id, .. } => {
                 dag.patch_bypass_node(failed_node_id)?;
             }
             RecoveryAction::Abort { .. } => {
