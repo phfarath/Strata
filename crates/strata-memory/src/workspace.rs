@@ -91,6 +91,9 @@ fn normalize_path_str(p: &str) -> String {
     } else if let Some(stripped) = s.strip_prefix("?/") {
         s = stripped.to_string();
     }
+    if let Some(stripped) = s.strip_prefix("/private/var/") {
+        s = format!("/var/{stripped}");
+    }
     s
 }
 
@@ -109,8 +112,24 @@ impl WorkspaceBoundary {
 
     /// Finds the specific member package enclosing a given file path.
     pub fn find_package_for_file(&self, file_path: &str) -> Option<&MonorepoPackage> {
+        let p = Path::new(file_path);
+        let canonical_target = p.canonicalize().ok().or_else(|| {
+            p.parent()
+                .and_then(|parent| parent.canonicalize().ok())
+                .map(|canon_parent| {
+                    if let Some(file_name) = p.file_name() {
+                        canon_parent.join(file_name)
+                    } else {
+                        canon_parent
+                    }
+                })
+        });
+        let canonical_target_str = canonical_target
+            .as_ref()
+            .map(|cp| normalize_path_str(&strip_unc_prefix(cp.clone()).to_string_lossy()));
+
         let normalized_target = normalize_path_str(file_path);
-        let absolute_target = if Path::new(file_path).is_absolute() {
+        let absolute_target = if p.is_absolute() {
             normalized_target.clone()
         } else {
             let root = normalize_path_str(&self.root_path);
@@ -132,15 +151,17 @@ impl WorkspaceBoundary {
                 format!("{normalized_pkg_root}/")
             };
 
-            if absolute_target.starts_with(&prefix)
+            let matches = absolute_target.starts_with(&prefix)
                 || absolute_target == normalized_pkg_root
                 || normalized_target.starts_with(&prefix)
                 || normalized_target == normalized_pkg_root
-            {
-                if normalized_pkg_root.len() > best_len {
-                    best_len = normalized_pkg_root.len();
-                    best_match = Some(pkg);
-                }
+                || canonical_target_str.as_ref().map_or(false, |c| {
+                    c.starts_with(&prefix) || c == &normalized_pkg_root
+                });
+
+            if matches && normalized_pkg_root.len() > best_len {
+                best_len = normalized_pkg_root.len();
+                best_match = Some(pkg);
             }
         }
 
@@ -488,8 +509,12 @@ mod tests {
 
     #[test]
     fn test_detect_cargo_workspace_monorepo() {
-        let temp_dir = std::env::temp_dir().join("strata_test_cargo_workspace");
+        let temp_dir = std::env::temp_dir().join(format!(
+            "strata_test_cargo_workspace_{}",
+            uuid::Uuid::new_v4()
+        ));
         let _ = std::fs::create_dir_all(&temp_dir);
+        let temp_dir = strip_unc_prefix(temp_dir.canonicalize().unwrap_or(temp_dir));
 
         // Root Cargo.toml
         std::fs::write(
@@ -507,8 +532,10 @@ members = [
         // Crates
         let core_dir = temp_dir.join("crates/core");
         let server_dir = temp_dir.join("crates/server");
-        let _ = std::fs::create_dir_all(&core_dir);
-        let _ = std::fs::create_dir_all(&server_dir);
+        let _ = std::fs::create_dir_all(core_dir.join("src"));
+        let _ = std::fs::create_dir_all(server_dir.join("src"));
+        let _ = std::fs::write(core_dir.join("src/lib.rs"), "// core lib");
+        let _ = std::fs::write(server_dir.join("src/main.rs"), "// server main");
 
         std::fs::write(
             core_dir.join("Cargo.toml"),
@@ -572,8 +599,12 @@ my-core = { path = "../core" }
 
     #[test]
     fn test_detect_npm_pnpm_workspace_monorepo() {
-        let temp_dir = std::env::temp_dir().join("strata_test_npm_workspace");
+        let temp_dir = std::env::temp_dir().join(format!(
+            "strata_test_npm_workspace_{}",
+            uuid::Uuid::new_v4()
+        ));
         let _ = std::fs::create_dir_all(&temp_dir);
+        let temp_dir = strip_unc_prefix(temp_dir.canonicalize().unwrap_or(temp_dir));
 
         std::fs::write(
             temp_dir.join("package.json"),
@@ -583,8 +614,10 @@ my-core = { path = "../core" }
 
         let web_dir = temp_dir.join("packages/web");
         let api_dir = temp_dir.join("packages/api");
-        let _ = std::fs::create_dir_all(&web_dir);
-        let _ = std::fs::create_dir_all(&api_dir);
+        let _ = std::fs::create_dir_all(web_dir.join("src"));
+        let _ = std::fs::create_dir_all(api_dir.join("src"));
+        let _ = std::fs::write(web_dir.join("src/App.tsx"), "// web app");
+        let _ = std::fs::write(api_dir.join("src/server.ts"), "// api server");
 
         std::fs::write(web_dir.join("package.json"), r#"{ "name": "@org/web" }"#).unwrap();
         std::fs::write(api_dir.join("package.json"), r#"{ "name": "@org/api" }"#).unwrap();

@@ -140,6 +140,9 @@ jobs:
               echo "Creating git tag v${NEW_VERSION} on $BASE_BRANCH..."
               git tag -a "v${NEW_VERSION}" -m "Release v${NEW_VERSION}"
               git push origin "v${NEW_VERSION}"
+
+              echo "Dispatching Release workflow for v${NEW_VERSION}..."
+              gh workflow run release.yml -f tag_name="v${NEW_VERSION}" || true
             fi
           else
             echo "::warning::PR $PR_URL created but automated merge could not be completed. Please merge manually."

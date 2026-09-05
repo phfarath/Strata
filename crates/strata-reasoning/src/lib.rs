@@ -322,7 +322,10 @@ mod tests {
         assert!(modelfile.contains("ADAPTER outputs/lora_adapter"));
         assert!(modelfile.contains("SYSTEM"));
 
-        let temp_dir = std::env::temp_dir().join("strata_test_pipeline_artifacts");
+        let temp_dir = std::env::temp_dir().join(format!(
+            "strata_test_pipeline_artifacts_{}",
+            uuid::Uuid::new_v4()
+        ));
         let pipeline = TrainingPipeline::new(config);
         let res = pipeline
             .generate_artifacts(
