@@ -1,8 +1,8 @@
-use std::path::PathBuf;
+﻿use std::path::PathBuf;
 use std::sync::Arc;
 use anyhow::Result;
 use strata_memory::{SqliteMemoryEngine, SqliteStore};
-use crate::commands::observe::{generate_report, CognitiveReport, ObserveArgs};
+use crate::commands::observe::{generate_report, AntiPatternItem, CognitiveReport, MemoryDecayItem, ObserveArgs};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum AppTab {
@@ -15,13 +15,7 @@ pub enum AppTab {
 
 impl AppTab {
     pub fn all() -> &'static [AppTab] {
-        &[
-            AppTab::Overview,
-            AppTab::Memories,
-            AppTab::AntiPatterns,
-            AppTab::Jtms,
-            AppTab::Anchors,
-        ]
+        &[AppTab::Overview, AppTab::Memories, AppTab::AntiPatterns, AppTab::Jtms, AppTab::Anchors]
     }
 
     pub fn title(&self) -> &'static str {
@@ -50,15 +44,17 @@ impl AppTab {
     }
 }
 
+pub enum DashboardItem<'a> {
+    Memory(&'a MemoryDecayItem),
+    AntiPattern(&'a AntiPatternItem),
+}
+
 pub struct App {
     pub active_tab: AppTab,
     pub report: CognitiveReport,
     pub workspace_name: String,
     pub db_path: PathBuf,
-    pub selected_memory_idx: usize,
-    pub selected_antipattern_idx: usize,
-    pub selected_jtms_idx: usize,
-    pub selected_anchor_idx: usize,
+    pub selected_idx: usize,
     pub should_quit: bool,
     pub status_message: Option<String>,
 }
@@ -87,101 +83,44 @@ impl App {
             report,
             workspace_name,
             db_path,
-            selected_memory_idx: 0,
-            selected_antipattern_idx: 0,
-            selected_jtms_idx: 0,
-            selected_anchor_idx: 0,
+            selected_idx: 0,
             should_quit: false,
             status_message: None,
         })
     }
 
-    pub fn next_tab(&mut self) {
-        let current = self.active_tab.to_index();
-        let next = (current + 1) % AppTab::all().len();
-        self.active_tab = AppTab::from_index(next);
+    pub fn total_items(&self) -> usize {
+        self.report.memories.len() + self.report.anti_patterns.len()
     }
 
-    pub fn prev_tab(&mut self) {
-        let current = self.active_tab.to_index();
-        let prev = if current == 0 {
-            AppTab::all().len() - 1
+    pub fn get_item(&self, index: usize) -> Option<DashboardItem<'_>> {
+        let mem_count = self.report.memories.len();
+        if index < mem_count {
+            self.report.memories.get(index).map(DashboardItem::Memory)
         } else {
-            current - 1
-        };
-        self.active_tab = AppTab::from_index(prev);
-    }
-
-    pub fn set_tab(&mut self, index: usize) {
-        if index < AppTab::all().len() {
-            self.active_tab = AppTab::from_index(index);
+            let ap_index = index - mem_count;
+            self.report.anti_patterns.get(ap_index).map(DashboardItem::AntiPattern)
         }
     }
 
+    pub fn selected_item(&self) -> Option<DashboardItem<'_>> {
+        self.get_item(self.selected_idx)
+    }
+
     pub fn next_row(&mut self) {
-        match self.active_tab {
-            AppTab::Overview => {}
-            AppTab::Memories => {
-                if !self.report.memories.is_empty() {
-                    self.selected_memory_idx = (self.selected_memory_idx + 1) % self.report.memories.len();
-                }
-            }
-            AppTab::AntiPatterns => {
-                if !self.report.anti_patterns.is_empty() {
-                    self.selected_antipattern_idx = (self.selected_antipattern_idx + 1) % self.report.anti_patterns.len();
-                }
-            }
-            AppTab::Jtms => {
-                if !self.report.memories.is_empty() {
-                    self.selected_jtms_idx = (self.selected_jtms_idx + 1) % self.report.memories.len();
-                }
-            }
-            AppTab::Anchors => {
-                if !self.report.memories.is_empty() {
-                    self.selected_anchor_idx = (self.selected_anchor_idx + 1) % self.report.memories.len();
-                }
-            }
+        let total = self.total_items();
+        if total > 0 {
+            self.selected_idx = (self.selected_idx + 1) % total;
         }
     }
 
     pub fn prev_row(&mut self) {
-        match self.active_tab {
-            AppTab::Overview => {}
-            AppTab::Memories => {
-                if !self.report.memories.is_empty() {
-                    if self.selected_memory_idx == 0 {
-                        self.selected_memory_idx = self.report.memories.len() - 1;
-                    } else {
-                        self.selected_memory_idx -= 1;
-                    }
-                }
-            }
-            AppTab::AntiPatterns => {
-                if !self.report.anti_patterns.is_empty() {
-                    if self.selected_antipattern_idx == 0 {
-                        self.selected_antipattern_idx = self.report.anti_patterns.len() - 1;
-                    } else {
-                        self.selected_antipattern_idx -= 1;
-                    }
-                }
-            }
-            AppTab::Jtms => {
-                if !self.report.memories.is_empty() {
-                    if self.selected_jtms_idx == 0 {
-                        self.selected_jtms_idx = self.report.memories.len() - 1;
-                    } else {
-                        self.selected_jtms_idx -= 1;
-                    }
-                }
-            }
-            AppTab::Anchors => {
-                if !self.report.memories.is_empty() {
-                    if self.selected_anchor_idx == 0 {
-                        self.selected_anchor_idx = self.report.memories.len() - 1;
-                    } else {
-                        self.selected_anchor_idx -= 1;
-                    }
-                }
+        let total = self.total_items();
+        if total > 0 {
+            if self.selected_idx == 0 {
+                self.selected_idx = total - 1;
+            } else {
+                self.selected_idx -= 1;
             }
         }
     }
@@ -197,7 +136,10 @@ impl App {
             json: false,
         };
         self.report = generate_report(store, &args)?;
-        self.status_message = Some("Refreshed cognitive state.".to_string());
+        if self.selected_idx >= self.total_items() && self.total_items() > 0 {
+            self.selected_idx = self.total_items() - 1;
+        }
+        self.status_message = Some("Recarregado.".to_string());
         Ok(())
     }
 

@@ -1,7 +1,6 @@
 pub mod app;
 pub mod theme;
 pub mod ui;
-pub mod views;
 
 use std::io;
 use std::path::Path;
@@ -71,21 +70,10 @@ pub async fn run_tui(engine: Arc<SqliteMemoryEngine>, db_path: &Path) -> Result<
                         KeyCode::Char('q') | KeyCode::Esc => {
                             app.quit();
                         }
-                        KeyCode::Tab => {
-                            app.next_tab();
-                        }
-                        KeyCode::BackTab => {
-                            app.prev_tab();
-                        }
-                        KeyCode::Char('1') => app.set_tab(0),
-                        KeyCode::Char('2') => app.set_tab(1),
-                        KeyCode::Char('3') => app.set_tab(2),
-                        KeyCode::Char('4') => app.set_tab(3),
-                        KeyCode::Char('5') => app.set_tab(4),
-                        KeyCode::Char('j') | KeyCode::Down => {
+                        KeyCode::Tab | KeyCode::Char('j') | KeyCode::Down => {
                             app.next_row();
                         }
-                        KeyCode::Char('k') | KeyCode::Up => {
+                        KeyCode::BackTab | KeyCode::Char('k') | KeyCode::Up => {
                             app.prev_row();
                         }
                         KeyCode::Char('r') => {
