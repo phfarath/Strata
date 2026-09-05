@@ -1,31 +1,11 @@
 ---
-description: Strata Persistent Cognitive Memory Integration
+description: Strata Persistent Cognitive Memory & Concurrency Integration
 globs: *
 alwaysApply: true
 ---
-<!-- STRATA_MEMORY_START -->
-## Strata Persistent Memory Protocol
-- Consult Strata memory tools (`memory_search`, `memory_get`) before planning non-trivial tasks.
-- Check known failure anti-patterns before running destructive or complex operations.
-- Record durable takeaways via `memory_write`.
-
-### Known Failure Anti-Patterns
-- [HIGH] cargo_test execution error: error: package ID specification 'wrong-package-name' did not match any packages
-  *Mitigation*: Avoid repeating identical invalid parameters or unverified flags
-
-### Verified Semantic Facts
-- Protocolo de Contingência Ômega-7
-- Offline-First CDC Engine
-- Universal MCP Multi-Version
-- Radical Simplicity Principle
-- Mecanismo Out-of-Band de Captura Silenciosa de Erros
-- Arquitetura dos 3 Pontos de Ancoragem do Strata
-<!-- STRATA_MEMORY_END -->
-
-
-
-# Strata Memory Rules
+# Strata Memory & Concurrency Rules
 - Before starting complex tasks or refactorings, run `memory_search` to check prior architectural decisions and known failure anti-patterns.
-- When an approach encounters unexpected obstacles or fails, record the anti-pattern via `memory_write` (type: negative_pattern).
+- When an approach encounters unexpected obstacles or fails, record the anti-pattern via `memory_write` (type: negative_pattern) or execute via `strata hook wrap -- <cmd>`.
+- Multi-Agent Concurrency: Before modifying any file or crate, acquire an exclusive lease via the MCP tool `lease_acquire(resource_id, ttl_seconds)` to prevent collisions with other agents (Claude Code, Gemini, etc.). If a conflict is returned, work on a non-conflicting task. Release via `lease_release(resource_id)` when done.
 - After validating key architectural solutions or decisions, persist durable insights using `memory_write`.
 - Dereference memory handles only when deep context is required.

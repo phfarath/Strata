@@ -1,29 +1,12 @@
 ﻿<!-- STRATA_MEMORY_START -->
-## Strata Persistent Memory Protocol
-- Consult Strata memory tools (`memory_search`, `memory_get`) before planning non-trivial tasks.
-- Check known failure anti-patterns before running destructive or complex operations.
-- Record durable takeaways via `memory_write`.
-
-### Known Failure Anti-Patterns
-- [HIGH] cargo_test execution error: error: package ID specification 'wrong-package-name' did not match any packages
-  *Mitigation*: Avoid repeating identical invalid parameters or unverified flags
-
-### Verified Semantic Facts
-- Contingency Protocol Omega-7
-- Offline-First CDC Engine
-- Universal MCP Multi-Version Transport
-- Radical Simplicity Principle
-- Out-of-Band Silent Error Capture Mechanism
-- Strata 3-Point Code Anchoring Architecture
-- Tri-Tier Cognitive Memory Hierarchy (Core, Working, Peripheral)
-- Tree-Sitter AST Anchoring with Git Merkle Tree
-- Bi-Temporal JTMS with Deterministic Truth Maintenance
-- Autonomous DPO/KTO/SFT Dataset Mining from Agent Trajectories
-- Native Call Graph & Import Dependency Analyzer in Rust (STRATA-T-16)
-- Multi-Package Monorepo & Workspace Boundary Isolator (STRATA-T-17)
-- Local-First SQLite Persistence with FastEmbed ONNX Vectors
-- Cloud Parity Multi-Tenant Backend (PostgreSQL 16, pgvector, Axum) in phfarath/strata-cloud
+## Strata Persistent Memory & Concurrency Protocol
+- Contextual memory and known anti-patterns are automatically injected via hooks on session start and prompt submit.
+- Concurrency & Leases: Before modifying any file or crate, acquire an exclusive lease via `lease_acquire(resource_id, ttl_seconds)`. If conflict occurs, yield and select another non-conflicting task. Release via `lease_release(resource_id)` upon completion (mechanical PreTool hooks also block conflicting edits automatically).
+- Use the MCP tools (`memory_search`, `memory_get`, `memory_write`, `memory_digest`) when exploring context or persisting verified architectural decisions.
+- Execute build/test commands via `strata hook wrap -- <cmd>` to automatically synthesize failure anti-patterns out-of-band.
+- Record negative patterns immediately upon encountering dead-ends or tool errors.
 <!-- STRATA_MEMORY_END -->
+
 
 ## Local Development & Testing Workflow
 Strata Open Core runs 100% local-first on the developer's machine:

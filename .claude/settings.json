@@ -6,6 +6,9 @@
     "PostToolExecution": {
       "command": "strata hook post-tool --tool \"$TOOL_NAME\" --error \"$ERROR\""
     },
+    "PreToolExecution": {
+      "command": "strata hook pre-tool --tool \"$TOOL_NAME\" --target \"$FILE_PATH\" --agent claude-code"
+    },
     "SessionEnd": {
       "command": "strata hook session-end"
     },

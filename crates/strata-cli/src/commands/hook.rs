@@ -54,6 +54,24 @@ pub enum HookCommand {
         session_id: String,
     },
 
+    /// Enforces mechanical A2A guardrails before a tool executes (aborts if resource is locked)
+    PreTool {
+        #[arg(long)]
+        tool: String,
+
+        #[arg(long)]
+        target: Option<String>,
+
+        #[arg(long)]
+        params: Option<String>,
+
+        #[arg(long, default_value = "claude-code")]
+        agent: String,
+
+        #[arg(long, default_value_t = 30)]
+        ttl: u64,
+    },
+
     /// Silently captures tool failure out-of-band without polluting chat context
     PostTool {
         #[arg(long)]
@@ -259,6 +277,64 @@ pub async fn handle_hook(command: HookCommand, engine: Arc<SqliteMemoryEngine>) 
                 let sync_engine = strata_memory::SyncEngine::new(store, config);
                 let _ = sync_engine.sync_cycle().await;
             });
+        }
+
+        HookCommand::PreTool {
+            tool,
+            target,
+            params,
+            agent,
+            ttl,
+        } => {
+            let resolved_target = target.or_else(|| {
+                params.as_deref().and_then(|p| {
+                    serde_json::from_str::<serde_json::Value>(p).ok().and_then(|v| {
+                        v.get("file_path")
+                            .or_else(|| v.get("path"))
+                            .or_else(|| v.get("target"))
+                            .or_else(|| v.get("file"))
+                            .and_then(|f| f.as_str())
+                            .map(|s| s.to_string())
+                    })
+                })
+            });
+
+            if let Some(target_path) = resolved_target {
+                let lower_tool = tool.to_lowercase();
+                let is_mutation = lower_tool.contains("edit")
+                    || lower_tool.contains("write")
+                    || lower_tool.contains("create")
+                    || lower_tool.contains("delete")
+                    || lower_tool.contains("patch")
+                    || lower_tool.contains("replace")
+                    || lower_tool.contains("touch")
+                    || lower_tool.contains("rm");
+
+                if is_mutation {
+                    let resource_id = target_path.replace('\\', "/");
+                    let store = engine.store_arc();
+                    let coordinator = strata_memory::StigmergyCoordinator::new(store);
+
+                    // Mechanical Lock Check
+                    if let Ok(Some(conflict)) = coordinator.check_conflict(&resource_id, &agent) {
+                        let now = chrono::Utc::now().timestamp();
+                        let rem = conflict.remaining_seconds(now);
+                        eprintln!(
+                            "\n❌ [Strata A2A Concurrency Blocked]: Resource '{}' is exclusively leased by '{}' ({}s remaining).",
+                            conflict.resource_id, conflict.agent_id, rem
+                        );
+                        eprintln!(
+                            "Tool '{}' execution aborted mechanically to prevent concurrent edit collisions.",
+                            tool
+                        );
+                        std::process::exit(1);
+                    }
+
+                    // Automatically acquire/renew lease for this agent while executing
+                    let metadata = format!("PreTool: {}", tool);
+                    let _ = coordinator.acquire_lease(&resource_id, &agent, ttl as i64, Some(&metadata));
+                }
+            }
         }
 
         HookCommand::PostTool {
