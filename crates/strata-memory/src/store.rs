@@ -4103,7 +4103,10 @@ impl SqliteStore {
             .map_err(|_| StrataError::Database("Lock poisoned on SQLite connection".to_string()))?;
 
         let rows = conn
-            .execute("DELETE FROM agent_presence WHERE agent_id = ?1", params![agent_id])
+            .execute(
+                "DELETE FROM agent_presence WHERE agent_id = ?1",
+                params![agent_id],
+            )
             .map_err(|e| StrataError::Database(format!("Failed to remove agent presence: {e}")))?;
 
         Ok(rows > 0)
@@ -4131,16 +4134,20 @@ impl SqliteStore {
         let expires_at = now + ttl_seconds;
 
         // Atomic acquire/renew statement
-        let rows_affected = conn.execute(
-            "INSERT INTO resource_leases (resource_id, agent_id, lease_expires_at, metadata)
+        let rows_affected = conn
+            .execute(
+                "INSERT INTO resource_leases (resource_id, agent_id, lease_expires_at, metadata)
              VALUES (?1, ?2, ?3, ?4)
              ON CONFLICT(resource_id) DO UPDATE SET
                  agent_id = excluded.agent_id,
                  lease_expires_at = excluded.lease_expires_at,
                  metadata = excluded.metadata
              WHERE lease_expires_at <= ?5 OR agent_id = excluded.agent_id",
-            params![resource_id, agent_id, expires_at, metadata, now],
-        ).map_err(|e| StrataError::Database(format!("Failed to execute atomic lease statement: {e}")))?;
+                params![resource_id, agent_id, expires_at, metadata, now],
+            )
+            .map_err(|e| {
+                StrataError::Database(format!("Failed to execute atomic lease statement: {e}"))
+            })?;
 
         if rows_affected > 0 {
             Ok(LeaseAcquireResult::Acquired {
@@ -4149,15 +4156,20 @@ impl SqliteStore {
             })
         } else {
             // Conflict: query who holds the unexpired lease
-            let mut stmt = conn.prepare(
-                "SELECT agent_id, lease_expires_at FROM resource_leases WHERE resource_id = ?1"
-            ).map_err(|e| StrataError::Database(e.to_string()))?;
+            let mut stmt = conn
+                .prepare(
+                    "SELECT agent_id, lease_expires_at FROM resource_leases WHERE resource_id = ?1",
+                )
+                .map_err(|e| StrataError::Database(e.to_string()))?;
 
-            let conflict_info = stmt.query_row(params![resource_id], |row| {
-                let held_by: String = row.get(0)?;
-                let held_until: i64 = row.get(1)?;
-                Ok((held_by, held_until))
-            }).optional().map_err(|e| StrataError::Database(e.to_string()))?;
+            let conflict_info = stmt
+                .query_row(params![resource_id], |row| {
+                    let held_by: String = row.get(0)?;
+                    let held_until: i64 = row.get(1)?;
+                    Ok((held_by, held_until))
+                })
+                .optional()
+                .map_err(|e| StrataError::Database(e.to_string()))?;
 
             if let Some((held_by, held_until)) = conflict_info {
                 let remaining_seconds = (held_until - now).max(0);
@@ -4183,10 +4195,12 @@ impl SqliteStore {
             .lock()
             .map_err(|_| StrataError::Database("Lock poisoned on SQLite connection".to_string()))?;
 
-        let rows = conn.execute(
-            "DELETE FROM resource_leases WHERE resource_id = ?1 AND agent_id = ?2",
-            params![resource_id, agent_id],
-        ).map_err(|e| StrataError::Database(format!("Failed to release lease: {e}")))?;
+        let rows = conn
+            .execute(
+                "DELETE FROM resource_leases WHERE resource_id = ?1 AND agent_id = ?2",
+                params![resource_id, agent_id],
+            )
+            .map_err(|e| StrataError::Database(format!("Failed to release lease: {e}")))?;
 
         Ok(rows > 0)
     }
@@ -4198,19 +4212,24 @@ impl SqliteStore {
             .lock()
             .map_err(|_| StrataError::Database("Lock poisoned on SQLite connection".to_string()))?;
 
-        let mut stmt = conn.prepare(
-            "SELECT resource_id, agent_id, lease_expires_at, metadata
-             FROM resource_leases WHERE resource_id = ?1"
-        ).map_err(|e| StrataError::Database(e.to_string()))?;
+        let mut stmt = conn
+            .prepare(
+                "SELECT resource_id, agent_id, lease_expires_at, metadata
+             FROM resource_leases WHERE resource_id = ?1",
+            )
+            .map_err(|e| StrataError::Database(e.to_string()))?;
 
-        let lease = stmt.query_row(params![resource_id], |row| {
-            Ok(ResourceLease {
-                resource_id: row.get(0)?,
-                agent_id: row.get(1)?,
-                lease_expires_at: row.get(2)?,
-                metadata: row.get(3)?,
+        let lease = stmt
+            .query_row(params![resource_id], |row| {
+                Ok(ResourceLease {
+                    resource_id: row.get(0)?,
+                    agent_id: row.get(1)?,
+                    lease_expires_at: row.get(2)?,
+                    metadata: row.get(3)?,
+                })
             })
-        }).optional().map_err(|e| StrataError::Database(e.to_string()))?;
+            .optional()
+            .map_err(|e| StrataError::Database(e.to_string()))?;
 
         Ok(lease)
     }
@@ -4224,21 +4243,25 @@ impl SqliteStore {
 
         let now = Utc::now().timestamp();
 
-        let mut stmt = conn.prepare(
-            "SELECT resource_id, agent_id, lease_expires_at, metadata
+        let mut stmt = conn
+            .prepare(
+                "SELECT resource_id, agent_id, lease_expires_at, metadata
              FROM resource_leases
              WHERE lease_expires_at > ?1
-             ORDER BY lease_expires_at ASC"
-        ).map_err(|e| StrataError::Database(e.to_string()))?;
+             ORDER BY lease_expires_at ASC",
+            )
+            .map_err(|e| StrataError::Database(e.to_string()))?;
 
-        let rows = stmt.query_map(params![now], |row| {
-            Ok(ResourceLease {
-                resource_id: row.get(0)?,
-                agent_id: row.get(1)?,
-                lease_expires_at: row.get(2)?,
-                metadata: row.get(3)?,
+        let rows = stmt
+            .query_map(params![now], |row| {
+                Ok(ResourceLease {
+                    resource_id: row.get(0)?,
+                    agent_id: row.get(1)?,
+                    lease_expires_at: row.get(2)?,
+                    metadata: row.get(3)?,
+                })
             })
-        }).map_err(|e| StrataError::Database(e.to_string()))?;
+            .map_err(|e| StrataError::Database(e.to_string()))?;
 
         let mut list = Vec::new();
         for r in rows {
@@ -4256,10 +4279,12 @@ impl SqliteStore {
             .map_err(|_| StrataError::Database("Lock poisoned on SQLite connection".to_string()))?;
 
         let now = Utc::now().timestamp();
-        let rows = conn.execute(
-            "DELETE FROM resource_leases WHERE lease_expires_at <= ?1",
-            params![now],
-        ).map_err(|e| StrataError::Database(format!("Failed to prune expired leases: {e}")))?;
+        let rows = conn
+            .execute(
+                "DELETE FROM resource_leases WHERE lease_expires_at <= ?1",
+                params![now],
+            )
+            .map_err(|e| StrataError::Database(format!("Failed to prune expired leases: {e}")))?;
 
         Ok(rows)
     }

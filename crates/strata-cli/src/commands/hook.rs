@@ -288,14 +288,16 @@ pub async fn handle_hook(command: HookCommand, engine: Arc<SqliteMemoryEngine>) 
         } => {
             let resolved_target = target.or_else(|| {
                 params.as_deref().and_then(|p| {
-                    serde_json::from_str::<serde_json::Value>(p).ok().and_then(|v| {
-                        v.get("file_path")
-                            .or_else(|| v.get("path"))
-                            .or_else(|| v.get("target"))
-                            .or_else(|| v.get("file"))
-                            .and_then(|f| f.as_str())
-                            .map(|s| s.to_string())
-                    })
+                    serde_json::from_str::<serde_json::Value>(p)
+                        .ok()
+                        .and_then(|v| {
+                            v.get("file_path")
+                                .or_else(|| v.get("path"))
+                                .or_else(|| v.get("target"))
+                                .or_else(|| v.get("file"))
+                                .and_then(|f| f.as_str())
+                                .map(|s| s.to_string())
+                        })
                 })
             });
 
@@ -332,7 +334,12 @@ pub async fn handle_hook(command: HookCommand, engine: Arc<SqliteMemoryEngine>) 
 
                     // Automatically acquire/renew lease for this agent while executing
                     let metadata = format!("PreTool: {}", tool);
-                    let _ = coordinator.acquire_lease(&resource_id, &agent, ttl as i64, Some(&metadata));
+                    let _ = coordinator.acquire_lease(
+                        &resource_id,
+                        &agent,
+                        ttl as i64,
+                        Some(&metadata),
+                    );
                 }
             }
         }

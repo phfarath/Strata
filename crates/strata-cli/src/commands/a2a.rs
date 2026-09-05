@@ -46,7 +46,10 @@ pub enum A2aAction {
         #[arg(help = "Target resource ID (e.g. 'crate:strata-cli', 'file:src/main.rs')")]
         resource: String,
 
-        #[arg(long, help = "Agent identifier acquiring the lease (e.g. 'cli', 'cursor')")]
+        #[arg(
+            long,
+            help = "Agent identifier acquiring the lease (e.g. 'cli', 'cursor')"
+        )]
         agent: String,
 
         #[arg(long, default_value_t = 30, help = "TTL in seconds for the lease")]
@@ -105,7 +108,11 @@ pub async fn run_a2a(args: A2aArgs, coordinator: StigmergyCoordinator) -> Result
             } else {
                 println!("\n🌐 [Strata Stigmergic Workspace Status]");
                 println!("═════════════════════════════════════════════════════════════");
-                println!("Active Agents (Heartbeat within {}s): {}", ttl, agents.len());
+                println!(
+                    "Active Agents (Heartbeat within {}s): {}",
+                    ttl,
+                    agents.len()
+                );
                 if agents.is_empty() {
                     println!("  (No active agents currently registered)");
                 } else {
@@ -178,8 +185,7 @@ pub async fn run_a2a(args: A2aArgs, coordinator: StigmergyCoordinator) -> Result
             metadata,
             json,
         }) => {
-            let res =
-                coordinator.acquire_lease(&resource, &agent, ttl, metadata.as_deref())?;
+            let res = coordinator.acquire_lease(&resource, &agent, ttl, metadata.as_deref())?;
             if json {
                 println!("{}", serde_json::to_string_pretty(&res)?);
             } else {

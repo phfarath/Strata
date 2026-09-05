@@ -1077,7 +1077,9 @@ impl McpServer {
 
                 let resource_id = match args.get("resource_id").and_then(|v| v.as_str()) {
                     Some(r) => r,
-                    None => return CallToolResult::error("Missing required parameter: resource_id"),
+                    None => {
+                        return CallToolResult::error("Missing required parameter: resource_id")
+                    }
                 };
                 let agent_id = match args.get("agent_id").and_then(|v| v.as_str()) {
                     Some(a) => a,
@@ -1109,7 +1111,9 @@ impl McpServer {
 
                 let resource_id = match args.get("resource_id").and_then(|v| v.as_str()) {
                     Some(r) => r,
-                    None => return CallToolResult::error("Missing required parameter: resource_id"),
+                    None => {
+                        return CallToolResult::error("Missing required parameter: resource_id")
+                    }
                 };
                 let agent_id = match args.get("agent_id").and_then(|v| v.as_str()) {
                     Some(a) => a,
