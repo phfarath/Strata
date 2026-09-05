@@ -1,11 +1,11 @@
-use std::collections::HashMap;
 use chrono::Utc;
 use serde::{Deserialize, Serialize};
+use std::collections::HashMap;
 use strata_core::errors::StrataError;
 use strata_core::events::{Event, EventPayload};
 use strata_core::schemas::{
-    DecayConfig, EpisodicMemory, EvidenceRef, ProceduralExample,
-    ProceduralSkill, ProceduralStep, SemanticFact, SignalScores,
+    DecayConfig, EpisodicMemory, EvidenceRef, ProceduralExample, ProceduralSkill, ProceduralStep,
+    SemanticFact, SignalScores,
 };
 use strata_core::state::Scope;
 use strata_core::traits::ReasoningEngine;
@@ -175,11 +175,17 @@ impl ConsolidationPipeline {
         session_id: &str,
         events: &[Event],
         reasoning_engine: Option<&dyn ReasoningEngine>,
-    ) -> (Option<EpisodicMemory>, Vec<SemanticFact>, Option<ProceduralSkill>) {
+    ) -> (
+        Option<EpisodicMemory>,
+        Vec<SemanticFact>,
+        Option<ProceduralSkill>,
+    ) {
         if let Some(engine) = reasoning_engine {
             let prompt = strata_reasoning::prompts::build_distillation_prompt(events);
             if let Ok(res_str) = engine.prompt(None, &prompt, None).await {
-                if let Ok(distillation) = strata_reasoning::prompts::parse_distillation_output(&res_str) {
+                if let Ok(distillation) =
+                    strata_reasoning::prompts::parse_distillation_output(&res_str)
+                {
                     return self.convert_distillation_output(session_id, events, distillation);
                 }
             }
@@ -193,24 +199,28 @@ impl ConsolidationPipeline {
         session_id: &str,
         events: &[Event],
         distillation: strata_reasoning::prompts::DistillationOutput,
-    ) -> (Option<EpisodicMemory>, Vec<SemanticFact>, Option<ProceduralSkill>) {
+    ) -> (
+        Option<EpisodicMemory>,
+        Vec<SemanticFact>,
+        Option<ProceduralSkill>,
+    ) {
         let time_start = events.first().map(|e| e.timestamp).unwrap_or_else(Utc::now);
         let time_end = events.last().map(|e| e.timestamp).unwrap_or_else(Utc::now);
-        let actor = events.first().map(|e| e.agent_id.clone()).unwrap_or_else(|| "agent".to_string());
+        let actor = events
+            .first()
+            .map(|e| e.agent_id.clone())
+            .unwrap_or_else(|| "agent".to_string());
 
-        let raw_event_ids: Vec<i64> = events.iter().enumerate().map(|(idx, ev)| {
-            ev.sequence.map(|s| s as i64).unwrap_or(idx as i64)
-        }).collect();
+        let raw_event_ids: Vec<i64> = events
+            .iter()
+            .enumerate()
+            .map(|(idx, ev)| ev.sequence.map(|s| s as i64).unwrap_or(idx as i64))
+            .collect();
 
         let episodic = if let Some(first_ep) = distillation.episodic_memories.first() {
-            let mut ep = EpisodicMemory::new(
-                session_id,
-                &actor,
-                &first_ep.summary,
-                time_start,
-                time_end,
-            )
-            .with_raw_events(raw_event_ids);
+            let mut ep =
+                EpisodicMemory::new(session_id, &actor, &first_ep.summary, time_start, time_end)
+                    .with_raw_events(raw_event_ids);
             ep.signals.importance = first_ep.importance;
             ep.tags = first_ep.tags.clone();
             Some(ep)
@@ -231,25 +241,30 @@ impl ConsolidationPipeline {
             semantic_facts.push(sf);
         }
 
-        let procedural_skill = if let Some(skill) = distillation.procedural_skills.into_iter().next() {
-            let steps: Vec<ProceduralStep> = skill.steps.into_iter().map(|s| {
-                ProceduralStep::new(
-                    s.step_number,
-                    s.tool_name.unwrap_or_else(|| "tool".to_string()),
-                    s.action,
-                    serde_json::json!({}),
-                )
-            }).collect();
+        let procedural_skill =
+            if let Some(skill) = distillation.procedural_skills.into_iter().next() {
+                let steps: Vec<ProceduralStep> = skill
+                    .steps
+                    .into_iter()
+                    .map(|s| {
+                        ProceduralStep::new(
+                            s.step_number,
+                            s.tool_name.unwrap_or_else(|| "tool".to_string()),
+                            s.action,
+                            serde_json::json!({}),
+                        )
+                    })
+                    .collect();
 
-            let mut ps = ProceduralSkill::new(skill.name, skill.description)
-                .with_steps(steps)
-                .with_preconditions(skill.preconditions);
-            ps.importance = skill.importance;
-            ps.tags = skill.tags;
-            Some(ps)
-        } else {
-            None
-        };
+                let mut ps = ProceduralSkill::new(skill.name, skill.description)
+                    .with_steps(steps)
+                    .with_preconditions(skill.preconditions);
+                ps.importance = skill.importance;
+                ps.tags = skill.tags;
+                Some(ps)
+            } else {
+                None
+            };
 
         (episodic, semantic_facts, procedural_skill)
     }
@@ -259,14 +274,21 @@ impl ConsolidationPipeline {
         &self,
         session_id: &str,
         events: &[Event],
-    ) -> (Option<EpisodicMemory>, Vec<SemanticFact>, Option<ProceduralSkill>) {
+    ) -> (
+        Option<EpisodicMemory>,
+        Vec<SemanticFact>,
+        Option<ProceduralSkill>,
+    ) {
         if events.is_empty() {
             return (None, Vec::new(), None);
         }
 
         let time_start = events.first().map(|e| e.timestamp).unwrap_or_else(Utc::now);
         let time_end = events.last().map(|e| e.timestamp).unwrap_or_else(Utc::now);
-        let actor = events.first().map(|e| e.agent_id.clone()).unwrap_or_else(|| "agent".to_string());
+        let actor = events
+            .first()
+            .map(|e| e.agent_id.clone())
+            .unwrap_or_else(|| "agent".to_string());
 
         let mut tools_used = Vec::new();
         let mut files = Vec::new();
@@ -328,7 +350,8 @@ impl ConsolidationPipeline {
                 EventPayload::ToolResultReceived(res) => {
                     if res.is_error {
                         error_count += 1;
-                        obstacles.push(format!("Tool '{}' failed: {:?}", res.tool_name, res.result));
+                        obstacles
+                            .push(format!("Tool '{}' failed: {:?}", res.tool_name, res.result));
                     }
                 }
                 EventPayload::ErrorObserved(err) => {
@@ -336,7 +359,11 @@ impl ConsolidationPipeline {
                     obstacles.push(format!("Error {}: {}", err.error_type, err.message));
                 }
                 EventPayload::ObservationReceived(obs) => {
-                    let content_str = obs.content.as_str().map(|s| s.to_string()).unwrap_or_else(|| obs.content.to_string());
+                    let content_str = obs
+                        .content
+                        .as_str()
+                        .map(|s| s.to_string())
+                        .unwrap_or_else(|| obs.content.to_string());
                     if content_str.len() > 10 {
                         let fact = SemanticFact::new(
                             content_str,
@@ -364,7 +391,8 @@ impl ConsolidationPipeline {
         let success_rate = (success_count as f32) / total_ops;
         let frustration = ((error_count as f32) / total_ops).clamp(0.0, 1.0);
         let novelty = if semantic_facts.is_empty() { 0.3 } else { 0.8 };
-        let importance = (0.4 + 0.3 * success_rate + 0.3 * (error_count as f32).min(2.0) / 2.0).clamp(0.0, 1.0);
+        let importance =
+            (0.4 + 0.3 * success_rate + 0.3 * (error_count as f32).min(2.0) / 2.0).clamp(0.0, 1.0);
 
         let signals = SignalScores {
             success: success_rate,
@@ -378,32 +406,36 @@ impl ConsolidationPipeline {
         } else if !goals.is_empty() {
             format!("Addressed goal: {}", goals.join("; "))
         } else {
-            format!("Executed session with {} events and {} tools", events.len(), tools_used.len())
+            format!(
+                "Executed session with {} events and {} tools",
+                events.len(),
+                tools_used.len()
+            )
         };
 
-        let episodic = EpisodicMemory::new(
-            session_id,
-            actor,
-            summary,
-            time_start,
-            time_end,
-        )
-        .with_goals(goals)
-        .with_obstacles(obstacles)
-        .with_outcomes(outcomes)
-        .with_tools(tools_used)
-        .with_files(files)
-        .with_signals(signals)
-        .with_raw_events(raw_event_ids);
+        let episodic = EpisodicMemory::new(session_id, actor, summary, time_start, time_end)
+            .with_goals(goals)
+            .with_obstacles(obstacles)
+            .with_outcomes(outcomes)
+            .with_tools(tools_used)
+            .with_files(files)
+            .with_signals(signals)
+            .with_raw_events(raw_event_ids);
 
         // Procedural skill if >= 2 sequential tool steps succeeded
         let procedural_skill = if procedural_steps.len() >= 2 && error_count == 0 {
             let mut skill = ProceduralSkill::new(
                 format!("workflow_{session_id}"),
-                format!("Sequential tool workflow with {} steps", procedural_steps.len()),
+                format!(
+                    "Sequential tool workflow with {} steps",
+                    procedural_steps.len()
+                ),
             )
             .with_steps(procedural_steps)
-            .with_examples(vec![ProceduralExample::new(session_id, "Successfully completed")]);
+            .with_examples(vec![ProceduralExample::new(
+                session_id,
+                "Successfully completed",
+            )]);
             skill.importance = 0.7;
             Some(skill)
         } else {
@@ -439,8 +471,9 @@ impl ConsolidationPipeline {
             }
 
             // 3. LLM / Fallback Distillation
-            let (episodic_opt, mut facts, skill_opt) =
-                self.distill_session(&session_id, &session_events, reasoning_engine).await;
+            let (episodic_opt, mut facts, skill_opt) = self
+                .distill_session(&session_id, &session_events, reasoning_engine)
+                .await;
 
             // 4. Embedding Generation
             let mut fact_embeddings: Vec<Vec<f32>> = Vec::with_capacity(facts.len());
@@ -481,8 +514,11 @@ impl ConsolidationPipeline {
 
         // 6. Decay Pruning
         if self.config.enable_decay_pruning {
-            let prune_rep = self.decay.prune_expired(store, self.config.prune_threshold, None)?;
-            result.memories_pruned = prune_rep.memories_pruned + prune_rep.facts_pruned + prune_rep.skills_pruned;
+            let prune_rep = self
+                .decay
+                .prune_expired(store, self.config.prune_threshold, None)?;
+            result.memories_pruned =
+                prune_rep.memories_pruned + prune_rep.facts_pruned + prune_rep.skills_pruned;
         }
 
         Ok(result)
@@ -496,7 +532,9 @@ impl ConsolidationPipeline {
         reasoning_engine: Option<&dyn ReasoningEngine>,
     ) -> Result<ConsolidationResult, StrataError> {
         let events = store.get_events(session_id, None, None)?;
-        let mut res = self.run_pipeline(store, embedder, &events, reasoning_engine).await?;
+        let mut res = self
+            .run_pipeline(store, embedder, &events, reasoning_engine)
+            .await?;
         res.session_id = Some(session_id.to_string());
         Ok(res)
     }
@@ -511,7 +549,9 @@ impl ConsolidationPipeline {
         let mut total = ConsolidationResult::default();
 
         for sid in session_ids {
-            let res = self.consolidate_session(store, embedder, &sid, reasoning_engine).await?;
+            let res = self
+                .consolidate_session(store, embedder, &sid, reasoning_engine)
+                .await?;
             total.episodic_memories.extend(res.episodic_memories);
             total.semantic_facts.extend(res.semantic_facts);
             total.procedural_skills.extend(res.procedural_skills);

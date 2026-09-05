@@ -345,7 +345,6 @@ impl McpServer {
         ]
     }
 
-
     pub async fn run_stdio(self) -> anyhow::Result<()> {
         info!("Starting Strata MCP server on stdio transport");
 
@@ -407,15 +406,18 @@ impl McpServer {
 
         match req.method.as_str() {
             "initialize" => {
-                let client_version = req.params.as_ref().and_then(|p| {
-                    p.get("protocolVersion").and_then(|v| v.as_str())
-                });
+                let client_version = req
+                    .params
+                    .as_ref()
+                    .and_then(|p| p.get("protocolVersion").and_then(|v| v.as_str()));
                 let negotiated_version = negotiate_protocol_version(client_version);
 
                 let init_result = InitializeResult {
                     protocol_version: negotiated_version.to_string(),
                     capabilities: ServerCapabilities {
-                        tools: Some(ToolsCapability { list_changed: Some(false) }),
+                        tools: Some(ToolsCapability {
+                            list_changed: Some(false),
+                        }),
                         resources: None,
                         prompts: None,
                     },
@@ -453,7 +455,9 @@ impl McpServer {
                         Err(e) => {
                             return Some(JsonRpcResponse::error(
                                 req_id,
-                                JsonRpcError::invalid_params(format!("Invalid tools/call params: {e}")),
+                                JsonRpcError::invalid_params(format!(
+                                    "Invalid tools/call params: {e}"
+                                )),
                             ));
                         }
                     },
@@ -465,7 +469,12 @@ impl McpServer {
                     }
                 };
 
-                let call_result = self.execute_tool(&params.name, params.arguments.unwrap_or(serde_json::json!({}))).await;
+                let call_result = self
+                    .execute_tool(
+                        &params.name,
+                        params.arguments.unwrap_or(serde_json::json!({})),
+                    )
+                    .await;
                 Some(JsonRpcResponse::success(
                     req_id,
                     serde_json::to_value(call_result).unwrap_or(serde_json::json!({})),
@@ -504,21 +513,33 @@ impl McpServer {
                     .and_then(|v| v.as_str())
                     .and_then(|s| s.parse::<MemoryType>().ok());
 
-                match self.memory_engine.search(query, scope.as_ref(), limit).await {
+                match self
+                    .memory_engine
+                    .search(query, scope.as_ref(), limit)
+                    .await
+                {
                     Ok(records) => {
                         let filtered_records: Vec<_> = if let Some(mt) = memory_type {
-                            records.into_iter().filter(|r| r.memory_type == mt).collect()
+                            records
+                                .into_iter()
+                                .filter(|r| r.memory_type == mt)
+                                .collect()
                         } else {
                             records
                         };
 
                         if filtered_records.is_empty() {
-                            CallToolResult::text(format!("No memories found matching query: \"{query}\""))
+                            CallToolResult::text(format!(
+                                "No memories found matching query: \"{query}\""
+                            ))
                         } else {
-                            let handles: Vec<_> = filtered_records.iter().map(|r| r.to_handle(None)).collect();
+                            let handles: Vec<_> =
+                                filtered_records.iter().map(|r| r.to_handle(None)).collect();
                             match serde_json::to_string_pretty(&handles) {
                                 Ok(json) => CallToolResult::text(json),
-                                Err(e) => CallToolResult::error(format!("Failed to serialize search results: {e}")),
+                                Err(e) => CallToolResult::error(format!(
+                                    "Failed to serialize search results: {e}"
+                                )),
                             }
                         }
                     }
@@ -541,7 +562,9 @@ impl McpServer {
                         Ok(json) => CallToolResult::text(json),
                         Err(e) => CallToolResult::error(format!("Serialization error: {e}")),
                     },
-                    Ok(None) => CallToolResult::text(format!("Memory record with ID '{id_str}' not found.")),
+                    Ok(None) => {
+                        CallToolResult::text(format!("Memory record with ID '{id_str}' not found."))
+                    }
                     Err(e) => CallToolResult::error(format!("Memory get error: {e}")),
                 }
             }
@@ -580,7 +603,11 @@ impl McpServer {
                 let tags: Vec<String> = args
                     .get("tags")
                     .and_then(|v| v.as_array())
-                    .map(|arr| arr.iter().filter_map(|t| t.as_str().map(String::from)).collect())
+                    .map(|arr| {
+                        arr.iter()
+                            .filter_map(|t| t.as_str().map(String::from))
+                            .collect()
+                    })
                     .unwrap_or_default();
 
                 let mut record = MemoryRecord::new(memory_type, content, scope)
@@ -612,7 +639,10 @@ impl McpServer {
                     .and_then(|v| v.as_str())
                     .unwrap_or("default");
 
-                let max_tokens = args.get("max_tokens").and_then(|v| v.as_u64()).map(|t| t as usize);
+                let max_tokens = args
+                    .get("max_tokens")
+                    .and_then(|v| v.as_u64())
+                    .map(|t| t as usize);
 
                 match self.memory_engine.digest(session_id, max_tokens).await {
                     Ok(digest) => match serde_json::to_string_pretty(&digest) {
@@ -656,7 +686,10 @@ impl McpServer {
                         record.confidence = new_confidence;
                         if let Some(c) = comment {
                             if let Some(meta_obj) = record.metadata.as_object_mut() {
-                                meta_obj.insert("last_feedback_comment".to_string(), serde_json::Value::String(c.to_string()));
+                                meta_obj.insert(
+                                    "last_feedback_comment".to_string(),
+                                    serde_json::Value::String(c.to_string()),
+                                );
                             } else {
                                 record.metadata = serde_json::json!({ "last_feedback_comment": c });
                             }
@@ -676,10 +709,14 @@ impl McpServer {
                                     structured,
                                 )
                             }
-                            Err(e) => CallToolResult::error(format!("Failed to record memory feedback: {e}")),
+                            Err(e) => CallToolResult::error(format!(
+                                "Failed to record memory feedback: {e}"
+                            )),
                         }
                     }
-                    Ok(None) => CallToolResult::error(format!("Memory record with ID '{id_str}' not found")),
+                    Ok(None) => {
+                        CallToolResult::error(format!("Memory record with ID '{id_str}' not found"))
+                    }
                     Err(e) => CallToolResult::error(format!("Memory get error: {e}")),
                 }
             }
@@ -697,11 +734,17 @@ impl McpServer {
 
                 match world_model.predict_impact(target, depth).await {
                     Ok(report) => {
-                        let text_tree = world_model.to_ascii_tree(target, depth).await.unwrap_or_default();
-                        let structured = serde_json::to_value(&report).unwrap_or(serde_json::json!({}));
+                        let text_tree = world_model
+                            .to_ascii_tree(target, depth)
+                            .await
+                            .unwrap_or_default();
+                        let structured =
+                            serde_json::to_value(&report).unwrap_or(serde_json::json!({}));
                         CallToolResult::structured(text_tree, structured)
                     }
-                    Err(e) => CallToolResult::error(format!("Causal blast radius prediction error: {e}")),
+                    Err(e) => {
+                        CallToolResult::error(format!("Causal blast radius prediction error: {e}"))
+                    }
                 }
             }
             "goal_decompose" => {
@@ -745,20 +788,33 @@ impl McpServer {
                     .unwrap_or(true);
 
                 let dag = if let Some(dag_val) = args.get("dag") {
-                    match serde_json::from_value::<strata_reasoning::GoalDagExport>(dag_val.clone()) {
+                    match serde_json::from_value::<strata_reasoning::GoalDagExport>(dag_val.clone())
+                    {
                         Ok(export) => match strata_reasoning::GoalDag::from_export(export) {
                             Ok(d) => d,
-                            Err(e) => return CallToolResult::error(format!("Invalid Goal DAG structure: {e}")),
+                            Err(e) => {
+                                return CallToolResult::error(format!(
+                                    "Invalid Goal DAG structure: {e}"
+                                ))
+                            }
                         },
-                        Err(e) => return CallToolResult::error(format!("Invalid Goal DAG export format: {e}")),
+                        Err(e) => {
+                            return CallToolResult::error(format!(
+                                "Invalid Goal DAG export format: {e}"
+                            ))
+                        }
                     }
                 } else if let Some(goal) = args.get("goal").and_then(|v| v.as_str()) {
                     match strata_reasoning::GoalDecomposer::new().decompose(goal) {
                         Ok(d) => d,
-                        Err(e) => return CallToolResult::error(format!("Goal decomposition error: {e}")),
+                        Err(e) => {
+                            return CallToolResult::error(format!("Goal decomposition error: {e}"))
+                        }
                     }
                 } else {
-                    return CallToolResult::error("Either 'goal' or 'dag' parameter must be provided");
+                    return CallToolResult::error(
+                        "Either 'goal' or 'dag' parameter must be provided",
+                    );
                 };
 
                 let scheduler = strata_reasoning::DagScheduler::new()
@@ -768,7 +824,8 @@ impl McpServer {
                 match scheduler.execute(dag).await {
                     Ok((finished_dag, report)) => {
                         let text_tree = finished_dag.to_ascii_tree();
-                        let structured = serde_json::to_value(&report).unwrap_or(serde_json::json!({}));
+                        let structured =
+                            serde_json::to_value(&report).unwrap_or(serde_json::json!({}));
                         CallToolResult::structured(text_tree, structured)
                     }
                     Err(e) => CallToolResult::error(format!("DAG execution error: {e}")),
@@ -816,7 +873,10 @@ impl McpServer {
                     Err(e) => CallToolResult::error(format!("Workspace detect error: {e}")),
                 }
             }
-            "strata_architecture_map" | "architecture_map" | "strata_graph_communities" | "graph_communities" => {
+            "strata_architecture_map"
+            | "architecture_map"
+            | "strata_graph_communities"
+            | "graph_communities" => {
                 use strata_core::traits::Tool;
                 let tool = strata_tools::ArchitectureMapTool::new();
                 match tool.execute(args).await {
@@ -861,8 +921,14 @@ impl McpServer {
                         mem.importance = 1.0;
                         if let Some(r) = reason {
                             if let serde_json::Value::Object(ref mut map) = mem.metadata {
-                                map.insert("promotion_reason".to_string(), serde_json::Value::String(r.to_string()));
-                                map.insert("promoted_at".to_string(), serde_json::Value::String(chrono::Utc::now().to_rfc3339()));
+                                map.insert(
+                                    "promotion_reason".to_string(),
+                                    serde_json::Value::String(r.to_string()),
+                                );
+                                map.insert(
+                                    "promoted_at".to_string(),
+                                    serde_json::Value::String(chrono::Utc::now().to_rfc3339()),
+                                );
                             } else {
                                 mem.metadata = serde_json::json!({
                                     "promotion_reason": r,
@@ -886,10 +952,14 @@ impl McpServer {
                                     structured,
                                 )
                             }
-                            Err(e) => CallToolResult::error(format!("Failed to write promoted memory: {e}")),
+                            Err(e) => CallToolResult::error(format!(
+                                "Failed to write promoted memory: {e}"
+                            )),
                         }
                     }
-                    Ok(None) => CallToolResult::error(format!("Memory record with ID '{id}' not found")),
+                    Ok(None) => {
+                        CallToolResult::error(format!("Memory record with ID '{id}' not found"))
+                    }
                     Err(e) => CallToolResult::error(format!("Failed to fetch memory: {e}")),
                 }
             }
@@ -897,4 +967,3 @@ impl McpServer {
         }
     }
 }
-

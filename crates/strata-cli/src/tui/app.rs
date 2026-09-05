@@ -1,8 +1,10 @@
-﻿use std::path::PathBuf;
-use std::sync::Arc;
+use crate::commands::observe::{
+    generate_report, AntiPatternItem, CognitiveReport, MemoryDecayItem, ObserveArgs,
+};
 use anyhow::Result;
+use std::path::PathBuf;
+use std::sync::Arc;
 use strata_memory::{SqliteMemoryEngine, SqliteStore};
-use crate::commands::observe::{generate_report, AntiPatternItem, CognitiveReport, MemoryDecayItem, ObserveArgs};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum AppTab {
@@ -15,7 +17,13 @@ pub enum AppTab {
 
 impl AppTab {
     pub fn all() -> &'static [AppTab] {
-        &[AppTab::Overview, AppTab::Memories, AppTab::AntiPatterns, AppTab::Jtms, AppTab::Anchors]
+        &[
+            AppTab::Overview,
+            AppTab::Memories,
+            AppTab::AntiPatterns,
+            AppTab::Jtms,
+            AppTab::Anchors,
+        ]
     }
 
     pub fn title(&self) -> &'static str {
@@ -76,7 +84,7 @@ impl App {
             json: false,
         };
 
-        let report = generate_report(&store, &args)?;
+        let report = generate_report(store, &args)?;
 
         Ok(Self {
             active_tab: AppTab::Overview,
@@ -99,7 +107,10 @@ impl App {
             self.report.memories.get(index).map(DashboardItem::Memory)
         } else {
             let ap_index = index - mem_count;
-            self.report.anti_patterns.get(ap_index).map(DashboardItem::AntiPattern)
+            self.report
+                .anti_patterns
+                .get(ap_index)
+                .map(DashboardItem::AntiPattern)
         }
     }
 

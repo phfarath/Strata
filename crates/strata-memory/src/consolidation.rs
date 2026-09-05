@@ -22,10 +22,12 @@ impl Consolidator {
 
         match &event.payload {
             EventPayload::SessionEnded(ended) => {
-                let summary = ended
-                    .summary
-                    .clone()
-                    .unwrap_or_else(|| format!("Session {} ended with status {:?}", ended.session_id, ended.final_state));
+                let summary = ended.summary.clone().unwrap_or_else(|| {
+                    format!(
+                        "Session {} ended with status {:?}",
+                        ended.session_id, ended.final_state
+                    )
+                });
                 let content = format!(
                     "Session {}: final_state={:?}, reason={:?}, summary={}",
                     ended.session_id, ended.final_state, ended.reason, summary
@@ -56,11 +58,7 @@ impl Consolidator {
                 Some(record)
             }
             EventPayload::ObservationReceived(obs) => {
-                let content = format!(
-                    "Observation from {}: {}",
-                    obs.source,
-                    obs.content
-                );
+                let content = format!("Observation from {}: {}", obs.source, obs.content);
                 let mut record = MemoryRecord::new(MemoryType::Semantic, content, scope)
                     .with_summary(format!("Observation ({})", obs.observation_type))
                     .with_importance(0.5);
@@ -125,12 +123,8 @@ impl Consolidator {
         let severity = classify_error_severity(error_msg);
         let pattern_scope = scope.cloned().unwrap_or(Scope::Global);
 
-        let mut failure = FailurePattern::new(
-            signature.clone(),
-            pattern_name,
-            description,
-            mitigation,
-        );
+        let mut failure =
+            FailurePattern::new(signature.clone(), pattern_name, description, mitigation);
         failure.trigger_condition = trigger_condition;
         failure.error_type = format!("ToolExecutionError({tool_name})");
         failure.severity = severity;
@@ -199,7 +193,9 @@ impl Consolidator {
                     }
                 }
                 EventPayload::ObservationReceived(obs) => {
-                    if obs.observation_type.contains("hypothesis") || obs.observation_type.contains("plan") {
+                    if obs.observation_type.contains("hypothesis")
+                        || obs.observation_type.contains("plan")
+                    {
                         active_hypotheses.push(format!("{}: {}", obs.source, obs.content));
                     }
                 }
@@ -279,13 +275,22 @@ fn generate_mitigation_for_error(tool_name: &str, error_msg: &str) -> String {
     let err_lower = error_msg.to_lowercase();
     if err_lower.contains("timeout") || err_lower.contains("timed out") {
         format!("Increase timeout threshold or retry tool '{tool_name}' with backoff.")
-    } else if err_lower.contains("permission") || err_lower.contains("denied") || err_lower.contains("unauthorized") {
+    } else if err_lower.contains("permission")
+        || err_lower.contains("denied")
+        || err_lower.contains("unauthorized")
+    {
         format!("Verify authentication credentials and permissions for '{tool_name}'.")
-    } else if err_lower.contains("not found") || err_lower.contains("404") || err_lower.contains("no such") {
+    } else if err_lower.contains("not found")
+        || err_lower.contains("404")
+        || err_lower.contains("no such")
+    {
         format!("Check path/identifier validity before calling '{tool_name}'.")
     } else if err_lower.contains("rate limit") || err_lower.contains("429") {
         format!("Apply rate-limiting delay before invoking '{tool_name}'.")
-    } else if err_lower.contains("syntax") || err_lower.contains("parse") || err_lower.contains("json") {
+    } else if err_lower.contains("syntax")
+        || err_lower.contains("parse")
+        || err_lower.contains("json")
+    {
         format!("Validate and sanitize parameters format before calling '{tool_name}'.")
     } else {
         format!("Review input parameters and pre-conditions for '{tool_name}'.")
@@ -297,7 +302,12 @@ fn classify_error_severity(error_msg: &str) -> FailureSeverity {
     let err_lower = error_msg.to_lowercase();
     if err_lower.contains("fatal") || err_lower.contains("panic") || err_lower.contains("corrupt") {
         FailureSeverity::Critical
-    } else if err_lower.contains("permission") || err_lower.contains("denied") || err_lower.contains("timeout") || err_lower.contains("timed out") || err_lower.contains("fail") {
+    } else if err_lower.contains("permission")
+        || err_lower.contains("denied")
+        || err_lower.contains("timeout")
+        || err_lower.contains("timed out")
+        || err_lower.contains("fail")
+    {
         FailureSeverity::High
     } else if err_lower.contains("warn") || err_lower.contains("retry") {
         FailureSeverity::Low
@@ -333,7 +343,10 @@ fn estimate_digest_tokens(digest: &DigestOutput) -> usize {
 /// - Base importance (0.0 to 1.0)
 /// - Recency elapsed since last access (or creation) with power-law decay (exponent 0.5)
 /// - Access frequency boost: ln(1 + access_count)
-pub fn calculate_act_r_activation(record: &MemoryRecord, eval_time: chrono::DateTime<chrono::Utc>) -> f32 {
+pub fn calculate_act_r_activation(
+    record: &MemoryRecord,
+    eval_time: chrono::DateTime<chrono::Utc>,
+) -> f32 {
     let status = record
         .metadata
         .get("status")
@@ -416,7 +429,8 @@ impl JtmsEngine {
         new_fact: &strata_reasoning::prompts::SemanticFact,
         scope: Scope,
     ) -> Result<MemoryRecord, StrataError> {
-        let existing_memories = store.get_all_memories(Some(&scope), Some(&[MemoryType::Semantic]), 50)?;
+        let existing_memories =
+            store.get_all_memories(Some(&scope), Some(&[MemoryType::Semantic]), 50)?;
         let mut fact_to_insert = new_fact.clone();
 
         for existing in &existing_memories {
@@ -429,7 +443,9 @@ impl JtmsEngine {
             let is_match = Self::check_topic_overlap(&old_fact, new_fact);
             if is_match {
                 let classification = if let Some(engine) = reasoning_engine {
-                    let prompt = strata_reasoning::prompts::build_jtms_arbitration_prompt(&old_fact, new_fact);
+                    let prompt = strata_reasoning::prompts::build_jtms_arbitration_prompt(
+                        &old_fact, new_fact,
+                    );
                     if let Ok(res_str) = engine.prompt(None, &prompt, None).await {
                         strata_reasoning::prompts::parse_jtms_arbitration(&res_str)
                             .map(|r| r.classification)
@@ -463,7 +479,8 @@ impl JtmsEngine {
                         if !new_meta.is_object() {
                             new_meta = serde_json::json!({});
                         }
-                        new_meta["supersedes"] = serde_json::json!(old_fact.id.map(|u| u.to_string()));
+                        new_meta["supersedes"] =
+                            serde_json::json!(old_fact.id.map(|u| u.to_string()));
                         fact_to_insert.metadata = new_meta;
                         break;
                     }
@@ -492,9 +509,25 @@ impl JtmsEngine {
         let new_lower = new_fact.statement.to_lowercase();
 
         let keywords = [
-            "architecture", "database", "storage", "protocol", "api", "framework",
-            "auth", "cache", "network", "transport", "engine", "system", "format",
-            "rest", "grpc", "sqlite", "postgres", "json", "protobuf"
+            "architecture",
+            "database",
+            "storage",
+            "protocol",
+            "api",
+            "framework",
+            "auth",
+            "cache",
+            "network",
+            "transport",
+            "engine",
+            "system",
+            "format",
+            "rest",
+            "grpc",
+            "sqlite",
+            "postgres",
+            "json",
+            "protobuf",
         ];
 
         let mut matches = 0;
@@ -504,7 +537,9 @@ impl JtmsEngine {
             }
         }
 
-        matches >= 1 || (!old_fact.tags.is_empty() && old_fact.tags.iter().any(|t| new_fact.tags.contains(t)))
+        matches >= 1
+            || (!old_fact.tags.is_empty()
+                && old_fact.tags.iter().any(|t| new_fact.tags.contains(t)))
     }
 
     fn heuristic_classify(
@@ -519,9 +554,19 @@ impl JtmsEngine {
         }
 
         let update_indicators = [
-            "migrated to", "switched to", "replaced by", "upgraded to", "deprecated",
-            "transitioned to", "instead of", "changed to", "uses grpc", "uses protobuf",
-            "moved to", "adopt", "refactored to"
+            "migrated to",
+            "switched to",
+            "replaced by",
+            "upgraded to",
+            "deprecated",
+            "transitioned to",
+            "instead of",
+            "changed to",
+            "uses grpc",
+            "uses protobuf",
+            "moved to",
+            "adopt",
+            "refactored to",
         ];
 
         for ind in &update_indicators {
@@ -574,7 +619,10 @@ impl ConsolidationPipeline {
         }
     }
 
-    pub async fn consolidate_session(&self, session_id: &str) -> Result<ConsolidationReport, StrataError> {
+    pub async fn consolidate_session(
+        &self,
+        session_id: &str,
+    ) -> Result<ConsolidationReport, StrataError> {
         let events = self.store.get_events(session_id, None, None)?;
         if events.is_empty() {
             return Ok(ConsolidationReport {
@@ -616,7 +664,14 @@ impl ConsolidationPipeline {
         // 2. Semantic Facts with JTMS Belief Revision
         for fact in distillation.semantic_facts {
             let before_deprecated = count_deprecated_memories(&self.store, &session_scope)?;
-            self.jtms.ingest_fact(&self.store, Some(self.reasoning_engine.as_ref()), &fact, session_scope.clone()).await?;
+            self.jtms
+                .ingest_fact(
+                    &self.store,
+                    Some(self.reasoning_engine.as_ref()),
+                    &fact,
+                    session_scope.clone(),
+                )
+                .await?;
             let after_deprecated = count_deprecated_memories(&self.store, &session_scope)?;
             if after_deprecated > before_deprecated {
                 report.deprecated_facts += after_deprecated - before_deprecated;
@@ -681,13 +736,16 @@ impl ConsolidationPipeline {
 
 fn count_deprecated_memories(store: &SqliteStore, scope: &Scope) -> Result<usize, StrataError> {
     let memories = store.get_all_memories(Some(scope), Some(&[MemoryType::Semantic]), 10_000)?;
-    let count = memories.iter().filter(|m| {
-        m.metadata.get("status").and_then(|v| v.as_str()) == Some("Deprecated")
-    }).count();
+    let count = memories
+        .iter()
+        .filter(|m| m.metadata.get("status").and_then(|v| v.as_str()) == Some("Deprecated"))
+        .count();
     Ok(count)
 }
 
-fn fallback_extract_distillation(events: &[Event]) -> strata_reasoning::prompts::DistillationOutput {
+fn fallback_extract_distillation(
+    events: &[Event],
+) -> strata_reasoning::prompts::DistillationOutput {
     let mut out = strata_reasoning::prompts::DistillationOutput::default();
     let consolidator = Consolidator::new();
 
@@ -695,12 +753,15 @@ fn fallback_extract_distillation(events: &[Event]) -> strata_reasoning::prompts:
         if let Some(record) = consolidator.extract_from_event(event) {
             match record.memory_type {
                 MemoryType::Episodic => {
-                    out.episodic_memories.push(strata_reasoning::prompts::EpisodicMemoryItem {
-                        summary: record.summary.unwrap_or_else(|| "Session event".to_string()),
-                        content: record.content,
-                        importance: record.importance,
-                        tags: record.tags,
-                    });
+                    out.episodic_memories
+                        .push(strata_reasoning::prompts::EpisodicMemoryItem {
+                            summary: record
+                                .summary
+                                .unwrap_or_else(|| "Session event".to_string()),
+                            content: record.content,
+                            importance: record.importance,
+                            tags: record.tags,
+                        });
                 }
                 MemoryType::Semantic => {
                     out.semantic_facts.push(
@@ -716,24 +777,26 @@ fn fallback_extract_distillation(events: &[Event]) -> strata_reasoning::prompts:
                         tool_name: None,
                         expected_outcome: record.summary.clone(),
                     };
-                    out.procedural_skills.push(
-                        strata_reasoning::prompts::ProceduralSkill::new(
-                            record.summary.unwrap_or_else(|| "Procedural Task".to_string()),
+                    out.procedural_skills
+                        .push(strata_reasoning::prompts::ProceduralSkill::new(
+                            record
+                                .summary
+                                .unwrap_or_else(|| "Procedural Task".to_string()),
                             record.content,
                             vec![step],
-                        ),
-                    );
+                        ));
                 }
                 MemoryType::NegativePattern => {
-                    out.negative_patterns.push(strata_reasoning::prompts::NegativePatternItem {
-                        signature: format!("event_{:?}", event.id),
-                        pattern_name: "EventFailure".to_string(),
-                        description: record.content,
-                        trigger_condition: "Tool failure".to_string(),
-                        mitigation: "Inspect error log".to_string(),
-                        severity: "high".to_string(),
-                        error_type: Some("ErrorObserved".to_string()),
-                    });
+                    out.negative_patterns
+                        .push(strata_reasoning::prompts::NegativePatternItem {
+                            signature: format!("event_{:?}", event.id),
+                            pattern_name: "EventFailure".to_string(),
+                            description: record.content,
+                            trigger_condition: "Tool failure".to_string(),
+                            mitigation: "Inspect error log".to_string(),
+                            severity: "high".to_string(),
+                            error_type: Some("ErrorObserved".to_string()),
+                        });
                 }
             }
         }

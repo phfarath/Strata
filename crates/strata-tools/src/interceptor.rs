@@ -1,7 +1,7 @@
+use serde::{Deserialize, Serialize};
 use std::process::Stdio;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
-use serde::{Deserialize, Serialize};
 use tokio::process::Command;
 use tracing::{debug, info, warn};
 
@@ -31,7 +31,11 @@ impl AntiPatternParser {
     pub fn format_surgical_guardrail(pattern: &FailurePattern) -> String {
         format!(
             "[KNOWN ANTI-PATTERN]: {} | Mitigation: {} (Target: {})",
-            pattern.description.lines().next().unwrap_or(&pattern.pattern_name),
+            pattern
+                .description
+                .lines()
+                .next()
+                .unwrap_or(&pattern.pattern_name),
             pattern.mitigation,
             pattern.trigger_condition
         )
@@ -75,7 +79,8 @@ impl AntiPatternParser {
         }
 
         // 3. Python / Pytest errors
-        if cmd_lower.contains("pytest") || cmd_lower.contains("python") || cmd_lower.contains("py") {
+        if cmd_lower.contains("pytest") || cmd_lower.contains("python") || cmd_lower.contains("py")
+        {
             if let Some(fp) = Self::parse_python_error(command, &combined, context, scope.clone()) {
                 return Some(fp);
             }
@@ -181,7 +186,10 @@ impl AntiPatternParser {
         }
 
         // Undeclared type / module / symbol (E0433 / E0425)
-        if output.contains("error[E0433]") || output.contains("error[E0425]") || output.contains("use of undeclared") {
+        if output.contains("error[E0433]")
+            || output.contains("error[E0425]")
+            || output.contains("use of undeclared")
+        {
             let sym_err = output
                 .lines()
                 .find(|l| l.contains("use of undeclared") || l.contains("not found in this scope"))
@@ -469,14 +477,8 @@ impl CommandInterceptor {
             Err(e) => {
                 let duration_ms = start.elapsed().as_millis() as u64;
                 let err_msg = format!("Failed to spawn process '{program}': {e}");
-                let anti_pattern = AntiPatternParser::parse(
-                    &full_command_str,
-                    "",
-                    &err_msg,
-                    127,
-                    context,
-                    scope,
-                );
+                let anti_pattern =
+                    AntiPatternParser::parse(&full_command_str, "", &err_msg, 127, context, scope);
                 let guardrail = anti_pattern
                     .as_ref()
                     .map(AntiPatternParser::format_surgical_guardrail);
@@ -540,14 +542,8 @@ impl CommandInterceptor {
             }
             Ok(Err(e)) => {
                 let err_msg = format!("Process I/O error: {e}");
-                let anti_pattern = AntiPatternParser::parse(
-                    &full_command_str,
-                    "",
-                    &err_msg,
-                    1,
-                    context,
-                    scope,
-                );
+                let anti_pattern =
+                    AntiPatternParser::parse(&full_command_str, "", &err_msg, 1, context, scope);
                 let guardrail = anti_pattern
                     .as_ref()
                     .map(AntiPatternParser::format_surgical_guardrail);
@@ -569,14 +565,8 @@ impl CommandInterceptor {
             Err(_) => {
                 let err_msg = format!("Command timed out after {}s", timeout_duration.as_secs());
                 warn!("Command timed out: {full_command_str}");
-                let anti_pattern = AntiPatternParser::parse(
-                    &full_command_str,
-                    "",
-                    &err_msg,
-                    124,
-                    context,
-                    scope,
-                );
+                let anti_pattern =
+                    AntiPatternParser::parse(&full_command_str, "", &err_msg, 124, context, scope);
                 let guardrail = anti_pattern
                     .as_ref()
                     .map(AntiPatternParser::format_surgical_guardrail);

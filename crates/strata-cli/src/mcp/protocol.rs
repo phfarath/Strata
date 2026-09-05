@@ -1,6 +1,6 @@
+use serde::{Deserialize, Serialize};
 use std::fmt;
 use std::str::FromStr;
-use serde::{Deserialize, Serialize};
 
 pub const JSONRPC_VERSION: &str = "2.0";
 pub const MCP_PROTOCOL_VERSION: &str = "2024-11-05";
@@ -115,7 +115,11 @@ impl JsonRpcResponse {
         }
     }
 
-    pub fn success_with_meta(id: serde_json::Value, result: serde_json::Value, meta: serde_json::Value) -> Self {
+    pub fn success_with_meta(
+        id: serde_json::Value,
+        result: serde_json::Value,
+        meta: serde_json::Value,
+    ) -> Self {
         Self {
             jsonrpc: JSONRPC_VERSION.to_string(),
             id,
@@ -326,4 +330,3 @@ impl CallToolResult {
         }
     }
 }
-

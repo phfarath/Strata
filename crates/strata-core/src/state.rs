@@ -1,7 +1,7 @@
-use std::fmt;
-use std::str::FromStr;
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
+use std::fmt;
+use std::str::FromStr;
 use uuid::Uuid;
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
@@ -41,7 +41,7 @@ impl FromStr for MemoryType {
 }
 
 /// Formal cognitive tier defining retention dynamics and budgeting for memory.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize, Default)]
 #[serde(rename_all = "snake_case")]
 pub enum MemoryTier {
     /// Invariant rules, critical security constraints, project axioms. Frozen decay (R=1.0), never pruned.
@@ -49,6 +49,7 @@ pub enum MemoryTier {
     /// Active task session context, touched files, immediate diffs. FIFO + task saliency.
     Working,
     /// Historical facts, conversation context, intermediate decisions. Exponential mathematical decay -> Cold Storage.
+    #[default]
     Peripheral,
 }
 
@@ -63,12 +64,6 @@ impl MemoryTier {
 
     pub fn is_peripheral(&self) -> bool {
         matches!(self, MemoryTier::Peripheral)
-    }
-}
-
-impl Default for MemoryTier {
-    fn default() -> Self {
-        MemoryTier::Peripheral
     }
 }
 
@@ -264,27 +259,21 @@ impl MemoryRecord {
     }
 
     pub fn to_handle(&self, score: Option<f32>) -> MemoryHandle {
-        let title = self
-            .summary
-            .clone()
-            .unwrap_or_else(|| {
-                let lines = self.content.lines().next().unwrap_or("Untitled");
-                if lines.len() > 60 {
-                    format!("{}...", &lines[..57])
-                } else {
-                    lines.to_string()
-                }
-            });
-        let summary = self
-            .summary
-            .clone()
-            .unwrap_or_else(|| {
-                if self.content.len() > 140 {
-                    format!("{}...", &self.content[..137])
-                } else {
-                    self.content.clone()
-                }
-            });
+        let title = self.summary.clone().unwrap_or_else(|| {
+            let lines = self.content.lines().next().unwrap_or("Untitled");
+            if lines.len() > 60 {
+                format!("{}...", &lines[..57])
+            } else {
+                lines.to_string()
+            }
+        });
+        let summary = self.summary.clone().unwrap_or_else(|| {
+            if self.content.len() > 140 {
+                format!("{}...", &self.content[..137])
+            } else {
+                self.content.clone()
+            }
+        });
         MemoryHandle {
             id: self.id,
             title,
@@ -326,18 +315,13 @@ impl MemoryHandle {
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Default)]
 pub enum SessionStatus {
+    #[default]
     Active,
     Completed,
     Failed,
     Paused,
-}
-
-impl Default for SessionStatus {
-    fn default() -> Self {
-        Self::Active
-    }
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -370,18 +354,13 @@ impl SessionState {
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Default)]
 pub enum FailureSeverity {
     Low,
+    #[default]
     Medium,
     High,
     Critical,
-}
-
-impl Default for FailureSeverity {
-    fn default() -> Self {
-        Self::Medium
-    }
 }
 
 impl fmt::Display for FailureSeverity {
@@ -512,7 +491,11 @@ mod tests {
 
     #[test]
     fn test_memory_tier_defaults_and_helpers() {
-        let mem = MemoryRecord::new(MemoryType::Semantic, "Architecture constraint", Scope::Global);
+        let mem = MemoryRecord::new(
+            MemoryType::Semantic,
+            "Architecture constraint",
+            Scope::Global,
+        );
         assert_eq!(mem.tier, MemoryTier::Peripheral);
         assert!(mem.is_peripheral());
         assert!(!mem.is_core());
@@ -542,8 +525,14 @@ mod tests {
     fn test_memory_tier_serde_and_parsing() {
         assert_eq!("core".parse::<MemoryTier>().unwrap(), MemoryTier::Core);
         assert_eq!("Core".parse::<MemoryTier>().unwrap(), MemoryTier::Core);
-        assert_eq!("working".parse::<MemoryTier>().unwrap(), MemoryTier::Working);
-        assert_eq!("peripheral".parse::<MemoryTier>().unwrap(), MemoryTier::Peripheral);
+        assert_eq!(
+            "working".parse::<MemoryTier>().unwrap(),
+            MemoryTier::Working
+        );
+        assert_eq!(
+            "peripheral".parse::<MemoryTier>().unwrap(),
+            MemoryTier::Peripheral
+        );
 
         let serialized = serde_json::to_string(&MemoryTier::Core).unwrap();
         assert_eq!(serialized, "\"core\"");
@@ -551,4 +540,3 @@ mod tests {
         assert_eq!(deserialized, MemoryTier::Core);
     }
 }
-

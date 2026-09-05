@@ -1,11 +1,9 @@
+use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 use std::time::Instant;
-use serde::{Deserialize, Serialize};
 
 use strata_core::errors::StrataError;
-use strata_memory::{
-    CallGraph, CallGraphAnalyzer, LanguageKind, SqliteStore,
-};
+use strata_memory::{CallGraph, CallGraphAnalyzer, LanguageKind, SqliteStore};
 
 /// Evaluation scenario verifying Native Call Graph extraction performance (< 5ms) and accuracy.
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -96,10 +94,13 @@ def is_valid_payload(item):
         let start = Instant::now();
 
         // 1. Analyze files
-        let edges_auth = analyzer.analyze_source(rust_code_auth, LanguageKind::Rust, "src/auth.rs")?;
+        let edges_auth =
+            analyzer.analyze_source(rust_code_auth, LanguageKind::Rust, "src/auth.rs")?;
         let edges_db = analyzer.analyze_source(rust_code_db, LanguageKind::Rust, "src/db.rs")?;
-        let edges_ts = analyzer.analyze_source(ts_code_api, LanguageKind::TypeScript, "src/api.ts")?;
-        let edges_py = analyzer.analyze_source(py_code_worker, LanguageKind::Python, "worker.py")?;
+        let edges_ts =
+            analyzer.analyze_source(ts_code_api, LanguageKind::TypeScript, "src/api.ts")?;
+        let edges_py =
+            analyzer.analyze_source(py_code_worker, LanguageKind::Python, "worker.py")?;
 
         let extraction_duration = start.elapsed();
         let extraction_duration_ms = extraction_duration.as_millis() as u64;
@@ -126,8 +127,12 @@ def is_valid_payload(item):
         let graph = CallGraph::from_edges(all_edges);
         let recursive = graph.detect_recursive_calls();
 
-        let recursion_detected = recursive.iter().any(|(f, sym)| f == "worker.py" && sym == "process_queue_item");
-        let accuracy_passed = callers.len() == 1 && callers[0].caller_symbol == "authenticate_request" && total_edges >= 10;
+        let recursion_detected = recursive
+            .iter()
+            .any(|(f, sym)| f == "worker.py" && sym == "process_queue_item");
+        let accuracy_passed = callers.len() == 1
+            && callers[0].caller_symbol == "authenticate_request"
+            && total_edges >= 10;
 
         Ok(CallGraphEvalResult {
             total_files_analyzed: total_files,
@@ -148,9 +153,20 @@ mod tests {
 
     #[tokio::test]
     async fn test_eval_native_call_graph_and_import_analyzer() {
-        let eval_result = NativeCallGraphEval::run_eval().await.expect("Native call graph eval failed");
-        assert!(eval_result.accuracy_passed, "Call graph extraction accuracy check failed");
-        assert!(eval_result.recursion_detected, "Call graph recursion check failed");
-        assert!(eval_result.is_latency_sub_5ms, "Call graph latency exceeds 5ms per file");
+        let eval_result = NativeCallGraphEval::run_eval()
+            .await
+            .expect("Native call graph eval failed");
+        assert!(
+            eval_result.accuracy_passed,
+            "Call graph extraction accuracy check failed"
+        );
+        assert!(
+            eval_result.recursion_detected,
+            "Call graph recursion check failed"
+        );
+        assert!(
+            eval_result.is_latency_sub_5ms,
+            "Call graph latency exceeds 5ms per file"
+        );
     }
 }

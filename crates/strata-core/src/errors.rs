@@ -51,10 +51,7 @@ pub enum StrataError {
     Timeout(String),
 
     #[error("Execution failed with code {code:?}: {stderr}")]
-    ExecutionFailed {
-        code: Option<i32>,
-        stderr: String,
-    },
+    ExecutionFailed { code: Option<i32>, stderr: String },
 
     #[error("Configuration error: {0}")]
     Configuration(String),

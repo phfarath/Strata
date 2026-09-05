@@ -1,7 +1,7 @@
-use std::path::Path;
-use std::sync::{Arc, Mutex};
 use chrono::{DateTime, Utc};
 use rusqlite::{params, Connection, OptionalExtension};
+use std::path::Path;
+use std::sync::{Arc, Mutex};
 use uuid::Uuid;
 
 use strata_core::errors::StrataError;
@@ -18,8 +18,6 @@ use strata_core::schemas::{
 use strata_core::state::{
     FailurePattern, FailureSeverity, MemoryRecord, MemoryTier, MemoryType, Scope,
 };
-
-
 
 use crate::call_graph::{CallEdge, CallType};
 use crate::community::ArchitectureGraphSummary;
@@ -59,9 +57,10 @@ impl SqliteStore {
     }
 
     fn init_schema(&self) -> Result<(), StrataError> {
-        let conn = self.conn.lock().map_err(|_| {
-            StrataError::Database("Lock poisoned on SQLite connection".to_string())
-        })?;
+        let conn = self
+            .conn
+            .lock()
+            .map_err(|_| StrataError::Database("Lock poisoned on SQLite connection".to_string()))?;
 
         let _ = conn.pragma_update(None, "journal_mode", "WAL");
         let _ = conn.pragma_update(None, "synchronous", "NORMAL");
@@ -69,16 +68,43 @@ impl SqliteStore {
         let _ = conn.pragma_update(None, "busy_timeout", 5000);
 
         // Safe pre-migration for existing databases before indices are declared on newer columns
-        let _ = conn.execute("ALTER TABLE memories ADD COLUMN tier TEXT NOT NULL DEFAULT 'peripheral'", []);
-        let _ = conn.execute("ALTER TABLE memories ADD COLUMN approved_by_human INTEGER NOT NULL DEFAULT 0", []);
-        let _ = conn.execute("ALTER TABLE semantic_facts ADD COLUMN tier TEXT NOT NULL DEFAULT 'peripheral'", []);
-        let _ = conn.execute("ALTER TABLE semantic_facts ADD COLUMN approved_by_human INTEGER NOT NULL DEFAULT 0", []);
-        let _ = conn.execute("ALTER TABLE semantic_facts ADD COLUMN code_anchor_json TEXT DEFAULT NULL", []);
-        let _ = conn.execute("ALTER TABLE semantic_facts ADD COLUMN depends_on_json TEXT NOT NULL DEFAULT '[]'", []);
-        let _ = conn.execute("ALTER TABLE cold_storage_memories ADD COLUMN tier TEXT NOT NULL DEFAULT 'peripheral'", []);
+        let _ = conn.execute(
+            "ALTER TABLE memories ADD COLUMN tier TEXT NOT NULL DEFAULT 'peripheral'",
+            [],
+        );
+        let _ = conn.execute(
+            "ALTER TABLE memories ADD COLUMN approved_by_human INTEGER NOT NULL DEFAULT 0",
+            [],
+        );
+        let _ = conn.execute(
+            "ALTER TABLE semantic_facts ADD COLUMN tier TEXT NOT NULL DEFAULT 'peripheral'",
+            [],
+        );
+        let _ = conn.execute(
+            "ALTER TABLE semantic_facts ADD COLUMN approved_by_human INTEGER NOT NULL DEFAULT 0",
+            [],
+        );
+        let _ = conn.execute(
+            "ALTER TABLE semantic_facts ADD COLUMN code_anchor_json TEXT DEFAULT NULL",
+            [],
+        );
+        let _ = conn.execute(
+            "ALTER TABLE semantic_facts ADD COLUMN depends_on_json TEXT NOT NULL DEFAULT '[]'",
+            [],
+        );
+        let _ = conn.execute(
+            "ALTER TABLE cold_storage_memories ADD COLUMN tier TEXT NOT NULL DEFAULT 'peripheral'",
+            [],
+        );
         let _ = conn.execute("ALTER TABLE cold_storage_memories ADD COLUMN approved_by_human INTEGER NOT NULL DEFAULT 0", []);
-        let _ = conn.execute("ALTER TABLE preference_pairs ADD COLUMN oracle_verified INTEGER DEFAULT 0", []);
-        let _ = conn.execute("ALTER TABLE preference_pairs ADD COLUMN verification_source TEXT", []);
+        let _ = conn.execute(
+            "ALTER TABLE preference_pairs ADD COLUMN oracle_verified INTEGER DEFAULT 0",
+            [],
+        );
+        let _ = conn.execute(
+            "ALTER TABLE preference_pairs ADD COLUMN verification_source TEXT",
+            [],
+        );
 
         conn.execute_batch(
             "
@@ -533,15 +559,39 @@ impl SqliteStore {
         .map_err(|e| StrataError::Database(format!("Failed to execute schema migration: {e}")))?;
 
         // Safe migration for existing databases: add code_anchor_json, depends_on_json, tier, approved_by_human, oracle_verified if not exists
-        let _ = conn.execute("ALTER TABLE semantic_facts ADD COLUMN code_anchor_json TEXT DEFAULT NULL", []);
-        let _ = conn.execute("ALTER TABLE semantic_facts ADD COLUMN depends_on_json TEXT NOT NULL DEFAULT '[]'", []);
-        let _ = conn.execute("ALTER TABLE memories ADD COLUMN tier TEXT NOT NULL DEFAULT 'peripheral'", []);
-        let _ = conn.execute("ALTER TABLE semantic_facts ADD COLUMN tier TEXT NOT NULL DEFAULT 'peripheral'", []);
-        let _ = conn.execute("ALTER TABLE memories ADD COLUMN approved_by_human INTEGER NOT NULL DEFAULT 0", []);
-        let _ = conn.execute("ALTER TABLE semantic_facts ADD COLUMN approved_by_human INTEGER NOT NULL DEFAULT 0", []);
+        let _ = conn.execute(
+            "ALTER TABLE semantic_facts ADD COLUMN code_anchor_json TEXT DEFAULT NULL",
+            [],
+        );
+        let _ = conn.execute(
+            "ALTER TABLE semantic_facts ADD COLUMN depends_on_json TEXT NOT NULL DEFAULT '[]'",
+            [],
+        );
+        let _ = conn.execute(
+            "ALTER TABLE memories ADD COLUMN tier TEXT NOT NULL DEFAULT 'peripheral'",
+            [],
+        );
+        let _ = conn.execute(
+            "ALTER TABLE semantic_facts ADD COLUMN tier TEXT NOT NULL DEFAULT 'peripheral'",
+            [],
+        );
+        let _ = conn.execute(
+            "ALTER TABLE memories ADD COLUMN approved_by_human INTEGER NOT NULL DEFAULT 0",
+            [],
+        );
+        let _ = conn.execute(
+            "ALTER TABLE semantic_facts ADD COLUMN approved_by_human INTEGER NOT NULL DEFAULT 0",
+            [],
+        );
         let _ = conn.execute("ALTER TABLE cold_storage_memories ADD COLUMN approved_by_human INTEGER NOT NULL DEFAULT 0", []);
-        let _ = conn.execute("ALTER TABLE preference_pairs ADD COLUMN oracle_verified INTEGER DEFAULT 0", []);
-        let _ = conn.execute("ALTER TABLE preference_pairs ADD COLUMN verification_source TEXT", []);
+        let _ = conn.execute(
+            "ALTER TABLE preference_pairs ADD COLUMN oracle_verified INTEGER DEFAULT 0",
+            [],
+        );
+        let _ = conn.execute(
+            "ALTER TABLE preference_pairs ADD COLUMN verification_source TEXT",
+            [],
+        );
 
         Ok(())
     }
@@ -551,9 +601,10 @@ impl SqliteStore {
     // ==========================================
 
     pub fn insert_event(&self, event: &Event) -> Result<EventId, StrataError> {
-        let conn = self.conn.lock().map_err(|_| {
-            StrataError::Database("Lock poisoned on SQLite connection".to_string())
-        })?;
+        let conn = self
+            .conn
+            .lock()
+            .map_err(|_| StrataError::Database("Lock poisoned on SQLite connection".to_string()))?;
 
         let id_str = event.id.to_string();
         let ts_str = event.timestamp.to_rfc3339();
@@ -595,9 +646,10 @@ impl SqliteStore {
         from_seq: Option<u64>,
         limit: Option<usize>,
     ) -> Result<Vec<Event>, StrataError> {
-        let conn = self.conn.lock().map_err(|_| {
-            StrataError::Database("Lock poisoned on SQLite connection".to_string())
-        })?;
+        let conn = self
+            .conn
+            .lock()
+            .map_err(|_| StrataError::Database("Lock poisoned on SQLite connection".to_string()))?;
 
         let from_seq_val = from_seq.unwrap_or(0);
         let limit_val = limit.unwrap_or(1000) as i64;
@@ -660,9 +712,10 @@ impl SqliteStore {
                 meta_json,
             ) = row.map_err(|e| StrataError::Database(e.to_string()))?;
 
-            let id = id_str.parse::<Uuid>().map(EventId::from_uuid).map_err(|e| {
-                StrataError::Validation(format!("Invalid UUID in event id: {e}"))
-            })?;
+            let id = id_str
+                .parse::<Uuid>()
+                .map(EventId::from_uuid)
+                .map_err(|e| StrataError::Validation(format!("Invalid UUID in event id: {e}")))?;
             let timestamp = DateTime::parse_from_rfc3339(&ts_str)
                 .map(|dt| dt.with_timezone(&Utc))
                 .unwrap_or_else(|_| Utc::now());
@@ -691,9 +744,10 @@ impl SqliteStore {
     }
 
     pub fn get_session_ids(&self) -> Result<Vec<String>, StrataError> {
-        let conn = self.conn.lock().map_err(|_| {
-            StrataError::Database("Lock poisoned on SQLite connection".to_string())
-        })?;
+        let conn = self
+            .conn
+            .lock()
+            .map_err(|_| StrataError::Database("Lock poisoned on SQLite connection".to_string()))?;
 
         let mut stmt = conn
             .prepare("SELECT DISTINCT session_id FROM events ORDER BY sequence_num DESC")
@@ -713,9 +767,10 @@ impl SqliteStore {
     }
 
     pub fn get_all_events(&self) -> Result<Vec<Event>, StrataError> {
-        let conn = self.conn.lock().map_err(|_| {
-            StrataError::Database("Lock poisoned on SQLite connection".to_string())
-        })?;
+        let conn = self
+            .conn
+            .lock()
+            .map_err(|_| StrataError::Database("Lock poisoned on SQLite connection".to_string()))?;
 
         let mut stmt = conn
             .prepare(
@@ -773,9 +828,10 @@ impl SqliteStore {
                 meta_json,
             ) = row.map_err(|e| StrataError::Database(e.to_string()))?;
 
-            let id = id_str.parse::<Uuid>().map(EventId::from_uuid).map_err(|e| {
-                StrataError::Validation(format!("Invalid UUID in event id: {e}"))
-            })?;
+            let id = id_str
+                .parse::<Uuid>()
+                .map(EventId::from_uuid)
+                .map_err(|e| StrataError::Validation(format!("Invalid UUID in event id: {e}")))?;
             let timestamp = DateTime::parse_from_rfc3339(&ts_str)
                 .map(|dt| dt.with_timezone(&Utc))
                 .unwrap_or_else(|_| Utc::now());
@@ -808,9 +864,10 @@ impl SqliteStore {
     // ==========================================
 
     pub fn insert_or_update_memory(&self, memory: &MemoryRecord) -> Result<(), StrataError> {
-        let conn = self.conn.lock().map_err(|_| {
-            StrataError::Database("Lock poisoned on SQLite connection".to_string())
-        })?;
+        let conn = self
+            .conn
+            .lock()
+            .map_err(|_| StrataError::Database("Lock poisoned on SQLite connection".to_string()))?;
 
         let id_str = memory.id.to_string();
         let mem_type_str = memory.memory_type.to_string();
@@ -872,11 +929,11 @@ impl SqliteStore {
         Ok(())
     }
 
-
     pub fn get_memory(&self, id: &Uuid) -> Result<Option<MemoryRecord>, StrataError> {
-        let conn = self.conn.lock().map_err(|_| {
-            StrataError::Database("Lock poisoned on SQLite connection".to_string())
-        })?;
+        let conn = self
+            .conn
+            .lock()
+            .map_err(|_| StrataError::Database("Lock poisoned on SQLite connection".to_string()))?;
 
         let mut stmt = conn
             .prepare(
@@ -901,12 +958,16 @@ impl SqliteStore {
     }
 
     pub fn delete_memory(&self, id: &Uuid) -> Result<bool, StrataError> {
-        let conn = self.conn.lock().map_err(|_| {
-            StrataError::Database("Lock poisoned on SQLite connection".to_string())
-        })?;
+        let conn = self
+            .conn
+            .lock()
+            .map_err(|_| StrataError::Database("Lock poisoned on SQLite connection".to_string()))?;
 
         let rows = conn
-            .execute("DELETE FROM memories WHERE id = ?1", params![id.to_string()])
+            .execute(
+                "DELETE FROM memories WHERE id = ?1",
+                params![id.to_string()],
+            )
             .map_err(|e| StrataError::Database(e.to_string()))?;
 
         Ok(rows > 0)
@@ -918,14 +979,17 @@ impl SqliteStore {
         memory_types: Option<&[MemoryType]>,
         limit: usize,
     ) -> Result<Vec<MemoryRecord>, StrataError> {
-        let conn = self.conn.lock().map_err(|_| {
-            StrataError::Database("Lock poisoned on SQLite connection".to_string())
-        })?;
+        let conn = self
+            .conn
+            .lock()
+            .map_err(|_| StrataError::Database("Lock poisoned on SQLite connection".to_string()))?;
 
-        let mut query = "SELECT id, memory_type, content, summary, scope, tier, approved_by_human, importance,
+        let mut query =
+            "SELECT id, memory_type, content, summary, scope, tier, approved_by_human, importance,
                                 confidence, tags_json, created_at, updated_at, access_count,
                                 last_accessed_at, evidence_ids_json, embedding, metadata_json
-                         FROM memories WHERE 1=1".to_string();
+                         FROM memories WHERE 1=1"
+                .to_string();
 
         let mut params_vec: Vec<Box<dyn rusqlite::ToSql>> = Vec::new();
 
@@ -976,9 +1040,10 @@ impl SqliteStore {
         scope: Option<&Scope>,
         limit: usize,
     ) -> Result<Vec<(MemoryRecord, f32)>, StrataError> {
-        let conn = self.conn.lock().map_err(|_| {
-            StrataError::Database("Lock poisoned on SQLite connection".to_string())
-        })?;
+        let conn = self
+            .conn
+            .lock()
+            .map_err(|_| StrataError::Database("Lock poisoned on SQLite connection".to_string()))?;
 
         let sanitized = sanitize_fts5_query(query_text);
         if sanitized.is_empty() {
@@ -1044,9 +1109,9 @@ impl SqliteStore {
             ));
         }
 
-        let mut mem = self
-            .get_memory(id)?
-            .ok_or_else(|| StrataError::NotFound(format!("Memory record with ID '{id}' not found")))?;
+        let mut mem = self.get_memory(id)?.ok_or_else(|| {
+            StrataError::NotFound(format!("Memory record with ID '{id}' not found"))
+        })?;
 
         mem.tier = MemoryTier::Core;
         mem.approved_by_human = true;
@@ -1055,8 +1120,14 @@ impl SqliteStore {
 
         if let Some(r) = reason {
             if let serde_json::Value::Object(ref mut map) = mem.metadata {
-                map.insert("promotion_reason".to_string(), serde_json::Value::String(r.to_string()));
-                map.insert("promoted_at".to_string(), serde_json::Value::String(Utc::now().to_rfc3339()));
+                map.insert(
+                    "promotion_reason".to_string(),
+                    serde_json::Value::String(r.to_string()),
+                );
+                map.insert(
+                    "promoted_at".to_string(),
+                    serde_json::Value::String(Utc::now().to_rfc3339()),
+                );
             } else {
                 mem.metadata = serde_json::json!({
                     "promotion_reason": r,
@@ -1075,9 +1146,10 @@ impl SqliteStore {
 
     /// Archives a memory record to cold storage, removing it from active memory and FTS index.
     pub fn archive_to_cold_storage(&self, record_id: &Uuid) -> Result<bool, StrataError> {
-        let conn = self.conn.lock().map_err(|_| {
-            StrataError::Database("Lock poisoned on SQLite connection".to_string())
-        })?;
+        let conn = self
+            .conn
+            .lock()
+            .map_err(|_| StrataError::Database("Lock poisoned on SQLite connection".to_string()))?;
 
         let id_str = record_id.to_string();
         let now_str = Utc::now().to_rfc3339();
@@ -1116,7 +1188,25 @@ impl SqliteStore {
             .optional()
             .map_err(|e| StrataError::Database(e.to_string()))?;
 
-        let Some((id, m_type, content, summary, scope, tier, approved_by_human, imp, conf, tags, created, updated, count, last_acc, ev_ids, meta)) = row_opt else {
+        let Some((
+            id,
+            m_type,
+            content,
+            summary,
+            scope,
+            tier,
+            approved_by_human,
+            imp,
+            conf,
+            tags,
+            created,
+            updated,
+            count,
+            last_acc,
+            ev_ids,
+            meta,
+        )) = row_opt
+        else {
             return Ok(false);
         };
 
@@ -1152,9 +1242,10 @@ impl SqliteStore {
         scope: Option<&Scope>,
         limit: usize,
     ) -> Result<Vec<MemoryRecord>, StrataError> {
-        let conn = self.conn.lock().map_err(|_| {
-            StrataError::Database("Lock poisoned on SQLite connection".to_string())
-        })?;
+        let conn = self
+            .conn
+            .lock()
+            .map_err(|_| StrataError::Database("Lock poisoned on SQLite connection".to_string()))?;
 
         if let Some(q) = query {
             let sanitized = sanitize_fts5_query(q);
@@ -1168,9 +1259,13 @@ impl SqliteStore {
                     WHERE cold_storage_memories_fts MATCH ?1
                     LIMIT ?2
                 ";
-                let mut stmt = conn.prepare(sql).map_err(|e| StrataError::Database(e.to_string()))?;
+                let mut stmt = conn
+                    .prepare(sql)
+                    .map_err(|e| StrataError::Database(e.to_string()))?;
                 let rows = stmt
-                    .query_map(params![sanitized, limit as i64], |row| Self::row_to_memory(row))
+                    .query_map(params![sanitized, limit as i64], |row| {
+                        Self::row_to_memory(row)
+                    })
                     .map_err(|e| StrataError::Database(e.to_string()))?;
 
                 let mut results = Vec::new();
@@ -1181,10 +1276,12 @@ impl SqliteStore {
             }
         }
 
-        let mut sql = "SELECT id, memory_type, content, summary, scope, tier, approved_by_human, importance,
+        let mut sql =
+            "SELECT id, memory_type, content, summary, scope, tier, approved_by_human, importance,
                               confidence, tags_json, created_at, updated_at, access_count,
                               last_accessed_at, evidence_ids_json, NULL as embedding, metadata_json
-                       FROM cold_storage_memories WHERE 1=1".to_string();
+                       FROM cold_storage_memories WHERE 1=1"
+                .to_string();
 
         let mut params_vec: Vec<Box<dyn rusqlite::ToSql>> = Vec::new();
         if let Some(sc) = scope {
@@ -1197,8 +1294,11 @@ impl SqliteStore {
         sql.push_str(" ORDER BY archived_at DESC LIMIT ?");
         params_vec.push(Box::new(limit as i64));
 
-        let mut stmt = conn.prepare(&sql).map_err(|e| StrataError::Database(e.to_string()))?;
-        let params_slice: Vec<&dyn rusqlite::ToSql> = params_vec.iter().map(|b| b.as_ref()).collect();
+        let mut stmt = conn
+            .prepare(&sql)
+            .map_err(|e| StrataError::Database(e.to_string()))?;
+        let params_slice: Vec<&dyn rusqlite::ToSql> =
+            params_vec.iter().map(|b| b.as_ref()).collect();
 
         let rows = stmt
             .query_map(params_slice.as_slice(), |row| Self::row_to_memory(row))
@@ -1217,9 +1317,10 @@ impl SqliteStore {
         record_id: &Uuid,
         target_tier: Option<MemoryTier>,
     ) -> Result<bool, StrataError> {
-        let conn = self.conn.lock().map_err(|_| {
-            StrataError::Database("Lock poisoned on SQLite connection".to_string())
-        })?;
+        let conn = self
+            .conn
+            .lock()
+            .map_err(|_| StrataError::Database("Lock poisoned on SQLite connection".to_string()))?;
 
         let id_str = record_id.to_string();
 
@@ -1248,8 +1349,11 @@ impl SqliteStore {
 
         // 3. Delete from cold storage
         drop(stmt);
-        conn.execute("DELETE FROM cold_storage_memories WHERE id = ?1", params![id_str])
-            .map_err(|e| StrataError::Database(e.to_string()))?;
+        conn.execute(
+            "DELETE FROM cold_storage_memories WHERE id = ?1",
+            params![id_str],
+        )
+        .map_err(|e| StrataError::Database(e.to_string()))?;
 
         // 4. Insert into active memories (unlocking conn before calling insert_or_update_memory)
         drop(conn);
@@ -1260,12 +1364,15 @@ impl SqliteStore {
 
     /// Returns the total number of memories archived in cold storage.
     pub fn get_cold_storage_count(&self) -> Result<usize, StrataError> {
-        let conn = self.conn.lock().map_err(|_| {
-            StrataError::Database("Lock poisoned on SQLite connection".to_string())
-        })?;
+        let conn = self
+            .conn
+            .lock()
+            .map_err(|_| StrataError::Database("Lock poisoned on SQLite connection".to_string()))?;
 
         let count: i64 = conn
-            .query_row("SELECT COUNT(*) FROM cold_storage_memories", [], |r| r.get(0))
+            .query_row("SELECT COUNT(*) FROM cold_storage_memories", [], |r| {
+                r.get(0)
+            })
             .unwrap_or(0);
 
         Ok(count as usize)
@@ -1276,9 +1383,10 @@ impl SqliteStore {
     // ==========================================
 
     pub fn upsert_failure_pattern(&self, failure: &FailurePattern) -> Result<(), StrataError> {
-        let conn = self.conn.lock().map_err(|_| {
-            StrataError::Database("Lock poisoned on SQLite connection".to_string())
-        })?;
+        let conn = self
+            .conn
+            .lock()
+            .map_err(|_| StrataError::Database("Lock poisoned on SQLite connection".to_string()))?;
 
         let id_str = failure.id.to_string();
         let first_seen_str = failure.first_seen.to_rfc3339();
@@ -1329,9 +1437,10 @@ impl SqliteStore {
         &self,
         signature: &str,
     ) -> Result<Option<FailurePattern>, StrataError> {
-        let conn = self.conn.lock().map_err(|_| {
-            StrataError::Database("Lock poisoned on SQLite connection".to_string())
-        })?;
+        let conn = self
+            .conn
+            .lock()
+            .map_err(|_| StrataError::Database("Lock poisoned on SQLite connection".to_string()))?;
 
         let mut stmt = conn
             .prepare(
@@ -1357,9 +1466,10 @@ impl SqliteStore {
         scope: Option<&Scope>,
         limit: usize,
     ) -> Result<Vec<FailurePattern>, StrataError> {
-        let conn = self.conn.lock().map_err(|_| {
-            StrataError::Database("Lock poisoned on SQLite connection".to_string())
-        })?;
+        let conn = self
+            .conn
+            .lock()
+            .map_err(|_| StrataError::Database("Lock poisoned on SQLite connection".to_string()))?;
 
         if let Some(q) = query_text {
             let sanitized = sanitize_fts5_query(q);
@@ -1371,7 +1481,8 @@ impl SqliteStore {
                     FROM failure_patterns_fts s
                     JOIN failure_patterns f ON f.signature = s.signature
                     WHERE failure_patterns_fts MATCH ?1
-                ".to_string();
+                "
+                .to_string();
 
                 let mut params_vec: Vec<Box<dyn rusqlite::ToSql>> = Vec::new();
                 params_vec.push(Box::new(sanitized));
@@ -1414,7 +1525,8 @@ impl SqliteStore {
                    severity, scope, metadata_json
             FROM failure_patterns
             WHERE 1=1
-        ".to_string();
+        "
+        .to_string();
 
         let mut params_vec: Vec<Box<dyn rusqlite::ToSql>> = Vec::new();
 
@@ -1451,9 +1563,10 @@ impl SqliteStore {
     // ==========================================
 
     pub fn insert_episodic_memory(&self, memory: &EpisodicMemory) -> Result<(), StrataError> {
-        let conn = self.conn.lock().map_err(|_| {
-            StrataError::Database("Lock poisoned on SQLite connection".to_string())
-        })?;
+        let conn = self
+            .conn
+            .lock()
+            .map_err(|_| StrataError::Database("Lock poisoned on SQLite connection".to_string()))?;
 
         let id_str = memory.id.to_string();
         let created_at_str = memory.created_at.to_rfc3339();
@@ -1514,9 +1627,10 @@ impl SqliteStore {
     }
 
     pub fn get_episodic_memory(&self, id: &Uuid) -> Result<Option<EpisodicMemory>, StrataError> {
-        let conn = self.conn.lock().map_err(|_| {
-            StrataError::Database("Lock poisoned on SQLite connection".to_string())
-        })?;
+        let conn = self
+            .conn
+            .lock()
+            .map_err(|_| StrataError::Database("Lock poisoned on SQLite connection".to_string()))?;
 
         let mut stmt = conn
             .prepare(
@@ -1544,9 +1658,10 @@ impl SqliteStore {
         &self,
         session_id: &str,
     ) -> Result<Vec<EpisodicMemory>, StrataError> {
-        let conn = self.conn.lock().map_err(|_| {
-            StrataError::Database("Lock poisoned on SQLite connection".to_string())
-        })?;
+        let conn = self
+            .conn
+            .lock()
+            .map_err(|_| StrataError::Database("Lock poisoned on SQLite connection".to_string()))?;
 
         let mut stmt = conn
             .prepare(
@@ -1575,14 +1690,16 @@ impl SqliteStore {
         project: Option<&str>,
         limit: usize,
     ) -> Result<Vec<EpisodicMemory>, StrataError> {
-        let conn = self.conn.lock().map_err(|_| {
-            StrataError::Database("Lock poisoned on SQLite connection".to_string())
-        })?;
+        let conn = self
+            .conn
+            .lock()
+            .map_err(|_| StrataError::Database("Lock poisoned on SQLite connection".to_string()))?;
 
         let mut sql = "SELECT id, session_id, created_at, time_start, time_end, actor, project,
                               files_json, tools_used_json, summary, goals_json, obstacles_json,
                               outcomes_json, signals_json, tags_json, raw_event_ids_json
-                       FROM episodic_memories WHERE 1=1".to_string();
+                       FROM episodic_memories WHERE 1=1"
+            .to_string();
 
         let mut params_vec: Vec<Box<dyn rusqlite::ToSql>> = Vec::new();
         if let Some(p) = project {
@@ -1593,8 +1710,11 @@ impl SqliteStore {
         sql.push_str(" ORDER BY created_at DESC LIMIT ?");
         params_vec.push(Box::new(limit as i64));
 
-        let mut stmt = conn.prepare(&sql).map_err(|e| StrataError::Database(e.to_string()))?;
-        let params_slice: Vec<&dyn rusqlite::ToSql> = params_vec.iter().map(|b| b.as_ref()).collect();
+        let mut stmt = conn
+            .prepare(&sql)
+            .map_err(|e| StrataError::Database(e.to_string()))?;
+        let params_slice: Vec<&dyn rusqlite::ToSql> =
+            params_vec.iter().map(|b| b.as_ref()).collect();
 
         let rows = stmt
             .query_map(params_slice.as_slice(), |row| Self::row_to_episodic(row))
@@ -1612,9 +1732,10 @@ impl SqliteStore {
         query_text: &str,
         limit: usize,
     ) -> Result<Vec<(EpisodicMemory, f32)>, StrataError> {
-        let conn = self.conn.lock().map_err(|_| {
-            StrataError::Database("Lock poisoned on SQLite connection".to_string())
-        })?;
+        let conn = self
+            .conn
+            .lock()
+            .map_err(|_| StrataError::Database("Lock poisoned on SQLite connection".to_string()))?;
 
         let sanitized = sanitize_fts5_query(query_text);
         if sanitized.is_empty() {
@@ -1632,7 +1753,9 @@ impl SqliteStore {
             ORDER BY rank ASC LIMIT ?2
         ";
 
-        let mut stmt = conn.prepare(sql).map_err(|e| StrataError::Database(e.to_string()))?;
+        let mut stmt = conn
+            .prepare(sql)
+            .map_err(|e| StrataError::Database(e.to_string()))?;
         let rows = stmt
             .query_map(params![sanitized, limit as i64], |row| {
                 let ep = Self::row_to_episodic(row)?;
@@ -1649,11 +1772,15 @@ impl SqliteStore {
     }
 
     pub fn delete_episodic_memory(&self, id: &Uuid) -> Result<bool, StrataError> {
-        let conn = self.conn.lock().map_err(|_| {
-            StrataError::Database("Lock poisoned on SQLite connection".to_string())
-        })?;
+        let conn = self
+            .conn
+            .lock()
+            .map_err(|_| StrataError::Database("Lock poisoned on SQLite connection".to_string()))?;
         let rows = conn
-            .execute("DELETE FROM episodic_memories WHERE id = ?1", params![id.to_string()])
+            .execute(
+                "DELETE FROM episodic_memories WHERE id = ?1",
+                params![id.to_string()],
+            )
             .map_err(|e| StrataError::Database(e.to_string()))?;
         Ok(rows > 0)
     }
@@ -1664,9 +1791,10 @@ impl SqliteStore {
     // ==========================================
 
     pub fn insert_or_update_semantic_fact(&self, fact: &SemanticFact) -> Result<(), StrataError> {
-        let conn = self.conn.lock().map_err(|_| {
-            StrataError::Database("Lock poisoned on SQLite connection".to_string())
-        })?;
+        let conn = self
+            .conn
+            .lock()
+            .map_err(|_| StrataError::Database("Lock poisoned on SQLite connection".to_string()))?;
 
         let id_str = fact.id.to_string();
         let scope_str = fact.scope.to_string();
@@ -1744,11 +1872,11 @@ impl SqliteStore {
         Ok(())
     }
 
-
     pub fn get_semantic_fact(&self, id: &Uuid) -> Result<Option<SemanticFact>, StrataError> {
-        let conn = self.conn.lock().map_err(|_| {
-            StrataError::Database("Lock poisoned on SQLite connection".to_string())
-        })?;
+        let conn = self
+            .conn
+            .lock()
+            .map_err(|_| StrataError::Database("Lock poisoned on SQLite connection".to_string()))?;
 
         let mut stmt = conn
             .prepare(
@@ -1772,10 +1900,15 @@ impl SqliteStore {
         Ok(res)
     }
 
-    pub fn update_semantic_fact_embedding(&self, id: &Uuid, embedding: &[f32]) -> Result<(), StrataError> {
-        let conn = self.conn.lock().map_err(|_| {
-            StrataError::Database("Lock poisoned on SQLite connection".to_string())
-        })?;
+    pub fn update_semantic_fact_embedding(
+        &self,
+        id: &Uuid,
+        embedding: &[f32],
+    ) -> Result<(), StrataError> {
+        let conn = self
+            .conn
+            .lock()
+            .map_err(|_| StrataError::Database("Lock poisoned on SQLite connection".to_string()))?;
 
         conn.execute(
             "UPDATE semantic_facts SET embedding = ?1 WHERE id = ?2",
@@ -1792,9 +1925,10 @@ impl SqliteStore {
         status: Option<FactStatus>,
         limit: usize,
     ) -> Result<Vec<SemanticFact>, StrataError> {
-        let conn = self.conn.lock().map_err(|_| {
-            StrataError::Database("Lock poisoned on SQLite connection".to_string())
-        })?;
+        let conn = self
+            .conn
+            .lock()
+            .map_err(|_| StrataError::Database("Lock poisoned on SQLite connection".to_string()))?;
 
         let mut sql = "SELECT id, project, scope, statement, category, evidence_json,
                               importance, confidence, tier, approved_by_human, created_at, last_updated_at, status,
@@ -1816,8 +1950,11 @@ impl SqliteStore {
         sql.push_str(" ORDER BY last_updated_at DESC LIMIT ?");
         params_vec.push(Box::new(limit as i64));
 
-        let mut stmt = conn.prepare(&sql).map_err(|e| StrataError::Database(e.to_string()))?;
-        let params_slice: Vec<&dyn rusqlite::ToSql> = params_vec.iter().map(|b| b.as_ref()).collect();
+        let mut stmt = conn
+            .prepare(&sql)
+            .map_err(|e| StrataError::Database(e.to_string()))?;
+        let params_slice: Vec<&dyn rusqlite::ToSql> =
+            params_vec.iter().map(|b| b.as_ref()).collect();
 
         let rows = stmt
             .query_map(params_slice.as_slice(), |row| Self::row_to_fact(row))
@@ -1835,9 +1972,10 @@ impl SqliteStore {
         project: Option<&str>,
         status: Option<FactStatus>,
     ) -> Result<Vec<(SemanticFact, Option<Vec<f32>>)>, StrataError> {
-        let conn = self.conn.lock().map_err(|_| {
-            StrataError::Database("Lock poisoned on SQLite connection".to_string())
-        })?;
+        let conn = self
+            .conn
+            .lock()
+            .map_err(|_| StrataError::Database("Lock poisoned on SQLite connection".to_string()))?;
 
         let mut sql = "SELECT id, project, scope, statement, category, evidence_json,
                               importance, confidence, tier, approved_by_human, created_at, last_updated_at, status,
@@ -1856,8 +1994,11 @@ impl SqliteStore {
             params_vec.push(Box::new(st.to_string()));
         }
 
-        let mut stmt = conn.prepare(&sql).map_err(|e| StrataError::Database(e.to_string()))?;
-        let params_slice: Vec<&dyn rusqlite::ToSql> = params_vec.iter().map(|b| b.as_ref()).collect();
+        let mut stmt = conn
+            .prepare(&sql)
+            .map_err(|e| StrataError::Database(e.to_string()))?;
+        let params_slice: Vec<&dyn rusqlite::ToSql> =
+            params_vec.iter().map(|b| b.as_ref()).collect();
 
         let rows = stmt
             .query_map(params_slice.as_slice(), |row| {
@@ -1880,9 +2021,10 @@ impl SqliteStore {
         query_text: &str,
         limit: usize,
     ) -> Result<Vec<(SemanticFact, f32)>, StrataError> {
-        let conn = self.conn.lock().map_err(|_| {
-            StrataError::Database("Lock poisoned on SQLite connection".to_string())
-        })?;
+        let conn = self
+            .conn
+            .lock()
+            .map_err(|_| StrataError::Database("Lock poisoned on SQLite connection".to_string()))?;
 
         let sanitized = sanitize_fts5_query(query_text);
         if sanitized.is_empty() {
@@ -1900,7 +2042,9 @@ impl SqliteStore {
             ORDER BY rank ASC LIMIT ?2
         ";
 
-        let mut stmt = conn.prepare(sql).map_err(|e| StrataError::Database(e.to_string()))?;
+        let mut stmt = conn
+            .prepare(sql)
+            .map_err(|e| StrataError::Database(e.to_string()))?;
         let rows = stmt
             .query_map(params![sanitized, limit as i64], |row| {
                 let fact = Self::row_to_fact(row)?;
@@ -1921,9 +2065,10 @@ impl SqliteStore {
     // ==========================================
 
     pub fn insert_jtms_audit(&self, audit: &JtmsAuditRow) -> Result<(), StrataError> {
-        let conn = self.conn.lock().map_err(|_| {
-            StrataError::Database("Lock poisoned on SQLite connection".to_string())
-        })?;
+        let conn = self
+            .conn
+            .lock()
+            .map_err(|_| StrataError::Database("Lock poisoned on SQLite connection".to_string()))?;
 
         let id_str = audit.id.to_string();
         let winning_str = audit.winning_fact_id.to_string();
@@ -1963,10 +2108,14 @@ impl SqliteStore {
         Ok(())
     }
 
-    pub fn get_jtms_audits_for_fact(&self, fact_id: &Uuid) -> Result<Vec<JtmsAuditRow>, StrataError> {
-        let conn = self.conn.lock().map_err(|_| {
-            StrataError::Database("Lock poisoned on SQLite connection".to_string())
-        })?;
+    pub fn get_jtms_audits_for_fact(
+        &self,
+        fact_id: &Uuid,
+    ) -> Result<Vec<JtmsAuditRow>, StrataError> {
+        let conn = self
+            .conn
+            .lock()
+            .map_err(|_| StrataError::Database("Lock poisoned on SQLite connection".to_string()))?;
 
         let fact_str = fact_id.to_string();
         let mut stmt = conn
@@ -1991,9 +2140,10 @@ impl SqliteStore {
     }
 
     pub fn get_all_jtms_audits(&self, limit: usize) -> Result<Vec<JtmsAuditRow>, StrataError> {
-        let conn = self.conn.lock().map_err(|_| {
-            StrataError::Database("Lock poisoned on SQLite connection".to_string())
-        })?;
+        let conn = self
+            .conn
+            .lock()
+            .map_err(|_| StrataError::Database("Lock poisoned on SQLite connection".to_string()))?;
 
         let mut stmt = conn
             .prepare(
@@ -2017,9 +2167,10 @@ impl SqliteStore {
     }
 
     pub fn add_fact_dependency(&self, dep: &FactDependency) -> Result<(), StrataError> {
-        let conn = self.conn.lock().map_err(|_| {
-            StrataError::Database("Lock poisoned on SQLite connection".to_string())
-        })?;
+        let conn = self
+            .conn
+            .lock()
+            .map_err(|_| StrataError::Database("Lock poisoned on SQLite connection".to_string()))?;
 
         let id_str = dep.id.to_string();
         let dep_fact_str = dep.dependent_fact_id.to_string();
@@ -2040,14 +2191,20 @@ impl SqliteStore {
         Ok(())
     }
 
-    pub fn get_downstream_dependent_fact_ids(&self, prerequisite_id: &Uuid) -> Result<Vec<Uuid>, StrataError> {
-        let conn = self.conn.lock().map_err(|_| {
-            StrataError::Database("Lock poisoned on SQLite connection".to_string())
-        })?;
+    pub fn get_downstream_dependent_fact_ids(
+        &self,
+        prerequisite_id: &Uuid,
+    ) -> Result<Vec<Uuid>, StrataError> {
+        let conn = self
+            .conn
+            .lock()
+            .map_err(|_| StrataError::Database("Lock poisoned on SQLite connection".to_string()))?;
 
         let prereq_str = prerequisite_id.to_string();
         let mut stmt = conn
-            .prepare("SELECT dependent_fact_id FROM fact_dependencies WHERE prerequisite_fact_id = ?1")
+            .prepare(
+                "SELECT dependent_fact_id FROM fact_dependencies WHERE prerequisite_fact_id = ?1",
+            )
             .map_err(|e| StrataError::Database(e.to_string()))?;
 
         let rows = stmt
@@ -2064,14 +2221,20 @@ impl SqliteStore {
         Ok(results)
     }
 
-    pub fn get_upstream_prerequisite_fact_ids(&self, dependent_id: &Uuid) -> Result<Vec<Uuid>, StrataError> {
-        let conn = self.conn.lock().map_err(|_| {
-            StrataError::Database("Lock poisoned on SQLite connection".to_string())
-        })?;
+    pub fn get_upstream_prerequisite_fact_ids(
+        &self,
+        dependent_id: &Uuid,
+    ) -> Result<Vec<Uuid>, StrataError> {
+        let conn = self
+            .conn
+            .lock()
+            .map_err(|_| StrataError::Database("Lock poisoned on SQLite connection".to_string()))?;
 
         let dep_str = dependent_id.to_string();
         let mut stmt = conn
-            .prepare("SELECT prerequisite_fact_id FROM fact_dependencies WHERE dependent_fact_id = ?1")
+            .prepare(
+                "SELECT prerequisite_fact_id FROM fact_dependencies WHERE dependent_fact_id = ?1",
+            )
             .map_err(|e| StrataError::Database(e.to_string()))?;
 
         let rows = stmt
@@ -2102,9 +2265,9 @@ impl SqliteStore {
             ));
         }
 
-        let mut fact = self
-            .get_semantic_fact(id)?
-            .ok_or_else(|| StrataError::NotFound(format!("Semantic fact with ID '{id}' not found")))?;
+        let mut fact = self.get_semantic_fact(id)?.ok_or_else(|| {
+            StrataError::NotFound(format!("Semantic fact with ID '{id}' not found"))
+        })?;
 
         fact.tier = MemoryTier::Core;
         fact.approved_by_human = true;
@@ -2119,7 +2282,10 @@ impl SqliteStore {
         Ok(fact)
     }
 
-    pub fn get_facts_by_file_anchor(&self, file_path: &str) -> Result<Vec<SemanticFact>, StrataError> {
+    pub fn get_facts_by_file_anchor(
+        &self,
+        file_path: &str,
+    ) -> Result<Vec<SemanticFact>, StrataError> {
         let all_facts = self.get_all_semantic_facts(None, None, 1000)?;
         Ok(all_facts
             .into_iter()
@@ -2133,11 +2299,15 @@ impl SqliteStore {
     }
 
     pub fn delete_semantic_fact(&self, id: &Uuid) -> Result<bool, StrataError> {
-        let conn = self.conn.lock().map_err(|_| {
-            StrataError::Database("Lock poisoned on SQLite connection".to_string())
-        })?;
+        let conn = self
+            .conn
+            .lock()
+            .map_err(|_| StrataError::Database("Lock poisoned on SQLite connection".to_string()))?;
         let rows = conn
-            .execute("DELETE FROM semantic_facts WHERE id = ?1", params![id.to_string()])
+            .execute(
+                "DELETE FROM semantic_facts WHERE id = ?1",
+                params![id.to_string()],
+            )
             .map_err(|e| StrataError::Database(e.to_string()))?;
         Ok(rows > 0)
     }
@@ -2146,10 +2316,14 @@ impl SqliteStore {
     // Procedural Skills CRUD
     // ==========================================
 
-    pub fn insert_or_update_procedural_skill(&self, skill: &ProceduralSkill) -> Result<(), StrataError> {
-        let conn = self.conn.lock().map_err(|_| {
-            StrataError::Database("Lock poisoned on SQLite connection".to_string())
-        })?;
+    pub fn insert_or_update_procedural_skill(
+        &self,
+        skill: &ProceduralSkill,
+    ) -> Result<(), StrataError> {
+        let conn = self
+            .conn
+            .lock()
+            .map_err(|_| StrataError::Database("Lock poisoned on SQLite connection".to_string()))?;
 
         let id_str = skill.id.to_string();
         let preconditions_json = serde_json::to_string(&skill.preconditions)?;
@@ -2206,9 +2380,10 @@ impl SqliteStore {
     }
 
     pub fn get_procedural_skill(&self, id: &Uuid) -> Result<Option<ProceduralSkill>, StrataError> {
-        let conn = self.conn.lock().map_err(|_| {
-            StrataError::Database("Lock poisoned on SQLite connection".to_string())
-        })?;
+        let conn = self
+            .conn
+            .lock()
+            .map_err(|_| StrataError::Database("Lock poisoned on SQLite connection".to_string()))?;
 
         let mut stmt = conn
             .prepare(
@@ -2233,10 +2408,14 @@ impl SqliteStore {
         Ok(res)
     }
 
-    pub fn get_procedural_skill_by_name(&self, name: &str) -> Result<Option<ProceduralSkill>, StrataError> {
-        let conn = self.conn.lock().map_err(|_| {
-            StrataError::Database("Lock poisoned on SQLite connection".to_string())
-        })?;
+    pub fn get_procedural_skill_by_name(
+        &self,
+        name: &str,
+    ) -> Result<Option<ProceduralSkill>, StrataError> {
+        let conn = self
+            .conn
+            .lock()
+            .map_err(|_| StrataError::Database("Lock poisoned on SQLite connection".to_string()))?;
 
         let mut stmt = conn
             .prepare(
@@ -2261,10 +2440,15 @@ impl SqliteStore {
         Ok(res)
     }
 
-    pub fn update_procedural_skill_embedding(&self, id: &Uuid, embedding: &[f32]) -> Result<(), StrataError> {
-        let conn = self.conn.lock().map_err(|_| {
-            StrataError::Database("Lock poisoned on SQLite connection".to_string())
-        })?;
+    pub fn update_procedural_skill_embedding(
+        &self,
+        id: &Uuid,
+        embedding: &[f32],
+    ) -> Result<(), StrataError> {
+        let conn = self
+            .conn
+            .lock()
+            .map_err(|_| StrataError::Database("Lock poisoned on SQLite connection".to_string()))?;
         let blob = embedding_to_bytes(embedding);
         conn.execute(
             "UPDATE procedural_skills SET embedding = ?1 WHERE id = ?2",
@@ -2279,15 +2463,17 @@ impl SqliteStore {
         project: Option<&str>,
         limit: usize,
     ) -> Result<Vec<ProceduralSkill>, StrataError> {
-        let conn = self.conn.lock().map_err(|_| {
-            StrataError::Database("Lock poisoned on SQLite connection".to_string())
-        })?;
+        let conn = self
+            .conn
+            .lock()
+            .map_err(|_| StrataError::Database("Lock poisoned on SQLite connection".to_string()))?;
 
         let mut sql = "SELECT id, name, project, description, preconditions_json,
                               postconditions_json, parameters_json, steps_json, examples_json,
                               success_rate, importance, created_at, last_used_at, usage_count,
                               tags_json
-                       FROM procedural_skills WHERE 1=1".to_string();
+                       FROM procedural_skills WHERE 1=1"
+            .to_string();
 
         let mut params_vec: Vec<Box<dyn rusqlite::ToSql>> = Vec::new();
 
@@ -2299,8 +2485,11 @@ impl SqliteStore {
         sql.push_str(" ORDER BY usage_count DESC, created_at DESC LIMIT ?");
         params_vec.push(Box::new(limit as i64));
 
-        let mut stmt = conn.prepare(&sql).map_err(|e| StrataError::Database(e.to_string()))?;
-        let params_slice: Vec<&dyn rusqlite::ToSql> = params_vec.iter().map(|b| b.as_ref()).collect();
+        let mut stmt = conn
+            .prepare(&sql)
+            .map_err(|e| StrataError::Database(e.to_string()))?;
+        let params_slice: Vec<&dyn rusqlite::ToSql> =
+            params_vec.iter().map(|b| b.as_ref()).collect();
 
         let rows = stmt
             .query_map(params_slice.as_slice(), |row| Self::row_to_skill(row))
@@ -2318,9 +2507,10 @@ impl SqliteStore {
         query_text: &str,
         limit: usize,
     ) -> Result<Vec<(ProceduralSkill, f32)>, StrataError> {
-        let conn = self.conn.lock().map_err(|_| {
-            StrataError::Database("Lock poisoned on SQLite connection".to_string())
-        })?;
+        let conn = self
+            .conn
+            .lock()
+            .map_err(|_| StrataError::Database("Lock poisoned on SQLite connection".to_string()))?;
 
         let sanitized = sanitize_fts5_query(query_text);
         if sanitized.is_empty() {
@@ -2339,7 +2529,9 @@ impl SqliteStore {
             ORDER BY rank ASC LIMIT ?2
         ";
 
-        let mut stmt = conn.prepare(sql).map_err(|e| StrataError::Database(e.to_string()))?;
+        let mut stmt = conn
+            .prepare(sql)
+            .map_err(|e| StrataError::Database(e.to_string()))?;
         let rows = stmt
             .query_map(params![sanitized, limit as i64], |row| {
                 let skill = Self::row_to_skill(row)?;
@@ -2356,11 +2548,15 @@ impl SqliteStore {
     }
 
     pub fn delete_procedural_skill(&self, id: &Uuid) -> Result<bool, StrataError> {
-        let conn = self.conn.lock().map_err(|_| {
-            StrataError::Database("Lock poisoned on SQLite connection".to_string())
-        })?;
+        let conn = self
+            .conn
+            .lock()
+            .map_err(|_| StrataError::Database("Lock poisoned on SQLite connection".to_string()))?;
         let rows = conn
-            .execute("DELETE FROM procedural_skills WHERE id = ?1", params![id.to_string()])
+            .execute(
+                "DELETE FROM procedural_skills WHERE id = ?1",
+                params![id.to_string()],
+            )
             .map_err(|e| StrataError::Database(e.to_string()))?;
         Ok(rows > 0)
     }
@@ -2384,17 +2580,26 @@ impl SqliteStore {
         Ok(())
     }
 
-    pub fn record_memory_access(&self, memory_id: &Uuid, accessed_at: DateTime<Utc>) -> Result<(), StrataError> {
-        let conn = self.conn.lock().map_err(|_| {
-            StrataError::Database("Lock poisoned on SQLite connection".to_string())
-        })?;
+    pub fn record_memory_access(
+        &self,
+        memory_id: &Uuid,
+        accessed_at: DateTime<Utc>,
+    ) -> Result<(), StrataError> {
+        let conn = self
+            .conn
+            .lock()
+            .map_err(|_| StrataError::Database("Lock poisoned on SQLite connection".to_string()))?;
         self.record_memory_access_internal(&conn, memory_id, accessed_at)
     }
 
-    pub fn get_memory_access_logs(&self, memory_id: &Uuid) -> Result<Vec<DateTime<Utc>>, StrataError> {
-        let conn = self.conn.lock().map_err(|_| {
-            StrataError::Database("Lock poisoned on SQLite connection".to_string())
-        })?;
+    pub fn get_memory_access_logs(
+        &self,
+        memory_id: &Uuid,
+    ) -> Result<Vec<DateTime<Utc>>, StrataError> {
+        let conn = self
+            .conn
+            .lock()
+            .map_err(|_| StrataError::Database("Lock poisoned on SQLite connection".to_string()))?;
 
         let mut stmt = conn
             .prepare("SELECT accessed_at FROM memory_access_logs WHERE memory_id = ?1 ORDER BY accessed_at ASC")
@@ -2418,9 +2623,10 @@ impl SqliteStore {
     }
 
     pub fn get_memory_access_count(&self, memory_id: &Uuid) -> Result<u64, StrataError> {
-        let conn = self.conn.lock().map_err(|_| {
-            StrataError::Database("Lock poisoned on SQLite connection".to_string())
-        })?;
+        let conn = self
+            .conn
+            .lock()
+            .map_err(|_| StrataError::Database("Lock poisoned on SQLite connection".to_string()))?;
 
         let mut stmt = conn
             .prepare("SELECT COUNT(*) FROM memory_access_logs WHERE memory_id = ?1")
@@ -2631,8 +2837,12 @@ impl SqliteStore {
         let code_anchor_json: Option<String> = row.get(16).ok().flatten();
 
         let id = Uuid::parse_str(&id_str).map_err(|_| rusqlite::Error::InvalidQuery)?;
-        let scope = scope_str.parse::<Scope>().map_err(|_| rusqlite::Error::InvalidQuery)?;
-        let tier = tier_str.parse::<MemoryTier>().unwrap_or(MemoryTier::Peripheral);
+        let scope = scope_str
+            .parse::<Scope>()
+            .map_err(|_| rusqlite::Error::InvalidQuery)?;
+        let tier = tier_str
+            .parse::<MemoryTier>()
+            .unwrap_or(MemoryTier::Peripheral);
         let approved_by_human = approved_by_human_int != 0;
         let evidence: Vec<EvidenceRef> = serde_json::from_str(&evidence_json).unwrap_or_default();
         let created_at = DateTime::parse_from_rfc3339(&created_at_str)
@@ -2641,10 +2851,13 @@ impl SqliteStore {
         let last_updated_at = DateTime::parse_from_rfc3339(&updated_at_str)
             .map(|dt| dt.with_timezone(&Utc))
             .unwrap_or_else(|_| Utc::now());
-        let status = status_str.parse::<FactStatus>().map_err(|_| rusqlite::Error::InvalidQuery)?;
+        let status = status_str
+            .parse::<FactStatus>()
+            .map_err(|_| rusqlite::Error::InvalidQuery)?;
         let replaced_by = replaced_str.and_then(|s| Uuid::parse_str(&s).ok());
         let tags: Vec<String> = serde_json::from_str(&tags_json).unwrap_or_default();
-        let code_anchor: Option<CodeAnchor> = code_anchor_json.and_then(|s| serde_json::from_str(&s).ok());
+        let code_anchor: Option<CodeAnchor> =
+            code_anchor_json.and_then(|s| serde_json::from_str(&s).ok());
         let depends_on_json: String = row.get(17).unwrap_or_else(|_| "[]".to_string());
         let depends_on: Vec<Uuid> = serde_json::from_str(&depends_on_json).unwrap_or_default();
 
@@ -2682,8 +2895,10 @@ impl SqliteStore {
         let meta_json: String = row.get(8)?;
 
         let id = Uuid::parse_str(&id_str).map_err(|_| rusqlite::Error::InvalidQuery)?;
-        let winning_fact_id = Uuid::parse_str(&winning_str).map_err(|_| rusqlite::Error::InvalidQuery)?;
-        let losing_fact_id = Uuid::parse_str(&losing_str).map_err(|_| rusqlite::Error::InvalidQuery)?;
+        let winning_fact_id =
+            Uuid::parse_str(&winning_str).map_err(|_| rusqlite::Error::InvalidQuery)?;
+        let losing_fact_id =
+            Uuid::parse_str(&losing_str).map_err(|_| rusqlite::Error::InvalidQuery)?;
         let contradiction_cues: Vec<String> = serde_json::from_str(&cues_json).unwrap_or_default();
         let timestamp = DateTime::parse_from_rfc3339(&ts_str)
             .map(|dt| dt.with_timezone(&Utc))
@@ -2721,11 +2936,14 @@ impl SqliteStore {
         let tags_json: String = row.get(14)?;
 
         let id = Uuid::parse_str(&id_str).map_err(|_| rusqlite::Error::InvalidQuery)?;
-        let preconditions: Vec<String> = serde_json::from_str(&preconditions_json).unwrap_or_default();
-        let postconditions: Vec<String> = serde_json::from_str(&postconditions_json).unwrap_or_default();
+        let preconditions: Vec<String> =
+            serde_json::from_str(&preconditions_json).unwrap_or_default();
+        let postconditions: Vec<String> =
+            serde_json::from_str(&postconditions_json).unwrap_or_default();
         let parameters: Vec<ParameterDef> = serde_json::from_str(&params_json).unwrap_or_default();
         let steps: Vec<ProceduralStep> = serde_json::from_str(&steps_json).unwrap_or_default();
-        let examples: Vec<ProceduralExample> = serde_json::from_str(&examples_json).unwrap_or_default();
+        let examples: Vec<ProceduralExample> =
+            serde_json::from_str(&examples_json).unwrap_or_default();
         let created_at = DateTime::parse_from_rfc3339(&created_at_str)
             .map(|dt| dt.with_timezone(&Utc))
             .unwrap_or_else(|_| Utc::now());
@@ -2749,7 +2967,7 @@ impl SqliteStore {
             created_at,
             last_used_at,
             usage_count: usage_count as u32,
-        tags,
+            tags,
         })
     }
 
@@ -2759,9 +2977,10 @@ impl SqliteStore {
 
     /// Enqueue a change data capture (CDC) delta into the sync outbox.
     pub fn enqueue_delta(&self, delta: &SyncDelta) -> Result<(), StrataError> {
-        let conn = self.conn.lock().map_err(|_| {
-            StrataError::Database("Lock poisoned on SQLite connection".to_string())
-        })?;
+        let conn = self
+            .conn
+            .lock()
+            .map_err(|_| StrataError::Database("Lock poisoned on SQLite connection".to_string()))?;
 
         let id_str = delta.id.to_string();
         let ts_str = delta.ts.to_rfc3339();
@@ -2797,10 +3016,15 @@ impl SqliteStore {
     }
 
     /// Retrieve pending (unsynced) deltas eligible for transmission.
-    pub fn get_pending_deltas(&self, workspace_id: &str, limit: usize) -> Result<Vec<SyncDelta>, StrataError> {
-        let conn = self.conn.lock().map_err(|_| {
-            StrataError::Database("Lock poisoned on SQLite connection".to_string())
-        })?;
+    pub fn get_pending_deltas(
+        &self,
+        workspace_id: &str,
+        limit: usize,
+    ) -> Result<Vec<SyncDelta>, StrataError> {
+        let conn = self
+            .conn
+            .lock()
+            .map_err(|_| StrataError::Database("Lock poisoned on SQLite connection".to_string()))?;
 
         let now_str = Utc::now().to_rfc3339();
         let mut stmt = conn
@@ -2824,7 +3048,16 @@ impl SqliteStore {
                 let version_hash: String = row.get(6)?;
                 let synced_int: i64 = row.get(7)?;
 
-                Ok((id_str, ws_id, seq, ts_str, kind, payload_json, version_hash, synced_int))
+                Ok((
+                    id_str,
+                    ws_id,
+                    seq,
+                    ts_str,
+                    kind,
+                    payload_json,
+                    version_hash,
+                    synced_int,
+                ))
             })
             .map_err(|e| StrataError::Database(e.to_string()))?;
 
@@ -2832,8 +3065,9 @@ impl SqliteStore {
         for r in rows {
             let (id_str, ws_id, seq, ts_str, kind, payload_json, version_hash, synced_int) =
                 r.map_err(|e| StrataError::Database(e.to_string()))?;
-            let id = Uuid::parse_str(&id_str)
-                .map_err(|e| StrataError::Validation(format!("Invalid UUID in sync delta id: {e}")))?;
+            let id = Uuid::parse_str(&id_str).map_err(|e| {
+                StrataError::Validation(format!("Invalid UUID in sync delta id: {e}"))
+            })?;
             let ts = DateTime::parse_from_rfc3339(&ts_str)
                 .map(|dt| dt.with_timezone(&Utc))
                 .unwrap_or_else(|_| Utc::now());
@@ -2860,9 +3094,10 @@ impl SqliteStore {
             return Ok(());
         }
 
-        let mut conn = self.conn.lock().map_err(|_| {
-            StrataError::Database("Lock poisoned on SQLite connection".to_string())
-        })?;
+        let mut conn = self
+            .conn
+            .lock()
+            .map_err(|_| StrataError::Database("Lock poisoned on SQLite connection".to_string()))?;
 
         let tx = conn
             .transaction()
@@ -2874,26 +3109,33 @@ impl SqliteStore {
                 .map_err(|e| StrataError::Database(e.to_string()))?;
 
             for id in delta_ids {
-                stmt.execute(params![id.to_string()])
-                    .map_err(|e| StrataError::Database(format!("Failed to mark delta synced: {e}")))?;
+                stmt.execute(params![id.to_string()]).map_err(|e| {
+                    StrataError::Database(format!("Failed to mark delta synced: {e}"))
+                })?;
             }
         }
 
-        tx.commit()
-            .map_err(|e| StrataError::Database(format!("Failed to commit mark_deltas_synced: {e}")))?;
+        tx.commit().map_err(|e| {
+            StrataError::Database(format!("Failed to commit mark_deltas_synced: {e}"))
+        })?;
 
         Ok(())
     }
 
     /// Record a failure for a batch of deltas, incrementing retry count and calculating exponential backoff.
-    pub fn record_delta_failure(&self, delta_ids: &[Uuid], err_msg: &str) -> Result<(), StrataError> {
+    pub fn record_delta_failure(
+        &self,
+        delta_ids: &[Uuid],
+        err_msg: &str,
+    ) -> Result<(), StrataError> {
         if delta_ids.is_empty() {
             return Ok(());
         }
 
-        let mut conn = self.conn.lock().map_err(|_| {
-            StrataError::Database("Lock poisoned on SQLite connection".to_string())
-        })?;
+        let mut conn = self
+            .conn
+            .lock()
+            .map_err(|_| StrataError::Database("Lock poisoned on SQLite connection".to_string()))?;
 
         let tx = conn
             .transaction()
@@ -2905,7 +3147,9 @@ impl SqliteStore {
                 .map_err(|e| StrataError::Database(e.to_string()))?;
 
             let mut update_stmt = tx
-                .prepare("UPDATE sync_outbox SET retry_count = ?1, next_retry_ts = ?2 WHERE id = ?3")
+                .prepare(
+                    "UPDATE sync_outbox SET retry_count = ?1, next_retry_ts = ?2 WHERE id = ?3",
+                )
                 .map_err(|e| StrataError::Database(e.to_string()))?;
 
             for id in delta_ids {
@@ -2916,26 +3160,36 @@ impl SqliteStore {
 
                 let next_count = retry_count + 1;
                 let backoff_secs = (0.5 * (2_f64.powi(next_count.min(10) as i32))).min(300.0);
-                let next_retry_ts = (Utc::now() + chrono::Duration::milliseconds((backoff_secs * 1000.0) as i64)).to_rfc3339();
+                let next_retry_ts = (Utc::now()
+                    + chrono::Duration::milliseconds((backoff_secs * 1000.0) as i64))
+                .to_rfc3339();
 
                 update_stmt
                     .execute(params![next_count, next_retry_ts, &id_str])
-                    .map_err(|e| StrataError::Database(format!("Failed to update delta failure: {e}")))?;
+                    .map_err(|e| {
+                        StrataError::Database(format!("Failed to update delta failure: {e}"))
+                    })?;
             }
         }
 
-        tx.commit()
-            .map_err(|e| StrataError::Database(format!("Failed to commit record_delta_failure: {e}")))?;
+        tx.commit().map_err(|e| {
+            StrataError::Database(format!("Failed to commit record_delta_failure: {e}"))
+        })?;
 
-        tracing::warn!("Recorded sync delta failure for {} deltas: {}", delta_ids.len(), err_msg);
+        tracing::warn!(
+            "Recorded sync delta failure for {} deltas: {}",
+            delta_ids.len(),
+            err_msg
+        );
         Ok(())
     }
 
     /// Retrieve sync status (pending unsynced deltas count, highest local sequence number).
     pub fn get_sync_status(&self, workspace_id: &str) -> Result<(usize, u64), StrataError> {
-        let conn = self.conn.lock().map_err(|_| {
-            StrataError::Database("Lock poisoned on SQLite connection".to_string())
-        })?;
+        let conn = self
+            .conn
+            .lock()
+            .map_err(|_| StrataError::Database("Lock poisoned on SQLite connection".to_string()))?;
 
         let pending_count: i64 = conn
             .query_row(
@@ -2958,9 +3212,10 @@ impl SqliteStore {
 
     /// Record explicit feedback on a memory, adjusting importance and confidence, and recording an access log.
     pub fn record_memory_feedback(&self, feedback: &MemoryFeedback) -> Result<(), StrataError> {
-        let conn = self.conn.lock().map_err(|_| {
-            StrataError::Database("Lock poisoned on SQLite connection".to_string())
-        })?;
+        let conn = self
+            .conn
+            .lock()
+            .map_err(|_| StrataError::Database("Lock poisoned on SQLite connection".to_string()))?;
 
         // 1. Record access log
         self.record_memory_access_internal(&conn, &feedback.memory_id, feedback.created_at)?;
@@ -2973,7 +3228,6 @@ impl SqliteStore {
             "negative" => -0.1 * effective_score,
             _ => 0.0,
         };
-
 
         let now_str = feedback.created_at.to_rfc3339();
         let mem_id_str = feedback.memory_id.to_string();
@@ -3000,7 +3254,9 @@ impl SqliteStore {
              WHERE id = ?3",
             params![adj_delta, now_str, mem_id_str],
         )
-        .map_err(|e| StrataError::Database(format!("Failed to update semantic fact feedback: {e}")))?;
+        .map_err(|e| {
+            StrataError::Database(format!("Failed to update semantic fact feedback: {e}"))
+        })?;
 
         // 5. Update procedural_skills table if present
         conn.execute(
@@ -3010,7 +3266,9 @@ impl SqliteStore {
              WHERE id = ?3",
             params![adj_delta, now_str, mem_id_str],
         )
-        .map_err(|e| StrataError::Database(format!("Failed to update procedural skill feedback: {e}")))?;
+        .map_err(|e| {
+            StrataError::Database(format!("Failed to update procedural skill feedback: {e}"))
+        })?;
 
         // 6. Record FeedbackEvent in feedback_events table
         let rating_enum = match feedback.rating.as_str() {
@@ -3038,9 +3296,10 @@ impl SqliteStore {
 
     /// Retrieve value from sync_metadata table.
     pub fn get_sync_metadata(&self, key: &str) -> Result<Option<String>, StrataError> {
-        let conn = self.conn.lock().map_err(|_| {
-            StrataError::Database("Lock poisoned on SQLite connection".to_string())
-        })?;
+        let conn = self
+            .conn
+            .lock()
+            .map_err(|_| StrataError::Database("Lock poisoned on SQLite connection".to_string()))?;
 
         let mut stmt = conn
             .prepare("SELECT value FROM sync_metadata WHERE key = ?1")
@@ -3056,9 +3315,10 @@ impl SqliteStore {
 
     /// Store key-value pair in sync_metadata table.
     pub fn set_sync_metadata(&self, key: &str, value: &str) -> Result<(), StrataError> {
-        let conn = self.conn.lock().map_err(|_| {
-            StrataError::Database("Lock poisoned on SQLite connection".to_string())
-        })?;
+        let conn = self
+            .conn
+            .lock()
+            .map_err(|_| StrataError::Database("Lock poisoned on SQLite connection".to_string()))?;
 
         conn.execute(
             "INSERT INTO sync_metadata (key, value) VALUES (?1, ?2)
@@ -3076,9 +3336,10 @@ impl SqliteStore {
 
     /// Record an implicit behavioural signal.
     pub fn record_implicit_signal(&self, signal: &ImplicitSignal) -> Result<(), StrataError> {
-        let conn = self.conn.lock().map_err(|_| {
-            StrataError::Database("Lock poisoned on SQLite connection".to_string())
-        })?;
+        let conn = self
+            .conn
+            .lock()
+            .map_err(|_| StrataError::Database("Lock poisoned on SQLite connection".to_string()))?;
 
         let id_str = signal.id.to_string();
         let kind_str = signal.kind.to_string();
@@ -3109,14 +3370,16 @@ impl SqliteStore {
         &self,
         session_id: Option<&str>,
     ) -> Result<Vec<ImplicitSignal>, StrataError> {
-        let conn = self.conn.lock().map_err(|_| {
-            StrataError::Database("Lock poisoned on SQLite connection".to_string())
-        })?;
+        let conn = self
+            .conn
+            .lock()
+            .map_err(|_| StrataError::Database("Lock poisoned on SQLite connection".to_string()))?;
 
         let mut sql = "
             SELECT id, kind, session_id, agent_id, tool_name, file_path, extra, created_at
             FROM implicit_signals
-        ".to_string();
+        "
+        .to_string();
 
         if session_id.is_some() {
             sql.push_str(" WHERE session_id = ?1 ORDER BY created_at ASC");
@@ -3179,9 +3442,10 @@ impl SqliteStore {
 
     /// Record a feedback event and adjust associated memory weights if applicable.
     pub fn record_feedback_event(&self, feedback: &FeedbackEvent) -> Result<(), StrataError> {
-        let conn = self.conn.lock().map_err(|_| {
-            StrataError::Database("Lock poisoned on SQLite connection".to_string())
-        })?;
+        let conn = self
+            .conn
+            .lock()
+            .map_err(|_| StrataError::Database("Lock poisoned on SQLite connection".to_string()))?;
 
         let id_str = feedback.id.to_string();
         let mem_id_str = feedback.memory_id.map(|u| u.to_string());
@@ -3248,9 +3512,10 @@ impl SqliteStore {
         &self,
         memory_id: &Uuid,
     ) -> Result<Vec<FeedbackEvent>, StrataError> {
-        let conn = self.conn.lock().map_err(|_| {
-            StrataError::Database("Lock poisoned on SQLite connection".to_string())
-        })?;
+        let conn = self
+            .conn
+            .lock()
+            .map_err(|_| StrataError::Database("Lock poisoned on SQLite connection".to_string()))?;
 
         let mut stmt = conn
             .prepare(
@@ -3278,14 +3543,16 @@ impl SqliteStore {
         &self,
         session_id: Option<&str>,
     ) -> Result<Vec<FeedbackEvent>, StrataError> {
-        let conn = self.conn.lock().map_err(|_| {
-            StrataError::Database("Lock poisoned on SQLite connection".to_string())
-        })?;
+        let conn = self
+            .conn
+            .lock()
+            .map_err(|_| StrataError::Database("Lock poisoned on SQLite connection".to_string()))?;
 
         let mut sql = "
             SELECT f.id, f.memory_id, f.signal_id, f.rating, f.comment, f.created_at, f.source
             FROM feedback_events f
-        ".to_string();
+        "
+        .to_string();
 
         if let Some(sid) = session_id {
             sql.push_str(" LEFT JOIN implicit_signals s ON f.signal_id = s.id WHERE s.session_id = ?1 ORDER BY f.created_at ASC");
@@ -3319,11 +3586,7 @@ impl SqliteStore {
     fn row_to_feedback_event(row: &rusqlite::Row) -> Result<FeedbackEvent, rusqlite::Error> {
         let id_str: String = row.get(0)?;
         let id = Uuid::parse_str(&id_str).map_err(|e| {
-            rusqlite::Error::FromSqlConversionFailure(
-                0,
-                rusqlite::types::Type::Text,
-                Box::new(e),
-            )
+            rusqlite::Error::FromSqlConversionFailure(0, rusqlite::types::Type::Text, Box::new(e))
         })?;
         let mem_id_str: Option<String> = row.get(1)?;
         let memory_id = mem_id_str.and_then(|s| Uuid::parse_str(&s).ok());
@@ -3353,9 +3616,10 @@ impl SqliteStore {
 
     /// Record a DPO preference pair.
     pub fn record_preference_pair(&self, pair: &PreferencePair) -> Result<(), StrataError> {
-        let conn = self.conn.lock().map_err(|_| {
-            StrataError::Database("Lock poisoned on SQLite connection".to_string())
-        })?;
+        let conn = self
+            .conn
+            .lock()
+            .map_err(|_| StrataError::Database("Lock poisoned on SQLite connection".to_string()))?;
 
         let id_str = pair.id.to_string();
         let ts_str = pair.created_at.to_rfc3339();
@@ -3386,9 +3650,10 @@ impl SqliteStore {
         &self,
         session_id: Option<&str>,
     ) -> Result<Vec<PreferencePair>, StrataError> {
-        let conn = self.conn.lock().map_err(|_| {
-            StrataError::Database("Lock poisoned on SQLite connection".to_string())
-        })?;
+        let conn = self
+            .conn
+            .lock()
+            .map_err(|_| StrataError::Database("Lock poisoned on SQLite connection".to_string()))?;
 
         let map_row = |row: &rusqlite::Row| -> Result<PreferencePair, rusqlite::Error> {
             let id_str: String = row.get(0)?;
@@ -3468,9 +3733,10 @@ impl SqliteStore {
 
     /// Inserts a batch of extracted CallGraph edges atomically into SQLite.
     pub fn insert_call_edges(&self, edges: &[CallEdge]) -> Result<(), StrataError> {
-        let conn = self.conn.lock().map_err(|_| {
-            StrataError::Database("Lock poisoned on SQLite connection".to_string())
-        })?;
+        let conn = self
+            .conn
+            .lock()
+            .map_err(|_| StrataError::Database("Lock poisoned on SQLite connection".to_string()))?;
 
         for edge in edges {
             let id_str = edge.id.to_string();
@@ -3508,12 +3774,16 @@ impl SqliteStore {
 
     /// Clears all call edges originating from a specific file (used prior to re-indexing).
     pub fn clear_call_edges_for_file(&self, file_path: &str) -> Result<usize, StrataError> {
-        let conn = self.conn.lock().map_err(|_| {
-            StrataError::Database("Lock poisoned on SQLite connection".to_string())
-        })?;
+        let conn = self
+            .conn
+            .lock()
+            .map_err(|_| StrataError::Database("Lock poisoned on SQLite connection".to_string()))?;
 
         let rows = conn
-            .execute("DELETE FROM call_edges WHERE caller_file = ?1", params![file_path])
+            .execute(
+                "DELETE FROM call_edges WHERE caller_file = ?1",
+                params![file_path],
+            )
             .map_err(|e| StrataError::Database(e.to_string()))?;
 
         Ok(rows)
@@ -3525,9 +3795,10 @@ impl SqliteStore {
         callee_symbol: &str,
         limit: usize,
     ) -> Result<Vec<CallEdge>, StrataError> {
-        let conn = self.conn.lock().map_err(|_| {
-            StrataError::Database("Lock poisoned on SQLite connection".to_string())
-        })?;
+        let conn = self
+            .conn
+            .lock()
+            .map_err(|_| StrataError::Database("Lock poisoned on SQLite connection".to_string()))?;
 
         let mut stmt = conn
             .prepare(
@@ -3560,9 +3831,10 @@ impl SqliteStore {
         caller_file: &str,
         caller_symbol: &str,
     ) -> Result<Vec<CallEdge>, StrataError> {
-        let conn = self.conn.lock().map_err(|_| {
-            StrataError::Database("Lock poisoned on SQLite connection".to_string())
-        })?;
+        let conn = self
+            .conn
+            .lock()
+            .map_err(|_| StrataError::Database("Lock poisoned on SQLite connection".to_string()))?;
 
         let mut stmt = conn
             .prepare(
@@ -3589,9 +3861,10 @@ impl SqliteStore {
 
     /// Retrieves all call and import edges recorded for a given file.
     pub fn get_file_call_edges(&self, file_path: &str) -> Result<Vec<CallEdge>, StrataError> {
-        let conn = self.conn.lock().map_err(|_| {
-            StrataError::Database("Lock poisoned on SQLite connection".to_string())
-        })?;
+        let conn = self
+            .conn
+            .lock()
+            .map_err(|_| StrataError::Database("Lock poisoned on SQLite connection".to_string()))?;
 
         let mut stmt = conn
             .prepare(
@@ -3616,9 +3889,10 @@ impl SqliteStore {
 
     /// Returns the total count of call edges indexed in SQLite.
     pub fn get_call_edges_count(&self) -> Result<usize, StrataError> {
-        let conn = self.conn.lock().map_err(|_| {
-            StrataError::Database("Lock poisoned on SQLite connection".to_string())
-        })?;
+        let conn = self
+            .conn
+            .lock()
+            .map_err(|_| StrataError::Database("Lock poisoned on SQLite connection".to_string()))?;
 
         let count: i64 = conn
             .query_row("SELECT COUNT(*) FROM call_edges", [], |r| r.get(0))
@@ -3662,10 +3936,14 @@ impl SqliteStore {
     // ==========================================
 
     /// Caches an ArchitectureGraphSummary into SQLite for fast recall.
-    pub fn cache_architecture_summary(&self, summary: &ArchitectureGraphSummary) -> Result<(), StrataError> {
-        let conn = self.conn.lock().map_err(|_| {
-            StrataError::Database("Lock poisoned on SQLite connection".to_string())
-        })?;
+    pub fn cache_architecture_summary(
+        &self,
+        summary: &ArchitectureGraphSummary,
+    ) -> Result<(), StrataError> {
+        let conn = self
+            .conn
+            .lock()
+            .map_err(|_| StrataError::Database("Lock poisoned on SQLite connection".to_string()))?;
 
         let id_str = summary.id.to_string();
         let created_at_str = summary.created_at.to_rfc3339();
@@ -3686,10 +3964,14 @@ impl SqliteStore {
     }
 
     /// Retrieves the most recent cached ArchitectureGraphSummary for a given workspace.
-    pub fn get_cached_architecture_summary(&self, workspace_id: &str) -> Result<Option<ArchitectureGraphSummary>, StrataError> {
-        let conn = self.conn.lock().map_err(|_| {
-            StrataError::Database("Lock poisoned on SQLite connection".to_string())
-        })?;
+    pub fn get_cached_architecture_summary(
+        &self,
+        workspace_id: &str,
+    ) -> Result<Option<ArchitectureGraphSummary>, StrataError> {
+        let conn = self
+            .conn
+            .lock()
+            .map_err(|_| StrataError::Database("Lock poisoned on SQLite connection".to_string()))?;
 
         let mut stmt = conn
             .prepare(

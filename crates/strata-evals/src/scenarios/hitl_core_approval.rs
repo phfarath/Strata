@@ -1,6 +1,6 @@
-use std::time::Instant;
 use chrono::Utc;
 use serde::{Deserialize, Serialize};
+use std::time::Instant;
 
 use strata_core::{
     errors::StrataError,
@@ -37,7 +37,8 @@ impl HitlCoreApprovalEval {
             MemoryType::Semantic,
             "Security Axiom: All JWT tokens must be HMAC-SHA256 verified",
             Scope::Global,
-        ).with_tier(MemoryTier::Core); // approved_by_human is false by default
+        )
+        .with_tier(MemoryTier::Core); // approved_by_human is false by default
 
         let unapproved_write_res = engine.write(&unapproved_core_record).await;
         let unapproved_write_rejected = unapproved_write_res.is_err();
@@ -47,12 +48,15 @@ impl HitlCoreApprovalEval {
             MemoryType::Semantic,
             "Security Axiom: All JWT tokens must be HMAC-SHA256 verified",
             Scope::Global,
-        ).with_tier(MemoryTier::Working);
+        )
+        .with_tier(MemoryTier::Working);
 
         let handle = engine.write(&working_record).await?;
 
         // 3. Attempting to promote without human approval (approved_by_human = false) must be rejected
-        let unapproved_promote_res = engine.promote_to_core(&handle.id, false, Some("Policy change")).await;
+        let unapproved_promote_res = engine
+            .promote_to_core(&handle.id, false, Some("Policy change"))
+            .await;
         let unapproved_promote_rejected = unapproved_promote_res.is_err();
 
         // 4. Promoting with human approval (approved_by_human = true) succeeds
@@ -64,7 +68,9 @@ impl HitlCoreApprovalEval {
         // 5. Verify Core retention dynamics: Core memories have R=1.0 and are immune to decay and pruning
         let calculator = DecayCalculator::with_default_config();
         let now = Utc::now();
-        let persisted = store.get_memory(&handle.id)?.expect("promoted memory exists");
+        let persisted = store
+            .get_memory(&handle.id)?
+            .expect("promoted memory exists");
 
         let logs = store.get_memory_access_logs(&handle.id)?;
         let metrics = calculator.evaluate_memory_record(&persisted, &logs, now);
@@ -72,19 +78,23 @@ impl HitlCoreApprovalEval {
         let core_retention_frozen = metrics.retention == 1.0 && persisted.tier == MemoryTier::Core;
 
         // Simulate pruning pass: Core memory should be protected and never archived/pruned
-        let prune_report = calculator.prune_expired(&store, Some(0.5), Some(now))?;
-        let immune_to_pruning = prune_report.core_protected >= 1 && prune_report.memories_pruned == 0;
+        let prune_report = calculator.prune_expired(store, Some(0.5), Some(now))?;
+        let immune_to_pruning =
+            prune_report.core_protected >= 1 && prune_report.memories_pruned == 0;
 
         // 6. Test SemanticFact HITL promotion
         let fact = SemanticFact::new(
             "All SQL queries in repository must use parameterized prepared statements",
             "security",
             Scope::Global,
-        ).with_tier(MemoryTier::Working);
+        )
+        .with_tier(MemoryTier::Working);
         store.insert_or_update_semantic_fact(&fact)?;
 
-        let fact_promoted = store.promote_semantic_fact_to_core(&fact.id, true, Some("Architecture ADR-101"))?;
-        let fact_promoted_ok = fact_promoted.tier == MemoryTier::Core && fact_promoted.approved_by_human;
+        let fact_promoted =
+            store.promote_semantic_fact_to_core(&fact.id, true, Some("Architecture ADR-101"))?;
+        let fact_promoted_ok =
+            fact_promoted.tier == MemoryTier::Core && fact_promoted.approved_by_human;
 
         let duration = start.elapsed();
         let duration_micros = duration.as_micros();
@@ -110,11 +120,26 @@ mod tests {
     async fn test_eval_hitl_core_approval_and_retention_freeze() {
         let result = HitlCoreApprovalEval::run_eval().await.expect("eval run");
 
-        assert!(result.unapproved_write_rejected, "Unapproved write to Core Tier must be rejected");
-        assert!(result.unapproved_promote_rejected, "Unapproved promotion to Core Tier must be rejected");
-        assert!(result.approved_promote_succeeded, "Human-approved promotion must succeed");
-        assert!(result.core_retention_frozen, "Core Tier retention must be frozen at R=1.0");
-        assert!(result.immune_to_pruning, "Core Tier memories must be immune to decay pruning");
+        assert!(
+            result.unapproved_write_rejected,
+            "Unapproved write to Core Tier must be rejected"
+        );
+        assert!(
+            result.unapproved_promote_rejected,
+            "Unapproved promotion to Core Tier must be rejected"
+        );
+        assert!(
+            result.approved_promote_succeeded,
+            "Human-approved promotion must succeed"
+        );
+        assert!(
+            result.core_retention_frozen,
+            "Core Tier retention must be frozen at R=1.0"
+        );
+        assert!(
+            result.immune_to_pruning,
+            "Core Tier memories must be immune to decay pruning"
+        );
         assert!(result.is_sub_50ms, "Evaluation latency must be < 50ms");
     }
 }

@@ -9,10 +9,21 @@ pub struct KeyArgs {
     #[command(subcommand)]
     pub action: KeyAction,
 
-    #[arg(long, global = true, env = "STRATA_SYNC_ENDPOINT", default_value = "https://strata.pedrofarath.me", help = "Strata Cloud Server URL")]
+    #[arg(
+        long,
+        global = true,
+        env = "STRATA_SYNC_ENDPOINT",
+        default_value = "https://strata.pedrofarath.me",
+        help = "Strata Cloud Server URL"
+    )]
     pub endpoint: String,
 
-    #[arg(long, global = true, env = "STRATA_AUTH_TOKEN", help = "Bearer Session JWT Token")]
+    #[arg(
+        long,
+        global = true,
+        env = "STRATA_AUTH_TOKEN",
+        help = "Bearer Session JWT Token"
+    )]
     pub token: Option<String>,
 }
 
@@ -52,7 +63,11 @@ pub async fn run_key(args: KeyArgs) -> Result<()> {
         .context("Authentication required. Pass --token or set STRATA_AUTH_TOKEN (from `strata auth login`)")?;
 
     match args.action {
-        KeyAction::Create { name, workspace_id, expires_days } => {
+        KeyAction::Create {
+            name,
+            workspace_id,
+            expires_days,
+        } => {
             let payload = serde_json::json!({
                 "workspace_id": workspace_id,
                 "name": name,
@@ -60,7 +75,10 @@ pub async fn run_key(args: KeyArgs) -> Result<()> {
             });
 
             let resp = client
-                .post(format!("{}/api/v1/keys", args.endpoint.trim_end_matches('/')))
+                .post(format!(
+                    "{}/api/v1/keys",
+                    args.endpoint.trim_end_matches('/')
+                ))
                 .bearer_auth(&jwt)
                 .json(&payload)
                 .send()
@@ -91,7 +109,10 @@ pub async fn run_key(args: KeyArgs) -> Result<()> {
         }
         KeyAction::List { workspace_id } => {
             let resp = client
-                .get(format!("{}/api/v1/keys?workspace_id={workspace_id}", args.endpoint.trim_end_matches('/')))
+                .get(format!(
+                    "{}/api/v1/keys?workspace_id={workspace_id}",
+                    args.endpoint.trim_end_matches('/')
+                ))
                 .bearer_auth(&jwt)
                 .send()
                 .await
@@ -120,7 +141,10 @@ pub async fn run_key(args: KeyArgs) -> Result<()> {
         }
         KeyAction::Revoke { key_id } => {
             let resp = client
-                .delete(format!("{}/api/v1/keys/{key_id}", args.endpoint.trim_end_matches('/')))
+                .delete(format!(
+                    "{}/api/v1/keys/{key_id}",
+                    args.endpoint.trim_end_matches('/')
+                ))
                 .bearer_auth(&jwt)
                 .send()
                 .await

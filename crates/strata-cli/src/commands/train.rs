@@ -1,12 +1,10 @@
+use anyhow::{Context, Result};
+use clap::Args;
 use std::fs;
 use std::path::PathBuf;
 use std::sync::Arc;
-use anyhow::{Context, Result};
-use clap::Args;
 use strata_memory::{ExportFormat, PreferenceMiner, SqliteStore};
-use strata_reasoning::{
-    QuantizationType, TrainingConfig, TrainingMethod, TrainingPipeline,
-};
+use strata_reasoning::{QuantizationType, TrainingConfig, TrainingMethod, TrainingPipeline};
 
 #[derive(Debug, Clone, Args)]
 pub struct TrainArgs {
@@ -123,8 +121,12 @@ pub async fn run_train(args: TrainArgs, store: Arc<SqliteStore>) -> Result<()> {
 
     // 1. Prepare Dataset
     let (dataset_content, sample_count) = if let Some(ref custom_path) = args.dataset {
-        let content = fs::read_to_string(custom_path)
-            .with_context(|| format!("Failed to read custom dataset at '{}'", custom_path.display()))?;
+        let content = fs::read_to_string(custom_path).with_context(|| {
+            format!(
+                "Failed to read custom dataset at '{}'",
+                custom_path.display()
+            )
+        })?;
         let count = content.lines().filter(|l| !l.trim().is_empty()).count();
         (Some(content), count)
     } else {
@@ -134,7 +136,8 @@ pub async fn run_train(args: TrainArgs, store: Arc<SqliteStore>) -> Result<()> {
             TrainingMethod::Kto => ExportFormat::Kto,
             _ => ExportFormat::Dpo,
         };
-        let mined = miner.export(export_fmt, filter)
+        let mined = miner
+            .export(export_fmt, filter)
             .context("Failed to mine alignment dataset from Strata continuous memory")?;
         let count = mined.lines().filter(|l| !l.trim().is_empty()).count();
         (Some(mined), count)
@@ -172,14 +175,20 @@ pub async fn run_train(args: TrainArgs, store: Arc<SqliteStore>) -> Result<()> {
 
     println!("📁 Generated Training Artifacts:");
     println!("  • Python Script:  {}", result.script_path);
-    println!("  • Dataset JSONL:  {} ({} samples)", result.dataset_path, sample_count);
+    println!(
+        "  • Dataset JSONL:  {} ({} samples)",
+        result.dataset_path, sample_count
+    );
     if let Some(ref m_path) = result.modelfile_path {
         println!("  • Ollama Modelfile: {}", m_path);
     }
     if let Some(ref r_path) = result.run_script_path {
         println!("  • Runner Script:  {}", r_path);
     }
-    println!("  • Run Manifest:   {}/manifest.json\n", args.out_dir.display());
+    println!(
+        "  • Run Manifest:   {}/manifest.json\n",
+        args.out_dir.display()
+    );
 
     if args.dry_run {
         println!("🔍 [DRY-RUN MODE] Artifacts synthesized successfully.");
@@ -187,11 +196,18 @@ pub async fn run_train(args: TrainArgs, store: Arc<SqliteStore>) -> Result<()> {
         println!("  1. pip install unsloth trl datasets transformers");
         println!("  2. python \"{}\"", result.script_path);
         if let Some(ref ollama_name) = args.deploy_ollama {
-            println!("  3. ollama create \"{}\" -f \"{}/Modelfile\"", ollama_name, args.out_dir.display());
+            println!(
+                "  3. ollama create \"{}\" -f \"{}/Modelfile\"",
+                ollama_name,
+                args.out_dir.display()
+            );
             println!("  4. ollama run \"{}\"", ollama_name);
         }
     } else {
-        println!("⚡ Ready to launch. Execute with: bash \"{}/run_training.sh\"", args.out_dir.display());
+        println!(
+            "⚡ Ready to launch. Execute with: bash \"{}/run_training.sh\"",
+            args.out_dir.display()
+        );
     }
 
     Ok(())

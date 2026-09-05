@@ -1,7 +1,7 @@
-﻿use std::fs;
-use std::path::{Path, PathBuf};
 use anyhow::{Context, Result};
 use serde_json::{json, Value};
+use std::fs;
+use std::path::{Path, PathBuf};
 use tracing::info;
 
 #[derive(Debug, Clone)]
@@ -170,7 +170,10 @@ pub fn remove_mcp_server(original_json: &str, server_name: &str) -> Result<(Stri
 
     let mut removed = false;
     if let Some(root_obj) = root.as_object_mut() {
-        if let Some(mcp_servers) = root_obj.get_mut("mcpServers").and_then(|v| v.as_object_mut()) {
+        if let Some(mcp_servers) = root_obj
+            .get_mut("mcpServers")
+            .and_then(|v| v.as_object_mut())
+        {
             if mcp_servers.remove(server_name).is_some() {
                 removed = true;
             }
@@ -191,7 +194,10 @@ pub fn run_mcp_install(options: McpInstallOptions) -> Result<()> {
     );
 
     if targets.is_empty() {
-        println!("⚠️ No matching MCP targets found for client filter: {:?}", options.client);
+        println!(
+            "⚠️ No matching MCP targets found for client filter: {:?}",
+            options.client
+        );
         return Ok(());
     }
 
@@ -217,14 +223,24 @@ pub fn run_mcp_install(options: McpInstallOptions) -> Result<()> {
                     let _ = fs::create_dir_all(parent);
                 }
                 if let Err(e) = fs::write(&target.path, updated_json) {
-                    println!("  ❌ {} ({}): failed to write: {}", target.name, target.path.display(), e);
+                    println!(
+                        "  ❌ {} ({}): failed to write: {}",
+                        target.name,
+                        target.path.display(),
+                        e
+                    );
                 } else {
                     println!("  ✓ {} -> {}", target.name, target.path.display());
                     installed_count += 1;
                 }
             }
             Err(e) => {
-                println!("  ❌ {} ({}): failed to merge config: {}", target.name, target.path.display(), e);
+                println!(
+                    "  ❌ {} ({}): failed to merge config: {}",
+                    target.name,
+                    target.path.display(),
+                    e
+                );
             }
         }
     }
@@ -278,7 +294,10 @@ pub fn run_mcp_uninstall(options: McpUninstallOptions) -> Result<()> {
     }
 
     if removed_count > 0 {
-        println!("\n✨ Successfully uninstalled Strata from {} client(s).\n", removed_count);
+        println!(
+            "\n✨ Successfully uninstalled Strata from {} client(s).\n",
+            removed_count
+        );
     } else {
         println!("\n  Strata was not found in any discovered client configuration.\n");
     }
@@ -295,14 +314,8 @@ mod tests {
         let result = merge_mcp_server("", "strata", "strata", &["mcp"]).unwrap();
         let parsed: Value = serde_json::from_str(&result).unwrap();
 
-        assert_eq!(
-            parsed["mcpServers"]["strata"]["command"],
-            "strata"
-        );
-        assert_eq!(
-            parsed["mcpServers"]["strata"]["args"][0],
-            "mcp"
-        );
+        assert_eq!(parsed["mcpServers"]["strata"]["command"], "strata");
+        assert_eq!(parsed["mcpServers"]["strata"]["args"][0], "mcp");
     }
 
     #[test]

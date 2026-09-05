@@ -1,6 +1,6 @@
-use std::env;
 use anyhow::Result;
 use clap::Args;
+use std::env;
 use strata_memory::SqliteStore;
 use strata_reasoning::{BlastRadiusReport, CausalNodeKind, PatchSimulationResult, WorldModel};
 
@@ -44,7 +44,9 @@ pub async fn run_blast_radius(args: BlastRadiusArgs, store: &SqliteStore) -> Res
         return Ok(());
     }
 
-    let target = args.target.unwrap_or_else(|| "crates/strata-server/src/storage.rs".to_string());
+    let target = args
+        .target
+        .unwrap_or_else(|| "crates/strata-server/src/storage.rs".to_string());
     let report = world_model.predict_impact(&target, args.depth).await?;
 
     if args.json {
@@ -58,10 +60,14 @@ pub async fn run_blast_radius(args: BlastRadiusArgs, store: &SqliteStore) -> Res
 
 async fn link_store_invariants(world_model: &WorldModel, store: &SqliteStore) -> Result<()> {
     // High-importance facts
-    if let Ok(facts) = store.get_all_semantic_facts(None, Some(strata_core::schemas::FactStatus::Active), 500) {
+    if let Ok(facts) =
+        store.get_all_semantic_facts(None, Some(strata_core::schemas::FactStatus::Active), 500)
+    {
         for f in facts {
             if f.importance >= 0.90 {
-                let _ = world_model.register_invariant(&f.statement, &f.category, "crate:strata_core").await;
+                let _ = world_model
+                    .register_invariant(&f.statement, &f.category, "crate:strata_core")
+                    .await;
             }
         }
     }
@@ -69,7 +75,14 @@ async fn link_store_invariants(world_model: &WorldModel, store: &SqliteStore) ->
     // Failure patterns
     if let Ok(failures) = store.search_failures(None, None, 500) {
         for p in failures {
-            let _ = world_model.register_anti_pattern(&p.signature, &p.pattern_name, &p.mitigation, "crate:strata_core").await;
+            let _ = world_model
+                .register_anti_pattern(
+                    &p.signature,
+                    &p.pattern_name,
+                    &p.mitigation,
+                    "crate:strata_core",
+                )
+                .await;
         }
     }
 
@@ -81,10 +94,16 @@ fn render_blast_radius_cli(report: &BlastRadiusReport) {
     println!("║           🌐 STRATA CAUSAL WORLD MODEL & BLAST RADIUS INSPECTOR              ║");
     println!("╚══════════════════════════════════════════════════════════════════════════════╝\n");
 
-    println!("🎯 TARGET COMPONENT:  \x1b[1;36m{}\x1b[0m", report.target_name);
+    println!(
+        "🎯 TARGET COMPONENT:  \x1b[1;36m{}\x1b[0m",
+        report.target_name
+    );
     println!("🆔 CANONICAL NODE ID: \x1b[90m{}\x1b[0m", report.target_id);
     println!("🔍 MAX GRAPH DEPTH:   {}", report.max_depth);
-    println!("📊 GRAPH COVERAGE:    {} total architectural nodes indexed", report.total_nodes_scanned);
+    println!(
+        "📊 GRAPH COVERAGE:    {} total architectural nodes indexed",
+        report.total_nodes_scanned
+    );
 
     // Risk score badge
     let risk_pct = (report.overall_risk_score * 100.0).round();
@@ -108,7 +127,8 @@ fn render_blast_radius_cli(report: &BlastRadiusReport) {
         println!("   └── \x1b[90m(Isolated component — zero upstream callers or consumers detected)\x1b[0m");
     } else {
         for (i, d) in report.direct_impacts.iter().enumerate() {
-            let is_last = i == report.direct_impacts.len() - 1 && report.transitive_impacts.is_empty();
+            let is_last =
+                i == report.direct_impacts.len() - 1 && report.transitive_impacts.is_empty();
             let branch = if is_last { "└──" } else { "├──" };
             let breaking = if d.is_breaking_risk {
                 " \x1b[1;31m[BREAKING RISK]\x1b[0m"
@@ -119,7 +139,11 @@ fn render_blast_radius_cli(report: &BlastRadiusReport) {
 
             println!(
                 "   {} \x1b[1m(d=1 DIRECT)\x1b[0m {} {} \x1b[90m(coupling: {:.0}%)\x1b[0m{}",
-                branch, kind_label, d.name, d.cumulative_weight * 100.0, breaking
+                branch,
+                kind_label,
+                d.name,
+                d.cumulative_weight * 100.0,
+                breaking
             );
         }
 
@@ -141,24 +165,37 @@ fn render_blast_radius_cli(report: &BlastRadiusReport) {
     }
 
     if !report.triggered_invariants.is_empty() {
-        println!("\n────────────────────────────────────────────────────────────────────────────────");
-        println!("🛡️  ARCHITECTURAL CONTRACT INVARIANTS AT STAKE ({})", report.triggered_invariants.len());
-        println!("────────────────────────────────────────────────────────────────────────────────");
+        println!(
+            "\n────────────────────────────────────────────────────────────────────────────────"
+        );
+        println!(
+            "🛡️  ARCHITECTURAL CONTRACT INVARIANTS AT STAKE ({})",
+            report.triggered_invariants.len()
+        );
+        println!(
+            "────────────────────────────────────────────────────────────────────────────────"
+        );
         for inv in &report.triggered_invariants {
             println!("   • \x1b[1;33m{}\x1b[0m", inv);
         }
     }
 
     if !report.recommendations.is_empty() {
-        println!("\n────────────────────────────────────────────────────────────────────────────────");
+        println!(
+            "\n────────────────────────────────────────────────────────────────────────────────"
+        );
         println!("💡 AGENT PRE-COMMIT RECOMMENDATIONS");
-        println!("────────────────────────────────────────────────────────────────────────────────");
+        println!(
+            "────────────────────────────────────────────────────────────────────────────────"
+        );
         for rec in &report.recommendations {
             println!("   👉 {}", rec);
         }
     }
 
-    println!("\n════════════════════════════════════════════════════════════════════════════════\n");
+    println!(
+        "\n════════════════════════════════════════════════════════════════════════════════\n"
+    );
 }
 
 fn render_patch_simulation(sim: &PatchSimulationResult) {
@@ -166,13 +203,21 @@ fn render_patch_simulation(sim: &PatchSimulationResult) {
     println!("║              🔬 STRATA PRE-FLIGHT PATCH SIMULATION REPORT                    ║");
     println!("╚══════════════════════════════════════════════════════════════════════════════╝\n");
 
-    println!("📁 MODIFIED TARGETS:      {}", sim.modified_targets.join(", "));
+    println!(
+        "📁 MODIFIED TARGETS:      {}",
+        sim.modified_targets.join(", ")
+    );
     println!("👥 TOTAL IMPACTED NODES:  {}", sim.total_impacted_nodes);
     println!("💥 BREAKING CHANGE RISKS: {}", sim.breaking_risks_count);
-    println!("🔥 HIGHEST PEAK RISK:     {:.0}%", sim.highest_risk_score * 100.0);
+    println!(
+        "🔥 HIGHEST PEAK RISK:     {:.0}%",
+        sim.highest_risk_score * 100.0
+    );
 
     if sim.safe_to_apply {
-        println!("✅ VERDICT:               \x1b[1;32mSAFE TO APPLY (All contracts preserved)\x1b[0m\n");
+        println!(
+            "✅ VERDICT:               \x1b[1;32mSAFE TO APPLY (All contracts preserved)\x1b[0m\n"
+        );
     } else {
         println!("❌ VERDICT:               \x1b[1;31mRISKY (Violations or high breaking risks detected)\x1b[0m\n");
     }

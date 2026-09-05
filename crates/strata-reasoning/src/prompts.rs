@@ -2,9 +2,9 @@ use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
+use strata_core::errors::StrataError;
 use strata_core::events::Event;
 use strata_core::state::{MemoryRecord, MemoryType, Scope};
-use strata_core::errors::StrataError;
 
 // ============================================================================
 // Distillation & Consolidation Data Structures
@@ -91,14 +91,10 @@ impl SemanticFact {
     }
 
     pub fn to_memory_record(&self, scope: Scope) -> MemoryRecord {
-        let mut rec = MemoryRecord::new(
-            MemoryType::Semantic,
-            self.statement.clone(),
-            scope,
-        )
-        .with_importance(self.importance)
-        .with_confidence(self.confidence)
-        .with_tags(self.tags.clone());
+        let mut rec = MemoryRecord::new(MemoryType::Semantic, self.statement.clone(), scope)
+            .with_importance(self.importance)
+            .with_confidence(self.confidence)
+            .with_tags(self.tags.clone());
 
         if let Some(ref id) = self.id {
             rec.id = *id;
@@ -124,16 +120,22 @@ impl SemanticFact {
     }
 
     pub fn from_memory_record(record: &MemoryRecord) -> Self {
-        let status = record.metadata.get("status")
+        let status = record
+            .metadata
+            .get("status")
             .and_then(|v| v.as_str())
             .unwrap_or("Active")
             .to_string();
 
-        let version = record.metadata.get("version")
+        let version = record
+            .metadata
+            .get("version")
             .and_then(|v| v.as_u64())
             .unwrap_or(1) as u32;
 
-        let replaced_by = record.metadata.get("replaced_by")
+        let replaced_by = record
+            .metadata
+            .get("replaced_by")
             .and_then(|v| v.as_str())
             .and_then(|s| Uuid::parse_str(s).ok());
 
@@ -182,7 +184,11 @@ pub struct ProceduralSkill {
 }
 
 impl ProceduralSkill {
-    pub fn new(name: impl Into<String>, description: impl Into<String>, steps: Vec<ProceduralStep>) -> Self {
+    pub fn new(
+        name: impl Into<String>,
+        description: impl Into<String>,
+        steps: Vec<ProceduralStep>,
+    ) -> Self {
         Self {
             name: name.into(),
             description: description.into(),
@@ -216,8 +222,15 @@ impl ProceduralSkill {
 
         content.push_str("#### Steps:\n");
         for step in &self.steps {
-            let tool_str = step.tool_name.as_deref().map(|t| format!(" [Tool: {t}]")).unwrap_or_default();
-            content.push_str(&format!("{}. {}{}\n", step.step_number, step.action, tool_str));
+            let tool_str = step
+                .tool_name
+                .as_deref()
+                .map(|t| format!(" [Tool: {t}]"))
+                .unwrap_or_default();
+            content.push_str(&format!(
+                "{}. {}{}\n",
+                step.step_number, step.action, tool_str
+            ));
             if let Some(ref outcome) = step.expected_outcome {
                 content.push_str(&format!("   -> Expected: {outcome}\n"));
             }
@@ -332,7 +345,8 @@ pub fn build_distillation_prompt(events: &[Event]) -> String {
 
     prompt.push_str("### OUTPUT FORMAT REQUIREMENTS:\n");
     prompt.push_str("You MUST return ONLY valid JSON matching this exact schema:\n");
-    prompt.push_str(r#"{
+    prompt.push_str(
+        r#"{
   "episodic_memories": [
     {
       "summary": "Short headline summary of the session milestone or outcome",
@@ -380,7 +394,8 @@ pub fn build_distillation_prompt(events: &[Event]) -> String {
       "error_type": "ToolExecutionError"
     }
   ]
-}"#);
+}"#,
+    );
     prompt.push_str("\n\n### EVENT STREAM TO CONSOLIDATE:\n");
 
     for (i, event) in events.iter().enumerate() {
@@ -405,7 +420,9 @@ pub fn build_distillation_prompt(events: &[Event]) -> String {
 /// `refinement` (adds new detail), or `outlier` (independent fact).
 pub fn build_jtms_arbitration_prompt(old_fact: &SemanticFact, new_fact: &SemanticFact) -> String {
     let mut prompt = String::new();
-    prompt.push_str("You are the Justification-based Truth Maintenance System (JTMS) arbitrator for Strata.\n");
+    prompt.push_str(
+        "You are the Justification-based Truth Maintenance System (JTMS) arbitrator for Strata.\n",
+    );
     prompt.push_str("Compare the existing semantic fact against the newly observed candidate fact to resolve belief revisions.\n\n");
 
     prompt.push_str("### EXISTING FACT:\n");
@@ -426,18 +443,22 @@ pub fn build_jtms_arbitration_prompt(old_fact: &SemanticFact, new_fact: &Semanti
 
     prompt.push_str("### CLASSIFICATION CATEGORIES:\n");
     prompt.push_str("1. `update`: The new fact directly supersedes, replaces, or contradicts the existing fact (e.g. migration, technology change).\n");
-    prompt.push_str("2. `duplicate`: The new fact conveys the same information without substantial changes.\n");
+    prompt.push_str(
+        "2. `duplicate`: The new fact conveys the same information without substantial changes.\n",
+    );
     prompt.push_str("3. `refinement`: The new fact adds detail, context, or precision while keeping the core fact valid.\n");
     prompt.push_str("4. `outlier`: The facts discuss different aspects and both remain independently active.\n\n");
 
     prompt.push_str("### OUTPUT FORMAT:\n");
     prompt.push_str("Respond with JSON ONLY in this format:\n");
-    prompt.push_str(r#"{
+    prompt.push_str(
+        r#"{
   "classification": "update",
   "reason": "Brief rationale for this decision",
   "confidence": 0.95
-}"#);
-    prompt.push_str("\n");
+}"#,
+    );
+    prompt.push('\n');
 
     prompt
 }
@@ -445,15 +466,19 @@ pub fn build_jtms_arbitration_prompt(old_fact: &SemanticFact, new_fact: &Semanti
 /// Helper to parse a distillation JSON string into a structured `DistillationOutput`.
 pub fn parse_distillation_output(raw_json: &str) -> Result<DistillationOutput, StrataError> {
     let cleaned = clean_json_string(raw_json);
-    serde_json::from_str::<DistillationOutput>(&cleaned)
-        .map_err(|e| StrataError::Reasoning(format!("Failed to parse distillation JSON: {e} (raw: {cleaned})")))
+    serde_json::from_str::<DistillationOutput>(&cleaned).map_err(|e| {
+        StrataError::Reasoning(format!(
+            "Failed to parse distillation JSON: {e} (raw: {cleaned})"
+        ))
+    })
 }
 
 /// Helper to parse a JTMS arbitration JSON string into `JtmsArbitrationResult`.
 pub fn parse_jtms_arbitration(raw_json: &str) -> Result<JtmsArbitrationResult, StrataError> {
     let cleaned = clean_json_string(raw_json);
-    serde_json::from_str::<JtmsArbitrationResult>(&cleaned)
-        .map_err(|e| StrataError::Reasoning(format!("Failed to parse JTMS JSON: {e} (raw: {cleaned})")))
+    serde_json::from_str::<JtmsArbitrationResult>(&cleaned).map_err(|e| {
+        StrataError::Reasoning(format!("Failed to parse JTMS JSON: {e} (raw: {cleaned})"))
+    })
 }
 
 fn clean_json_string(s: &str) -> String {
@@ -475,8 +500,18 @@ fn clean_json_string(s: &str) -> String {
 }
 
 // Default helper functions for serde
-fn default_importance() -> f32 { 0.7 }
-fn default_confidence() -> f32 { 1.0 }
-fn default_status_active() -> String { "Active".to_string() }
-fn default_version_1() -> u32 { 1 }
-fn default_severity_medium() -> String { "medium".to_string() }
+fn default_importance() -> f32 {
+    0.7
+}
+fn default_confidence() -> f32 {
+    1.0
+}
+fn default_status_active() -> String {
+    "Active".to_string()
+}
+fn default_version_1() -> u32 {
+    1
+}
+fn default_severity_medium() -> String {
+    "medium".to_string()
+}

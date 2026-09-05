@@ -1,7 +1,7 @@
-use std::sync::Arc;
 use anyhow::{bail, Result};
 use chrono::Utc;
 use serde_json::json;
+use std::sync::Arc;
 
 use strata_cli::mcp::server::McpServer;
 use strata_core::{
@@ -25,7 +25,9 @@ pub async fn run_lora_finetuning_pipeline_scenario() -> Result<()> {
     // -------------------------------------------------------------------------
     // Step 1: Initialize in-memory cognitive engine and populate continuous traces
     // -------------------------------------------------------------------------
-    println!("  [Step 1] Populating continuous memory traces, failure patterns, and episodic signals...");
+    println!(
+        "  [Step 1] Populating continuous memory traces, failure patterns, and episodic signals..."
+    );
     let engine = Arc::new(SqliteMemoryEngine::open_in_memory(None)?);
     let store = engine.store_arc();
 
@@ -36,7 +38,8 @@ pub async fn run_lora_finetuning_pipeline_scenario() -> Result<()> {
         "Moving ownership of shared state into async spawn causes E0382 borrow checker error",
         "Clone Arc handle before moving into async block: let handle = state.clone();",
     );
-    failure.trigger_condition = "Capturing non-copy struct into async task without Arc clone".to_string();
+    failure.trigger_condition =
+        "Capturing non-copy struct into async task without Arc clone".to_string();
     failure.error_type = "BorrowCheckerE0382".to_string();
     store.upsert_failure_pattern(&failure)?;
 
@@ -67,18 +70,10 @@ pub async fn run_lora_finetuning_pipeline_scenario() -> Result<()> {
     )
     .with_preconditions(vec!["Clean git working tree".to_string()])
     .with_steps(vec![
-        ProceduralStep::new(
-            1,
-            "safe_shell",
-            "git checkout -b feature/topic",
-            json!({}),
-        ).with_expected_result("Switched to new branch"),
-        ProceduralStep::new(
-            2,
-            "safe_shell",
-            "cargo test --workspace",
-            json!({}),
-        ).with_expected_result("All tests pass"),
+        ProceduralStep::new(1, "safe_shell", "git checkout -b feature/topic", json!({}))
+            .with_expected_result("Switched to new branch"),
+        ProceduralStep::new(2, "safe_shell", "cargo test --workspace", json!({}))
+            .with_expected_result("All tests pass"),
     ])
     .with_project("strata");
     store.insert_or_update_procedural_skill(&skill)?;
@@ -105,7 +100,10 @@ pub async fn run_lora_finetuning_pipeline_scenario() -> Result<()> {
     if dpo_pairs.is_empty() {
         bail!("Expected at least 1 mined DPO pair, got 0");
     }
-    println!("    ✓ Mined {} DPO preference pairs from failure patterns and episodic outcomes", dpo_pairs.len());
+    println!(
+        "    ✓ Mined {} DPO preference pairs from failure patterns and episodic outcomes",
+        dpo_pairs.len()
+    );
     let pair0 = &dpo_pairs[0];
     assert!(!pair0.prompt.is_empty());
     assert!(!pair0.chosen.is_empty());
@@ -115,7 +113,10 @@ pub async fn run_lora_finetuning_pipeline_scenario() -> Result<()> {
     if sft_samples.is_empty() {
         bail!("Expected at least 1 mined SFT sample from procedural skills, got 0");
     }
-    println!("    ✓ Mined {} SFT instruction demonstrations from procedural skills", sft_samples.len());
+    println!(
+        "    ✓ Mined {} SFT instruction demonstrations from procedural skills",
+        sft_samples.len()
+    );
 
     let dpo_jsonl = miner.export(ExportFormat::Dpo, None)?;
     assert!(dpo_jsonl.contains("chosen"));
@@ -197,11 +198,8 @@ pub async fn run_lora_finetuning_pipeline_scenario() -> Result<()> {
     valid_config.output_dir = temp_artifacts_dir.to_string_lossy().to_string();
 
     let pipeline = TrainingPipeline::new(valid_config);
-    let result = pipeline.generate_artifacts(
-        &temp_artifacts_dir,
-        Some(&dpo_jsonl),
-        dpo_pairs.len(),
-    )?;
+    let result =
+        pipeline.generate_artifacts(&temp_artifacts_dir, Some(&dpo_jsonl), dpo_pairs.len())?;
 
     if !result.success {
         bail!("TrainingPipeline reported failure during artifact generation");
@@ -209,8 +207,16 @@ pub async fn run_lora_finetuning_pipeline_scenario() -> Result<()> {
 
     assert!(std::path::Path::new(&result.script_path).exists());
     assert!(std::path::Path::new(&result.dataset_path).exists());
-    assert!(result.modelfile_path.as_ref().map(|p| std::path::Path::new(p).exists()).unwrap_or(false));
-    assert!(result.run_script_path.as_ref().map(|p| std::path::Path::new(p).exists()).unwrap_or(false));
+    assert!(result
+        .modelfile_path
+        .as_ref()
+        .map(|p| std::path::Path::new(p).exists())
+        .unwrap_or(false));
+    assert!(result
+        .run_script_path
+        .as_ref()
+        .map(|p| std::path::Path::new(p).exists())
+        .unwrap_or(false));
 
     // Verify manifest
     let manifest_file = temp_artifacts_dir.join("manifest.json");
@@ -221,7 +227,10 @@ pub async fn run_lora_finetuning_pipeline_scenario() -> Result<()> {
     assert_eq!(parsed_manifest.method, TrainingMethod::Dpo);
     assert_eq!(parsed_manifest.total_samples, dpo_pairs.len());
     assert_eq!(parsed_manifest.status, "ready");
-    println!("    ✓ Manifest generated and validated: {}", parsed_manifest.id);
+    println!(
+        "    ✓ Manifest generated and validated: {}",
+        parsed_manifest.id
+    );
 
     // Summary table formatting
     let table = pipeline.format_summary_table(dpo_pairs.len());
@@ -241,17 +250,19 @@ pub async fn run_lora_finetuning_pipeline_scenario() -> Result<()> {
     let tool = TrainPipelineTool::with_store(store.clone());
 
     use strata_core::traits::Tool;
-    let tool_res = tool.execute(json!({
-        "base_model": "unsloth/Qwen2.5-Coder-7B-Instruct",
-        "method": "sft",
-        "quantization": "4bit",
-        "lora_r": 32,
-        "lora_alpha": 64,
-        "learning_rate": 2e-5,
-        "output_dir": tool_temp_dir.to_string_lossy(),
-        "ollama_model_name": "strata-qwen-coder",
-        "dry_run": true
-    })).await;
+    let tool_res = tool
+        .execute(json!({
+            "base_model": "unsloth/Qwen2.5-Coder-7B-Instruct",
+            "method": "sft",
+            "quantization": "4bit",
+            "lora_r": 32,
+            "lora_alpha": 64,
+            "learning_rate": 2e-5,
+            "output_dir": tool_temp_dir.to_string_lossy(),
+            "ollama_model_name": "strata-qwen-coder",
+            "dry_run": true
+        }))
+        .await;
 
     if tool_res.is_err() {
         bail!("TrainPipelineTool execution failed: {:?}", tool_res.err());
@@ -259,7 +270,10 @@ pub async fn run_lora_finetuning_pipeline_scenario() -> Result<()> {
     let res_val = tool_res.unwrap();
     assert_eq!(res_val["status"], "success");
     assert!(res_val["total_samples"].as_u64().unwrap() > 0);
-    assert!(res_val["script_path"].as_str().unwrap().contains("train_lora.py"));
+    assert!(res_val["script_path"]
+        .as_str()
+        .unwrap()
+        .contains("train_lora.py"));
     println!("    ✓ TrainPipelineTool executed cleanly and generated SFT artifacts.");
 
     let _ = std::fs::remove_dir_all(&tool_temp_dir);
@@ -271,19 +285,32 @@ pub async fn run_lora_finetuning_pipeline_scenario() -> Result<()> {
     let mcp_server = McpServer::new(engine.clone());
     let mcp_temp_dir = std::env::temp_dir().join("strata_eval_scenario12_mcp_run");
 
-    let mcp_res = mcp_server.execute_tool("train_pipeline", json!({
-        "base_model": "unsloth/Llama-3.2-3B-Instruct",
-        "method": "dpo",
-        "output_dir": mcp_temp_dir.to_string_lossy(),
-        "ollama_model_name": "strata-mcp-coder",
-        "dry_run": true
-    })).await;
+    let mcp_res = mcp_server
+        .execute_tool(
+            "train_pipeline",
+            json!({
+                "base_model": "unsloth/Llama-3.2-3B-Instruct",
+                "method": "dpo",
+                "output_dir": mcp_temp_dir.to_string_lossy(),
+                "ollama_model_name": "strata-mcp-coder",
+                "dry_run": true
+            }),
+        )
+        .await;
 
     if mcp_res.is_error == Some(true) {
-        bail!("MCP train_pipeline tool execution failed: {:?}", mcp_res.content);
+        bail!(
+            "MCP train_pipeline tool execution failed: {:?}",
+            mcp_res.content
+        );
     }
-    let structured = mcp_res.structured_content.expect("Expected structured_content from train_pipeline");
-    assert_eq!(structured.get("status").and_then(|v| v.as_str()), Some("success"));
+    let structured = mcp_res
+        .structured_content
+        .expect("Expected structured_content from train_pipeline");
+    assert_eq!(
+        structured.get("status").and_then(|v| v.as_str()),
+        Some("success")
+    );
     println!("    ✓ MCP Server handled 'train_pipeline' tool invocation seamlessly.");
 
     let _ = std::fs::remove_dir_all(&mcp_temp_dir);

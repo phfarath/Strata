@@ -1,7 +1,7 @@
-use std::collections::{HashMap, HashSet, VecDeque};
 use anyhow::{bail, Result};
 use petgraph::graph::{DiGraph, NodeIndex};
 use petgraph::Direction;
+use std::collections::{HashMap, HashSet, VecDeque};
 
 use super::types::{
     BlastRadiusReport, CausalEdge, CausalEdgeKind, CausalNode, CausalNodeKind, ImpactedNode,
@@ -77,7 +77,9 @@ impl CausalGraph {
 
     /// Retrieve a reference to a node by ID.
     pub fn get_node(&self, id: &str) -> Option<&CausalNode> {
-        self.node_indices.get(id).and_then(|&idx| self.graph.node_weight(idx))
+        self.node_indices
+            .get(id)
+            .and_then(|&idx| self.graph.node_weight(idx))
     }
 
     /// Lookup a node ID by its file path.
@@ -107,7 +109,10 @@ impl CausalGraph {
         };
 
         let mut results = Vec::new();
-        let mut walker = self.graph.neighbors_directed(idx, Direction::Incoming).detach();
+        let mut walker = self
+            .graph
+            .neighbors_directed(idx, Direction::Incoming)
+            .detach();
         while let Some((edge_idx, neighbor_idx)) = walker.next(&self.graph) {
             if let (Some(node), Some(edge)) = (
                 self.graph.node_weight(neighbor_idx),
@@ -126,7 +131,10 @@ impl CausalGraph {
         };
 
         let mut results = Vec::new();
-        let mut walker = self.graph.neighbors_directed(idx, Direction::Outgoing).detach();
+        let mut walker = self
+            .graph
+            .neighbors_directed(idx, Direction::Outgoing)
+            .detach();
         while let Some((edge_idx, neighbor_idx)) = walker.next(&self.graph) {
             if let (Some(node), Some(edge)) = (
                 self.graph.node_weight(neighbor_idx),
@@ -170,7 +178,9 @@ impl CausalGraph {
                         triggered_anti_patterns: Vec::new(),
                         triggered_invariants: Vec::new(),
                         overall_risk_score: 0.0,
-                        recommendations: vec![format!("Node '{target_query}' not found in codebase causal graph.")],
+                        recommendations: vec![format!(
+                            "Node '{target_query}' not found in codebase causal graph."
+                        )],
                     };
                 }
             }
@@ -186,7 +196,15 @@ impl CausalGraph {
         let mut triggered_invariants = Vec::new();
 
         // Queue item: (NodeIndex, distance, cumulative_weight, causal_path, edge_kinds, is_breaking)
-        let mut queue: VecDeque<(NodeIndex, usize, f32, Vec<String>, Vec<CausalEdgeKind>, bool)> = VecDeque::new();
+        type CausalQueueItem = (
+            NodeIndex,
+            usize,
+            f32,
+            Vec<String>,
+            Vec<CausalEdgeKind>,
+            bool,
+        );
+        let mut queue: VecDeque<CausalQueueItem> = VecDeque::new();
         let mut visited: HashSet<NodeIndex> = HashSet::new();
 
         visited.insert(target_idx);
@@ -194,19 +212,30 @@ impl CausalGraph {
         // Also check if any Invariant or Anti-Pattern directly attaches to the target
         for (neighbor, edge) in self.incoming_dependencies(&target_id) {
             if neighbor.kind == CausalNodeKind::ContractInvariant {
-                triggered_invariants.push(format!("{}: {}", neighbor.name, edge.description.as_deref().unwrap_or("Enforces contract")));
+                triggered_invariants.push(format!(
+                    "{}: {}",
+                    neighbor.name,
+                    edge.description.as_deref().unwrap_or("Enforces contract")
+                ));
             }
         }
 
         // Initialize queue with incoming neighbors (direct dependents)
-        let mut walker = self.graph.neighbors_directed(target_idx, Direction::Incoming).detach();
+        let mut walker = self
+            .graph
+            .neighbors_directed(target_idx, Direction::Incoming)
+            .detach();
         while let Some((edge_idx, neighbor_idx)) = walker.next(&self.graph) {
             if visited.insert(neighbor_idx) {
                 let edge = &self.graph[edge_idx];
                 let neighbor_node = &self.graph[neighbor_idx];
 
                 if neighbor_node.kind == CausalNodeKind::ContractInvariant {
-                    triggered_invariants.push(format!("{}: {}", neighbor_node.name, edge.description.as_deref().unwrap_or("Contract invariant")));
+                    triggered_invariants.push(format!(
+                        "{}: {}",
+                        neighbor_node.name,
+                        edge.description.as_deref().unwrap_or("Contract invariant")
+                    ));
                 }
 
                 queue.push_back((
@@ -220,7 +249,8 @@ impl CausalGraph {
             }
         }
 
-        while let Some((curr_idx, dist, weight, path, edge_kinds, is_breaking)) = queue.pop_front() {
+        while let Some((curr_idx, dist, weight, path, edge_kinds, is_breaking)) = queue.pop_front()
+        {
             let curr_node = &self.graph[curr_idx];
 
             let item = ImpactedNode {
@@ -243,14 +273,24 @@ impl CausalGraph {
 
             // If we can traverse deeper, explore incoming dependencies of current node
             if dist < max_depth {
-                let mut next_walker = self.graph.neighbors_directed(curr_idx, Direction::Incoming).detach();
+                let mut next_walker = self
+                    .graph
+                    .neighbors_directed(curr_idx, Direction::Incoming)
+                    .detach();
                 while let Some((next_edge_idx, next_neighbor_idx)) = next_walker.next(&self.graph) {
                     if visited.insert(next_neighbor_idx) {
                         let next_edge = &self.graph[next_edge_idx];
                         let next_node = &self.graph[next_neighbor_idx];
 
                         if next_node.kind == CausalNodeKind::ContractInvariant {
-                            triggered_invariants.push(format!("{}: {}", next_node.name, next_edge.description.as_deref().unwrap_or("Contract invariant")));
+                            triggered_invariants.push(format!(
+                                "{}: {}",
+                                next_node.name,
+                                next_edge
+                                    .description
+                                    .as_deref()
+                                    .unwrap_or("Contract invariant")
+                            ));
                         }
 
                         let next_weight = weight * next_edge.weight;
@@ -277,32 +317,53 @@ impl CausalGraph {
 
         // Calculate overall risk score [0.0, 1.0]
         let direct_weight_sum: f32 = direct_impacts.iter().map(|n| n.cumulative_weight).sum();
-        let transitive_weight_sum: f32 = transitive_impacts.iter().map(|n| n.cumulative_weight * 0.5).sum();
-        let breaking_multiplier = if direct_impacts.iter().chain(&transitive_impacts).any(|n| n.is_breaking_risk) {
+        let transitive_weight_sum: f32 = transitive_impacts
+            .iter()
+            .map(|n| n.cumulative_weight * 0.5)
+            .sum();
+        let breaking_multiplier = if direct_impacts
+            .iter()
+            .chain(&transitive_impacts)
+            .any(|n| n.is_breaking_risk)
+        {
             1.4
         } else {
             1.0
         };
-        let invariant_penalty = if !triggered_invariants.is_empty() { 0.25 } else { 0.0 };
+        let invariant_penalty = if !triggered_invariants.is_empty() {
+            0.25
+        } else {
+            0.0
+        };
 
-        let raw_score = ((direct_weight_sum * 0.3 + transitive_weight_sum * 0.15) * breaking_multiplier) + invariant_penalty;
+        let raw_score = ((direct_weight_sum * 0.3 + transitive_weight_sum * 0.15)
+            * breaking_multiplier)
+            + invariant_penalty;
         let overall_risk_score = raw_score.clamp(0.05, 1.0);
 
         // Generate recommendations
         let mut recommendations = Vec::new();
         if direct_impacts.is_empty() && transitive_impacts.is_empty() {
-            recommendations.push("Isolated node: modifying this component has zero upstream consumers.".to_string());
+            recommendations.push(
+                "Isolated node: modifying this component has zero upstream consumers.".to_string(),
+            );
         } else {
             if direct_impacts.iter().any(|n| n.is_breaking_risk) {
                 recommendations.push("⚠️ Breaking Change Warning: One or more direct dependents have strict contract dependencies.".to_string());
             }
             if !triggered_invariants.is_empty() {
-                recommendations.push(format!("🛡️ Invariant Check: {} architectural invariants must be preserved.", triggered_invariants.len()));
+                recommendations.push(format!(
+                    "🛡️ Invariant Check: {} architectural invariants must be preserved.",
+                    triggered_invariants.len()
+                ));
             }
             if direct_impacts.len() > 4 {
                 recommendations.push("High Fan-Out: Consider introducing an interface layer or staging changes through deprecation.".to_string());
             }
-            recommendations.push(format!("Run targeted test suites covering: {} direct dependent modules.", direct_impacts.len()));
+            recommendations.push(format!(
+                "Run targeted test suites covering: {} direct dependent modules.",
+                direct_impacts.len()
+            ));
         }
 
         BlastRadiusReport {
@@ -340,24 +401,46 @@ impl CausalGraph {
         }
 
         for (i, d) in report.direct_impacts.iter().enumerate() {
-            let is_last_direct = i == report.direct_impacts.len() - 1 && report.transitive_impacts.is_empty();
-            let branch = if is_last_direct { "└──" } else { "├──" };
-            let breaking_badge = if d.is_breaking_risk { " [BREAKING RISK]" } else { "" };
+            let is_last_direct =
+                i == report.direct_impacts.len() - 1 && report.transitive_impacts.is_empty();
+            let branch = if is_last_direct {
+                "└──"
+            } else {
+                "├──"
+            };
+            let breaking_badge = if d.is_breaking_risk {
+                " [BREAKING RISK]"
+            } else {
+                ""
+            };
 
             out.push_str(&format!(
                 "   {} (d=1) {} [{}] (coupling: {:.0}%){}\n",
-                branch, d.name, d.kind, d.cumulative_weight * 100.0, breaking_badge
+                branch,
+                d.name,
+                d.kind,
+                d.cumulative_weight * 100.0,
+                breaking_badge
             ));
         }
 
         for (i, t) in report.transitive_impacts.iter().enumerate() {
             let is_last = i == report.transitive_impacts.len() - 1;
             let branch = if is_last { "└──" } else { "├──" };
-            let breaking_badge = if t.is_breaking_risk { " [BREAKING RISK]" } else { "" };
+            let breaking_badge = if t.is_breaking_risk {
+                " [BREAKING RISK]"
+            } else {
+                ""
+            };
 
             out.push_str(&format!(
                 "   │   {} (d={}) {} [{}] (coupling: {:.0}%){}\n",
-                branch, t.distance, t.name, t.kind, t.cumulative_weight * 100.0, breaking_badge
+                branch,
+                t.distance,
+                t.name,
+                t.kind,
+                t.cumulative_weight * 100.0,
+                breaking_badge
             ));
         }
 

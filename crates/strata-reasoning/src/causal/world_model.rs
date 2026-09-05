@@ -1,6 +1,6 @@
+use anyhow::Result;
 use std::path::Path;
 use std::sync::Arc;
-use anyhow::Result;
 use tokio::sync::RwLock;
 
 use super::graph::CausalGraph;
@@ -88,8 +88,12 @@ impl WorldModel {
     ) -> Result<()> {
         let mut graph = self.graph.write().await;
         let node_id = format!("antipattern:{signature}");
-        let node = CausalNode::new(node_id.clone(), pattern_name, CausalNodeKind::ContractInvariant)
-            .with_metadata(serde_json::json!({ "mitigation": mitigation }));
+        let node = CausalNode::new(
+            node_id.clone(),
+            pattern_name,
+            CausalNodeKind::ContractInvariant,
+        )
+        .with_metadata(serde_json::json!({ "mitigation": mitigation }));
         graph.add_node(node);
 
         if graph.get_node(target_node_id).is_some() {
@@ -103,7 +107,11 @@ impl WorldModel {
     }
 
     /// Predict the blast radius and downstream ripple effects for a given target entity or file path.
-    pub async fn predict_impact(&self, target_query: &str, depth: usize) -> Result<BlastRadiusReport> {
+    pub async fn predict_impact(
+        &self,
+        target_query: &str,
+        depth: usize,
+    ) -> Result<BlastRadiusReport> {
         let graph = self.graph.read().await;
         let effective_depth = if depth == 0 { 3 } else { depth };
         Ok(graph.compute_blast_radius(target_query, effective_depth))
@@ -117,7 +125,10 @@ impl WorldModel {
     }
 
     /// Pre-flight simulate a set of proposed code changes across multiple files/modules.
-    pub async fn simulate_patch(&self, modified_targets: &[String]) -> Result<PatchSimulationResult> {
+    pub async fn simulate_patch(
+        &self,
+        modified_targets: &[String],
+    ) -> Result<PatchSimulationResult> {
         let graph = self.graph.read().await;
 
         let mut reports = Vec::new();
@@ -132,8 +143,16 @@ impl WorldModel {
                 highest_risk = report.overall_risk_score;
             }
             total_impacted_count += report.direct_impacts.len() + report.transitive_impacts.len();
-            total_breaking += report.direct_impacts.iter().filter(|n| n.is_breaking_risk).count();
-            total_breaking += report.transitive_impacts.iter().filter(|n| n.is_breaking_risk).count();
+            total_breaking += report
+                .direct_impacts
+                .iter()
+                .filter(|n| n.is_breaking_risk)
+                .count();
+            total_breaking += report
+                .transitive_impacts
+                .iter()
+                .filter(|n| n.is_breaking_risk)
+                .count();
 
             for ap in &report.triggered_anti_patterns {
                 if !all_triggered_anti_patterns.contains(ap) {

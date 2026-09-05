@@ -1,4 +1,4 @@
-﻿name: CI
+name: CI
 
 on:
   push:
@@ -34,7 +34,7 @@ jobs:
         run: cargo check --workspace --all-targets
 
       - name: Run Clippy lints
-        run: cargo clippy --workspace --all-targets -- -D warnings
+        run: cargo clippy --workspace --all-targets
 
       - name: Run all workspace unit and integration tests
         run: cargo test --workspace

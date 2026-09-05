@@ -1,6 +1,6 @@
-use std::sync::Arc;
 use anyhow::{bail, Context, Result};
 use clap::Args;
+use std::sync::Arc;
 use strata_core::schemas::MemoryFeedback;
 use strata_memory::SqliteStore;
 use uuid::Uuid;
@@ -10,7 +10,11 @@ pub struct FeedbackArgs {
     #[arg(long, help = "UUID of the memory record to provide feedback on")]
     pub id: Option<String>,
 
-    #[arg(long, default_value = "positive", help = "Feedback rating: positive or negative")]
+    #[arg(
+        long,
+        default_value = "positive",
+        help = "Feedback rating: positive or negative"
+    )]
     pub rating: String,
 
     #[arg(long, help = "Optional feedback comment or correction rationale")]
@@ -34,7 +38,10 @@ pub async fn run_feedback(args: FeedbackArgs, store: Arc<SqliteStore>) -> Result
 
     let rating_clean = args.rating.trim().to_lowercase();
     if rating_clean != "positive" && rating_clean != "negative" {
-        bail!("Rating must be 'positive' or 'negative', got: '{}'", args.rating);
+        bail!(
+            "Rating must be 'positive' or 'negative', got: '{}'",
+            args.rating
+        );
     }
 
     let mut fb = if rating_clean == "positive" {
@@ -47,9 +54,9 @@ pub async fn run_feedback(args: FeedbackArgs, store: Arc<SqliteStore>) -> Result
         fb = fb.with_comment(c);
     }
 
-    store
-        .record_memory_feedback(&fb)
-        .with_context(|| format!("Failed to record feedback for memory '{id_str}' in SQLite store"))?;
+    store.record_memory_feedback(&fb).with_context(|| {
+        format!("Failed to record feedback for memory '{id_str}' in SQLite store")
+    })?;
 
     let updated_memory = store.get_memory(&mem_uuid)?;
 

@@ -1,8 +1,8 @@
-use std::sync::Arc;
-use std::time::{Duration, Instant};
 use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
 use serde_json::json;
+use std::sync::Arc;
+use std::time::{Duration, Instant};
 use uuid::Uuid;
 
 use strata_core::{
@@ -59,10 +59,7 @@ impl Tool for MemorySearchTool {
             .and_then(|v| v.as_str())
             .ok_or_else(|| StrataError::ValidationError("Missing 'query' field".to_string()))?;
 
-        let limit = params
-            .get("limit")
-            .and_then(|v| v.as_u64())
-            .unwrap_or(5) as usize;
+        let limit = params.get("limit").and_then(|v| v.as_u64()).unwrap_or(5) as usize;
 
         let scope = params
             .get("scope")
@@ -71,10 +68,7 @@ impl Tool for MemorySearchTool {
             .transpose()
             .map_err(|e| StrataError::ValidationError(format!("Invalid scope: {:?}", e)))?;
 
-        let results = self
-            .engine
-            .search(query, scope.as_ref(), limit)
-            .await?;
+        let results = self.engine.search(query, scope.as_ref(), limit).await?;
 
         Ok(json!(results))
     }
@@ -120,13 +114,17 @@ impl Tool for MemoryGetTool {
             .and_then(|v| v.as_str())
             .ok_or_else(|| StrataError::ValidationError("Missing 'id' field".to_string()))?;
 
-        let uuid = Uuid::parse_str(id_str)
-            .map_err(|e| StrataError::ValidationError(format!("Invalid UUID '{}': {}", id_str, e)))?;
+        let uuid = Uuid::parse_str(id_str).map_err(|e| {
+            StrataError::ValidationError(format!("Invalid UUID '{}': {}", id_str, e))
+        })?;
 
         let record = self.engine.get(&uuid).await?;
         match record {
             Some(rec) => Ok(json!(rec)),
-            None => Err(StrataError::NotFound(format!("Memory record '{}' not found", id_str))),
+            None => Err(StrataError::NotFound(format!(
+                "Memory record '{}' not found",
+                id_str
+            ))),
         }
     }
 }
@@ -402,7 +400,10 @@ impl Tool for SafeShellTool {
         #[cfg(target_os = "windows")]
         let mut cmd = {
             let mut c = tokio::process::Command::new("powershell");
-            c.arg("-NoProfile").arg("-NonInteractive").arg("-Command").arg(command);
+            c.arg("-NoProfile")
+                .arg("-NonInteractive")
+                .arg("-Command")
+                .arg(command);
             c
         };
 
@@ -452,7 +453,10 @@ impl Tool for SafeShellTool {
                 };
                 Ok(json!(out))
             }
-            Ok(Err(e)) => Err(StrataError::ToolError(format!("Failed to execute process: {}", e))),
+            Ok(Err(e)) => Err(StrataError::ToolError(format!(
+                "Failed to execute process: {}",
+                e
+            ))),
             Err(_) => Err(StrataError::Timeout(format!(
                 "Command execution timed out after {} ms",
                 timeout_ms.as_millis()
@@ -680,13 +684,18 @@ impl Tool for DagExecuteTool {
 
         let dag = if let Some(dag_val) = params.get("dag") {
             let export: strata_reasoning::GoalDagExport = serde_json::from_value(dag_val.clone())
-                .map_err(|e| StrataError::ValidationError(format!("Invalid Goal DAG export: {e}")))?;
-            strata_reasoning::GoalDag::from_export(export)
-                .map_err(|e| StrataError::ValidationError(format!("Invalid Goal DAG structure: {e}")))?
+                .map_err(|e| {
+                StrataError::ValidationError(format!("Invalid Goal DAG export: {e}"))
+            })?;
+            strata_reasoning::GoalDag::from_export(export).map_err(|e| {
+                StrataError::ValidationError(format!("Invalid Goal DAG structure: {e}"))
+            })?
         } else if let Some(goal) = params.get("goal").and_then(|v| v.as_str()) {
             strata_reasoning::GoalDecomposer::new()
                 .decompose(goal)
-                .map_err(|e| StrataError::ReasoningError(format!("Goal decomposition error: {e}")))?
+                .map_err(|e| {
+                    StrataError::ReasoningError(format!("Goal decomposition error: {e}"))
+                })?
         } else {
             return Err(StrataError::ValidationError(
                 "Either 'dag' or 'goal' parameter must be provided".to_string(),
@@ -838,16 +847,46 @@ impl Tool for TrainPipelineTool {
         let quantization = quant_str.parse::<strata_reasoning::QuantizationType>()?;
 
         let lora_r = params.get("lora_r").and_then(|v| v.as_u64()).unwrap_or(16) as u32;
-        let lora_alpha = params.get("lora_alpha").and_then(|v| v.as_u64()).unwrap_or(32) as u32;
-        let lora_dropout = params.get("lora_dropout").and_then(|v| v.as_f64()).unwrap_or(0.0) as f32;
-        let learning_rate = params.get("learning_rate").and_then(|v| v.as_f64()).unwrap_or(5e-5);
-        let batch_size = params.get("batch_size").and_then(|v| v.as_u64()).unwrap_or(2) as usize;
-        let grad_accum = params.get("gradient_accumulation_steps").and_then(|v| v.as_u64()).unwrap_or(4) as usize;
-        let max_steps = params.get("max_steps").and_then(|v| v.as_u64()).unwrap_or(60) as usize;
-        let max_seq_length = params.get("max_seq_length").and_then(|v| v.as_u64()).unwrap_or(2048) as usize;
-        let output_dir_str = params.get("output_dir").and_then(|v| v.as_str()).unwrap_or("./outputs/lora_run");
-        let ollama_name = params.get("ollama_model_name").and_then(|v| v.as_str()).unwrap_or("strata-custom-coder");
-        let export_gguf = params.get("export_gguf").and_then(|v| v.as_bool()).unwrap_or(true);
+        let lora_alpha = params
+            .get("lora_alpha")
+            .and_then(|v| v.as_u64())
+            .unwrap_or(32) as u32;
+        let lora_dropout = params
+            .get("lora_dropout")
+            .and_then(|v| v.as_f64())
+            .unwrap_or(0.0) as f32;
+        let learning_rate = params
+            .get("learning_rate")
+            .and_then(|v| v.as_f64())
+            .unwrap_or(5e-5);
+        let batch_size = params
+            .get("batch_size")
+            .and_then(|v| v.as_u64())
+            .unwrap_or(2) as usize;
+        let grad_accum = params
+            .get("gradient_accumulation_steps")
+            .and_then(|v| v.as_u64())
+            .unwrap_or(4) as usize;
+        let max_steps = params
+            .get("max_steps")
+            .and_then(|v| v.as_u64())
+            .unwrap_or(60) as usize;
+        let max_seq_length = params
+            .get("max_seq_length")
+            .and_then(|v| v.as_u64())
+            .unwrap_or(2048) as usize;
+        let output_dir_str = params
+            .get("output_dir")
+            .and_then(|v| v.as_str())
+            .unwrap_or("./outputs/lora_run");
+        let ollama_name = params
+            .get("ollama_model_name")
+            .and_then(|v| v.as_str())
+            .unwrap_or("strata-custom-coder");
+        let export_gguf = params
+            .get("export_gguf")
+            .and_then(|v| v.as_bool())
+            .unwrap_or(true);
 
         let mut config = strata_reasoning::TrainingConfig::new(base_model)
             .with_method(method)
@@ -862,7 +901,9 @@ impl Tool for TrainPipelineTool {
         config.export_gguf = export_gguf;
 
         // Determine dataset content and sample count
-        let (dataset_str, sample_count) = if let Some(content) = params.get("dataset_content").and_then(|v| v.as_str()) {
+        let (dataset_str, sample_count) = if let Some(content) =
+            params.get("dataset_content").and_then(|v| v.as_str())
+        {
             let lines_count = content.lines().filter(|l| !l.trim().is_empty()).count();
             (Some(content.to_string()), lines_count)
         } else if let Some(ref store) = self.store {
@@ -1052,11 +1093,16 @@ impl Tool for CallGraphTool {
         if !imports.is_empty() && (direction == "imports" || direction == "all") {
             summary_lines.push("\n#### 📦 Import Dependencies:".to_string());
             for imp in &imports {
-                summary_lines.push(format!("  - line {}: `{}`", imp.line_number, imp.callee_symbol));
+                summary_lines.push(format!(
+                    "  - line {}: `{}`",
+                    imp.line_number, imp.callee_symbol
+                ));
             }
         }
 
-        if !callers.is_empty() && (direction == "callers" || direction == "both" || direction == "all") {
+        if !callers.is_empty()
+            && (direction == "callers" || direction == "both" || direction == "all")
+        {
             summary_lines.push("\n#### ⬆️ Callers (Who invokes this):".to_string());
             for c in &callers {
                 summary_lines.push(format!(
@@ -1066,7 +1112,9 @@ impl Tool for CallGraphTool {
             }
         }
 
-        if !callees.is_empty() && (direction == "callees" || direction == "both" || direction == "all") {
+        if !callees.is_empty()
+            && (direction == "callees" || direction == "both" || direction == "all")
+        {
             summary_lines.push("\n#### ⬇️ Callees (What this invokes):".to_string());
             for c in &callees {
                 summary_lines.push(format!(
@@ -1161,9 +1209,15 @@ impl Tool for WorkspaceDetectTool {
 
         // Formatted Markdown summary for coding agents
         let mut summary_lines = Vec::new();
-        summary_lines.push(format!("### 🏢 Workspace Boundary Report ({})", boundary.workspace_type));
+        summary_lines.push(format!(
+            "### 🏢 Workspace Boundary Report ({})",
+            boundary.workspace_type
+        ));
         summary_lines.push(format!("- **Root Directory**: `{}`", boundary.root_path));
-        summary_lines.push(format!("- **Member Packages ({} found)**:", boundary.packages.len()));
+        summary_lines.push(format!(
+            "- **Member Packages ({} found)**:",
+            boundary.packages.len()
+        ));
 
         for pkg in &boundary.packages {
             let deps_str = if pkg.internal_dependencies.is_empty() {
@@ -1178,10 +1232,13 @@ impl Tool for WorkspaceDetectTool {
         }
 
         if let Some(ref pkg) = resolved_pkg {
-            summary_lines.push(format!("\n#### 🎯 Resolved Target File Context:"));
+            summary_lines.push("\n#### 🎯 Resolved Target File Context:".to_string());
             summary_lines.push(format!("- **File**: `{}`", file_path_opt.unwrap_or("")));
             summary_lines.push(format!("- **Owning Package**: `{}`", pkg.name));
-            summary_lines.push(format!("- **Hierarchical Search Scopes**: `{}`", hierarchical_scopes.join(" -> ")));
+            summary_lines.push(format!(
+                "- **Hierarchical Search Scopes**: `{}`",
+                hierarchical_scopes.join(" -> ")
+            ));
         }
 
         let formatted_summary = summary_lines.join("\n");
@@ -1253,9 +1310,18 @@ impl Tool for ArchitectureMapTool {
 
     async fn execute(&self, params: serde_json::Value) -> Result<serde_json::Value, StrataError> {
         let path_str = params.get("path").and_then(|v| v.as_str()).unwrap_or(".");
-        let ws_id = params.get("workspace_id").and_then(|v| v.as_str()).unwrap_or("default");
-        let min_cluster_size = params.get("min_cluster_size").and_then(|v| v.as_u64()).unwrap_or(1) as usize;
-        let max_iter = params.get("max_iterations").and_then(|v| v.as_u64()).unwrap_or(25) as usize;
+        let ws_id = params
+            .get("workspace_id")
+            .and_then(|v| v.as_str())
+            .unwrap_or("default");
+        let min_cluster_size = params
+            .get("min_cluster_size")
+            .and_then(|v| v.as_u64())
+            .unwrap_or(1) as usize;
+        let max_iter = params
+            .get("max_iterations")
+            .and_then(|v| v.as_u64())
+            .unwrap_or(25) as usize;
 
         let config = strata_memory::ClusteringConfig {
             max_iterations: max_iter,
@@ -1383,9 +1449,3 @@ impl Tool for CoreTierPromoteTool {
         }
     }
 }
-
-
-
-
-
-

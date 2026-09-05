@@ -1,9 +1,9 @@
-use std::sync::Arc;
 use anyhow::Result;
+use std::sync::Arc;
 
-use crate::engine::{ChatMessage, PromptContext, ReasoningEngine};
 use super::dag::GoalDag;
 use super::types::{GoalNode, GoalNodeKind};
+use crate::engine::{ChatMessage, PromptContext, ReasoningEngine};
 
 /// Hierarchical goal decomposer that parses high-level objectives into executable Goal DAGs.
 pub struct GoalDecomposer {
@@ -41,12 +41,20 @@ impl GoalDecomposer {
         let lower = trimmed.to_lowercase();
 
         // 1. Check for explicit multi-step instructions (numbered items or semicolons or bullet points)
-        if trimmed.contains('\n') || trimmed.contains(';') || trimmed.contains("1.") || trimmed.contains("1)") {
+        if trimmed.contains('\n')
+            || trimmed.contains(';')
+            || trimmed.contains("1.")
+            || trimmed.contains("1)")
+        {
             return self.decompose_multi_step(trimmed);
         }
 
         // 2. Specialized template for bug fixes and incident recovery
-        if lower.starts_with("fix") || lower.contains("debug") || lower.contains("bug") || lower.contains("error") {
+        if lower.starts_with("fix")
+            || lower.contains("debug")
+            || lower.contains("bug")
+            || lower.contains("error")
+        {
             return self.decompose_bugfix(trimmed);
         }
 
@@ -95,7 +103,9 @@ impl GoalDecomposer {
             "analyze_architecture",
             "Analyze architecture, causal blast radius & contract invariants",
         )
-        .with_description("Evaluate code dependencies and identify critical invariants before applying changes")
+        .with_description(
+            "Evaluate code dependencies and identify critical invariants before applying changes",
+        )
         .with_action("strata blast-radius --depth 3");
 
         let prepare_env_task = GoalNode::task(
@@ -112,7 +122,9 @@ impl GoalDecomposer {
             "implement_core_logic",
             format!("Implement core changes for '{goal}'"),
         )
-        .with_description("Apply required code modifications, type definitions, and algorithmic routines");
+        .with_description(
+            "Apply required code modifications, type definitions, and algorithmic routines",
+        );
 
         let integrate_adapters = GoalNode::task(
             "integrate_adapters",
@@ -146,7 +158,9 @@ impl GoalDecomposer {
                 "consolidate_documentation",
                 "Consolidate architecture documentation & memory digest",
             )
-            .with_description("Record durable decision takeaways, update AGENTS.md, and record procedural skills");
+            .with_description(
+                "Record durable decision takeaways, update AGENTS.md, and record procedural skills",
+            );
 
             dag.add_node(consolidate_task);
             dag.add_dependency("consolidate_documentation", "verify_contract_invariants")?;
@@ -212,14 +226,18 @@ impl GoalDecomposer {
             .filter(|s| !s.is_empty())
             .collect();
 
-        let root = GoalNode::root("root_goal", lines.first().copied().unwrap_or("Multi-step Goal"));
+        let root = GoalNode::root(
+            "root_goal",
+            lines.first().copied().unwrap_or("Multi-step Goal"),
+        );
         dag.add_node(root);
 
         let mut prev_task_id: Option<String> = None;
 
         for (i, line) in lines.iter().enumerate() {
-            let clean_line = line
-                .trim_start_matches(|c: char| c.is_numeric() || c == '.' || c == ')' || c == '-' || c == '*' || c == ' ');
+            let clean_line = line.trim_start_matches(|c: char| {
+                c.is_numeric() || c == '.' || c == ')' || c == '-' || c == '*' || c == ' '
+            });
 
             let task_id = format!("step_{}", i + 1);
             let node = GoalNode::task(&task_id, clean_line);

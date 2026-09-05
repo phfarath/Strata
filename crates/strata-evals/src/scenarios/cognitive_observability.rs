@@ -1,11 +1,11 @@
 use anyhow::{bail, Result};
 use chrono::{Duration, Utc};
+use strata_cli::commands::observe::{generate_report, ObserveArgs};
 use strata_core::{
     schemas::{FeedbackEvent, FeedbackRating, ImplicitSignal, SemanticFact, SignalKind},
     state::{FailurePattern, FailureSeverity, Scope},
 };
 use strata_memory::SqliteStore;
-use strata_cli::commands::observe::{generate_report, ObserveArgs};
 
 /// Scenario 9: Cognitive Observability, Mathematical Decay Visualizer & Anti-Pattern Audit
 /// Evaluates:
@@ -57,7 +57,8 @@ pub async fn run_cognitive_observability_scenario() -> Result<()> {
         id: uuid::Uuid::new_v4(),
         signature: "eval_infinite_retry_loop".to_string(),
         pattern_name: "Infinite Subagent Invocation Loop".to_string(),
-        description: "Agent continuously retried failing endpoint without exponential backoff".to_string(),
+        description: "Agent continuously retried failing endpoint without exponential backoff"
+            .to_string(),
         trigger_condition: "HTTP 503 Service Unavailable".to_string(),
         error_type: "NetworkLoop".to_string(),
         mitigation: "Implement jittered exponential backoff and max 3 attempts".to_string(),
@@ -95,31 +96,64 @@ pub async fn run_cognitive_observability_scenario() -> Result<()> {
     let report = generate_report(&store, &args)?;
 
     println!("  [Cognitive Observability Metrics]");
-    println!("    • Total Memories Audited:       {}", report.total_memories);
-    println!("    • Active Semantic Facts:        {}", report.active_semantic_facts);
-    println!("    • Captured Anti-Patterns:       {}", report.anti_patterns_count);
-    println!("    • At-Risk Memories Detected:    {}", report.at_risk_memories_count);
-    println!("    • Positive Feedback Recorded:   {}", report.positive_feedback);
-    println!("    • Implicit Signals Mined:       {}", report.total_implicit_signals);
+    println!(
+        "    • Total Memories Audited:       {}",
+        report.total_memories
+    );
+    println!(
+        "    • Active Semantic Facts:        {}",
+        report.active_semantic_facts
+    );
+    println!(
+        "    • Captured Anti-Patterns:       {}",
+        report.anti_patterns_count
+    );
+    println!(
+        "    • At-Risk Memories Detected:    {}",
+        report.at_risk_memories_count
+    );
+    println!(
+        "    • Positive Feedback Recorded:   {}",
+        report.positive_feedback
+    );
+    println!(
+        "    • Implicit Signals Mined:       {}",
+        report.total_implicit_signals
+    );
 
     if report.total_memories != 3 {
-        bail!("Expected 3 total memories in report, found {}", report.total_memories);
+        bail!(
+            "Expected 3 total memories in report, found {}",
+            report.total_memories
+        );
     }
 
     if report.anti_patterns_count != 1 {
-        bail!("Expected 1 anti-pattern, found {}", report.anti_patterns_count);
+        bail!(
+            "Expected 1 anti-pattern, found {}",
+            report.anti_patterns_count
+        );
     }
 
     if report.anti_patterns[0].severity != "HIGH" {
-        bail!("Expected HIGH severity for anti-pattern, found {}", report.anti_patterns[0].severity);
+        bail!(
+            "Expected HIGH severity for anti-pattern, found {}",
+            report.anti_patterns[0].severity
+        );
     }
 
     if report.positive_feedback != 1 {
-        bail!("Expected 1 positive feedback event, found {}", report.positive_feedback);
+        bail!(
+            "Expected 1 positive feedback event, found {}",
+            report.positive_feedback
+        );
     }
 
     if report.total_implicit_signals != 2 {
-        bail!("Expected 2 implicit signals, found {}", report.total_implicit_signals);
+        bail!(
+            "Expected 2 implicit signals, found {}",
+            report.total_implicit_signals
+        );
     }
 
     // 5. Verify Invariant vs Ephemeral Memory Retention
@@ -130,7 +164,10 @@ pub async fn run_cognitive_observability_scenario() -> Result<()> {
         .expect("Invariant memory must be present");
 
     if !inv_mem.is_invariant || inv_mem.ebbinghaus_retention < 0.99 {
-        bail!("Invariant memory must retain ~1.0 retention score, found {}", inv_mem.ebbinghaus_retention);
+        bail!(
+            "Invariant memory must retain ~1.0 retention score, found {}",
+            inv_mem.ebbinghaus_retention
+        );
     }
 
     let eph_mem = report
@@ -140,7 +177,10 @@ pub async fn run_cognitive_observability_scenario() -> Result<()> {
         .expect("Ephemeral memory must be present");
 
     if eph_mem.ebbinghaus_retention >= 0.5 {
-        bail!("Ephemeral memory from 5 days ago must be at risk / decayed (< 0.5), found {}", eph_mem.ebbinghaus_retention);
+        bail!(
+            "Ephemeral memory from 5 days ago must be at risk / decayed (< 0.5), found {}",
+            eph_mem.ebbinghaus_retention
+        );
     }
 
     // 6. Verify Ebbinghaus Curve Monotonicity

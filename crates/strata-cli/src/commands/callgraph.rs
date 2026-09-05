@@ -1,5 +1,5 @@
-use std::path::{Path, PathBuf};
 use serde_json::json;
+use std::path::{Path, PathBuf};
 
 use strata_core::errors::StrataError;
 use strata_memory::{CallEdge, CallGraph, CallGraphAnalyzer, CallType, LanguageKind};
@@ -9,7 +9,12 @@ fn collect_source_files(dir: &Path, files: &mut Vec<PathBuf>) {
         for entry in entries.filter_map(|e| e.ok()) {
             let path = entry.path();
             let name = entry.file_name().to_string_lossy().to_string();
-            if name.starts_with('.') || name == "target" || name == "node_modules" || name == "dist" || name == "build" {
+            if name.starts_with('.')
+                || name == "target"
+                || name == "node_modules"
+                || name == "dist"
+                || name == "build"
+            {
                 continue;
             }
             if path.is_dir() {
@@ -37,8 +42,9 @@ pub async fn run_callgraph(
     let mut all_edges: Vec<CallEdge> = Vec::new();
 
     if path.is_file() {
-        let content = std::fs::read_to_string(path)
-            .map_err(|e| StrataError::Internal(format!("Failed to read file {}: {e}", path.display())))?;
+        let content = std::fs::read_to_string(path).map_err(|e| {
+            StrataError::Internal(format!("Failed to read file {}: {e}", path.display()))
+        })?;
         let lang = LanguageKind::from_file_path(target_path);
         let edges = analyzer.analyze_source(&content, lang, target_path)?;
         all_edges.extend(edges);
@@ -58,7 +64,9 @@ pub async fn run_callgraph(
             }
         }
     } else {
-        return Err(StrataError::Validation(format!("Path does not exist: {target_path}")));
+        return Err(StrataError::Validation(format!(
+            "Path does not exist: {target_path}"
+        )));
     }
 
     let graph = CallGraph::from_edges(all_edges.clone());
@@ -71,10 +79,18 @@ pub async fn run_callgraph(
                 let p = target_path;
                 graph.callees_of(p, sym).into_iter().cloned().collect()
             }
-            "imports" => graph.file_imports(target_path).into_iter().cloned().collect(),
+            "imports" => graph
+                .file_imports(target_path)
+                .into_iter()
+                .cloned()
+                .collect(),
             _ => {
                 let callers: Vec<_> = graph.callers_of(sym).into_iter().cloned().collect();
-                let callees: Vec<_> = graph.callees_of(target_path, sym).into_iter().cloned().collect();
+                let callees: Vec<_> = graph
+                    .callees_of(target_path, sym)
+                    .into_iter()
+                    .cloned()
+                    .collect();
                 let mut merged = callers;
                 merged.extend(callees);
                 merged
@@ -82,10 +98,14 @@ pub async fn run_callgraph(
         }
     } else {
         match direction {
-            "imports" => all_edges.into_iter().filter(|e| e.call_type == CallType::Import).collect(),
-            "callers" | "callees" | "both" => {
-                all_edges.into_iter().filter(|e| e.call_type != CallType::Import).collect()
-            }
+            "imports" => all_edges
+                .into_iter()
+                .filter(|e| e.call_type == CallType::Import)
+                .collect(),
+            "callers" | "callees" | "both" => all_edges
+                .into_iter()
+                .filter(|e| e.call_type != CallType::Import)
+                .collect(),
             _ => all_edges,
         }
     };
@@ -129,9 +149,13 @@ pub async fn run_callgraph(
     }
 
     // Group by file
-    let mut by_file: std::collections::HashMap<String, Vec<&CallEdge>> = std::collections::HashMap::new();
+    let mut by_file: std::collections::HashMap<String, Vec<&CallEdge>> =
+        std::collections::HashMap::new();
     for edge in display_edges {
-        by_file.entry(edge.caller_file.clone()).or_default().push(edge);
+        by_file
+            .entry(edge.caller_file.clone())
+            .or_default()
+            .push(edge);
     }
 
     println!("\n 📜 CALL & DEPENDENCY HIERARCHY:");
@@ -140,7 +164,10 @@ pub async fn run_callgraph(
         for edge in file_edges {
             match edge.call_type {
                 CallType::Import => {
-                    println!("     📦 [import] line {}: {}", edge.line_number, edge.callee_symbol);
+                    println!(
+                        "     📦 [import] line {}: {}",
+                        edge.line_number, edge.callee_symbol
+                    );
                 }
                 CallType::ConstructorCall => {
                     println!(
@@ -171,7 +198,10 @@ pub async fn run_callgraph(
     }
 
     if total_count > limit {
-        println!("\n ... truncated (showing {} of {} edges, use --limit to expand)", limit, total_count);
+        println!(
+            "\n ... truncated (showing {} of {} edges, use --limit to expand)",
+            limit, total_count
+        );
     }
     println!("══════════════════════════════════════════════════════════════════════════");
 

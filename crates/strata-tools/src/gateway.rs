@@ -1,9 +1,9 @@
-use std::collections::{HashMap, HashSet, VecDeque};
-use std::sync::Arc;
-use std::time::{Duration, Instant};
 use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
 use serde_json::json;
+use std::collections::{HashMap, HashSet, VecDeque};
+use std::sync::Arc;
+use std::time::{Duration, Instant};
 use tokio::sync::RwLock;
 use tracing::{error, info, warn};
 use uuid::Uuid;
@@ -261,19 +261,25 @@ impl DefaultToolGateway {
         }
     }
 
-    async fn record_silent_failure(&self, tool_name: &str, error: &StrataError, input: &serde_json::Value) {
+    async fn record_silent_failure(
+        &self,
+        tool_name: &str,
+        error: &StrataError,
+        input: &serde_json::Value,
+    ) {
         if let Some(ref engine) = self.memory_engine {
             let (err_type, err_msg) = match error {
                 StrataError::Timeout(msg) => ("TimeoutError".to_string(), msg.clone()),
                 StrataError::PermissionDenied(msg) => ("PermissionDenied".to_string(), msg.clone()),
-                StrataError::ExecutionFailed { code, stderr } => (
-                    format!("ExecutionFailed(code={:?})", code),
-                    stderr.clone(),
-                ),
+                StrataError::ExecutionFailed { code, stderr } => {
+                    (format!("ExecutionFailed(code={:?})", code), stderr.clone())
+                }
                 StrataError::ValidationError(msg) => ("ValidationError".to_string(), msg.clone()),
                 StrataError::NotFound(msg) => ("NotFoundError".to_string(), msg.clone()),
                 StrataError::ToolError(msg) => ("ToolExecutionError".to_string(), msg.clone()),
-                StrataError::RateLimitExceeded(msg) => ("RateLimitExceeded".to_string(), msg.clone()),
+                StrataError::RateLimitExceeded(msg) => {
+                    ("RateLimitExceeded".to_string(), msg.clone())
+                }
                 _ => ("InternalError".to_string(), error.to_string()),
             };
 
@@ -330,16 +336,30 @@ impl DefaultToolGateway {
         match exec_res {
             Ok(result) => {
                 // Audit logging: ToolResultReceived (success)
-                self.log_tool_result(invocation_id, tool_name, &result, false, duration_ms, session)
-                    .await;
+                self.log_tool_result(
+                    invocation_id,
+                    tool_name,
+                    &result,
+                    false,
+                    duration_ms,
+                    session,
+                )
+                .await;
                 Ok(result)
             }
             Err(err) => {
                 let err_val = json!({ "error": err.to_string() });
 
                 // Audit logging: ToolResultReceived (error)
-                self.log_tool_result(invocation_id, tool_name, &err_val, true, duration_ms, session)
-                    .await;
+                self.log_tool_result(
+                    invocation_id,
+                    tool_name,
+                    &err_val,
+                    true,
+                    duration_ms,
+                    session,
+                )
+                .await;
 
                 // Out-of-band automatic failure capture
                 self.record_silent_failure(tool_name, &err, &input).await;

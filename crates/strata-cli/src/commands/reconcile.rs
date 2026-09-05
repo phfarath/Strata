@@ -1,8 +1,8 @@
+use anyhow::{Context, Result};
+use clap::Args;
 use std::env;
 use std::path::PathBuf;
 use std::sync::Arc;
-use anyhow::{Context, Result};
-use clap::Args;
 use strata_memory::{CodeAnchorEngine, SqliteStore};
 use strata_reasoning::WorldModel;
 
@@ -104,10 +104,22 @@ fn render_reconciliation_cli(report: &strata_memory::ast::ReconciliationReport) 
     println!("╚══════════════════════════════════════════════════════════════════════════════╝\n");
 
     println!("📊 FACTS SCANNED:        {}", report.total_facts_scanned);
-    println!("🟢 ACTIVE INTACT FACTS:  \x1b[1;32m{}\x1b[0m", report.active_facts.len());
-    println!("⚠️  STALE FACTS (MODIFIED): \x1b[1;31m{}\x1b[0m", report.stale_facts.len());
-    println!("🟡 SUSPICIOUS FACTS:     \x1b[1;33m{}\x1b[0m (via Causal Blast Radius)", report.suspicious_facts.len());
-    println!("🚚 RELOCATED ANCHORS:    \x1b[1;36m{}\x1b[0m (via Blake3 Content-Hash)", report.moved_anchors.len());
+    println!(
+        "🟢 ACTIVE INTACT FACTS:  \x1b[1;32m{}\x1b[0m",
+        report.active_facts.len()
+    );
+    println!(
+        "⚠️  STALE FACTS (MODIFIED): \x1b[1;31m{}\x1b[0m",
+        report.stale_facts.len()
+    );
+    println!(
+        "🟡 SUSPICIOUS FACTS:     \x1b[1;33m{}\x1b[0m (via Causal Blast Radius)",
+        report.suspicious_facts.len()
+    );
+    println!(
+        "🚚 RELOCATED ANCHORS:    \x1b[1;36m{}\x1b[0m (via Blake3 Content-Hash)",
+        report.moved_anchors.len()
+    );
     println!("📝 UPDATED METADATA:     {}", report.updated_facts.len());
 
     if let Some(ref root) = report.merkle_root_after {
@@ -115,27 +127,51 @@ fn render_reconciliation_cli(report: &strata_memory::ast::ReconciliationReport) 
     }
 
     if !report.stale_facts.is_empty() {
-        println!("\n────────────────────────────────────────────────────────────────────────────────");
-        println!("⚠️  STALE FACTS REQUIRING ATTENTION ({})", report.stale_facts.len());
-        println!("────────────────────────────────────────────────────────────────────────────────");
+        println!(
+            "\n────────────────────────────────────────────────────────────────────────────────"
+        );
+        println!(
+            "⚠️  STALE FACTS REQUIRING ATTENTION ({})",
+            report.stale_facts.len()
+        );
+        println!(
+            "────────────────────────────────────────────────────────────────────────────────"
+        );
         for id in &report.stale_facts {
-            println!("   • Fact ID: \x1b[1;31m{}\x1b[0m (Code anchor invalidated, decay boosted)", id);
+            println!(
+                "   • Fact ID: \x1b[1;31m{}\x1b[0m (Code anchor invalidated, decay boosted)",
+                id
+            );
         }
     }
 
     if !report.suspicious_facts.is_empty() {
-        println!("\n────────────────────────────────────────────────────────────────────────────────");
-        println!("🟡 SUSPICIOUS DEPENDENT FACTS ({})", report.suspicious_facts.len());
-        println!("────────────────────────────────────────────────────────────────────────────────");
+        println!(
+            "\n────────────────────────────────────────────────────────────────────────────────"
+        );
+        println!(
+            "🟡 SUSPICIOUS DEPENDENT FACTS ({})",
+            report.suspicious_facts.len()
+        );
+        println!(
+            "────────────────────────────────────────────────────────────────────────────────"
+        );
         for id in &report.suspicious_facts {
             println!("   • Fact ID: \x1b[1;33m{}\x1b[0m (Impacted by upstream code changes in blast radius)", id);
         }
     }
 
     if !report.moved_anchors.is_empty() {
-        println!("\n────────────────────────────────────────────────────────────────────────────────");
-        println!("🚚 RELOCATED ANCHORS PRESERVED ({})", report.moved_anchors.len());
-        println!("────────────────────────────────────────────────────────────────────────────────");
+        println!(
+            "\n────────────────────────────────────────────────────────────────────────────────"
+        );
+        println!(
+            "🚚 RELOCATED ANCHORS PRESERVED ({})",
+            report.moved_anchors.len()
+        );
+        println!(
+            "────────────────────────────────────────────────────────────────────────────────"
+        );
         for id in &report.moved_anchors {
             println!("   • Fact ID: \x1b[1;36m{}\x1b[0m (Rename/move tolerated via Blake3 exact body match)", id);
         }
@@ -147,5 +183,7 @@ fn render_reconciliation_cli(report: &strata_memory::ast::ReconciliationReport) 
         println!("\n💡 Tip: Run `strata prune` to enforce decay pruning on stale facts, or re-verify suspicious facts.");
     }
 
-    println!("\n════════════════════════════════════════════════════════════════════════════════\n");
+    println!(
+        "\n════════════════════════════════════════════════════════════════════════════════\n"
+    );
 }

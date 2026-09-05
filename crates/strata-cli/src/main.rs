@@ -1,7 +1,7 @@
-use std::path::PathBuf;
-use std::sync::Arc;
 use anyhow::{Context, Result};
 use clap::{Parser, Subcommand};
+use std::path::PathBuf;
+use std::sync::Arc;
 use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt, EnvFilter};
 use uuid::Uuid;
 
@@ -41,7 +41,6 @@ use strata_cli::{
     mcp::server::McpServer,
 };
 
-
 #[derive(Parser, Debug)]
 #[command(name = "strata", author, version, about = "Strata — Portable Persistent Memory Layer & Cognitive Runtime", long_about = None)]
 struct Cli {
@@ -59,7 +58,10 @@ struct Cli {
 enum Commands {
     /// Initialize Strata integrations for installed hosts (Cursor, Claude Code, Codex, Gemini)
     Init {
-        #[arg(long, help = "Specific host to configure: 'cursor', 'claude', 'codex', 'gemini', or 'all'")]
+        #[arg(
+            long,
+            help = "Specific host to configure: 'cursor', 'claude', 'codex', 'gemini', or 'all'"
+        )]
         host: Option<String>,
 
         #[arg(long, default_value = ".", help = "Target workspace directory")]
@@ -88,10 +90,16 @@ enum Commands {
         #[arg(long, default_value_t = 5, help = "Maximum results to return")]
         limit: usize,
 
-        #[arg(long, help = "Optional scope filter: 'global', 'project:<name>', 'session:<id>'")]
+        #[arg(
+            long,
+            help = "Optional scope filter: 'global', 'project:<name>', 'session:<id>'"
+        )]
         scope: Option<String>,
 
-        #[arg(long, help = "Filter by memory type: 'episodic', 'semantic', 'procedural', 'negative_pattern'")]
+        #[arg(
+            long,
+            help = "Filter by memory type: 'episodic', 'semantic', 'procedural', 'negative_pattern'"
+        )]
         memory_type: Option<String>,
 
         #[arg(long, help = "Output as raw JSON")]
@@ -108,7 +116,11 @@ enum Commands {
         #[arg(long, help = "Short headline or mnemonic summary (< 60 chars)")]
         summary: Option<String>,
 
-        #[arg(long, default_value = "semantic", help = "Memory type: episodic, semantic, procedural, negative_pattern")]
+        #[arg(
+            long,
+            default_value = "semantic",
+            help = "Memory type: episodic, semantic, procedural, negative_pattern"
+        )]
         memory_type: String,
 
         #[arg(long, default_value = "global", help = "Memory scope")]
@@ -152,7 +164,10 @@ enum Commands {
         #[arg(long, help = "Consolidate all unconsolidated sessions")]
         all: bool,
 
-        #[arg(long, help = "LLM model slug for reasoning distillation (default: OpenRouter free tier)")]
+        #[arg(
+            long,
+            help = "LLM model slug for reasoning distillation (default: OpenRouter free tier)"
+        )]
         model: Option<String>,
 
         #[arg(long, help = "Output report as raw JSON")]
@@ -161,7 +176,11 @@ enum Commands {
 
     /// Run mathematical ACT-R decay engine to prune expired low-importance memories
     Prune {
-        #[arg(long, default_value_t = 0.2, help = "Activation threshold below which memories are pruned")]
+        #[arg(
+            long,
+            default_value_t = 0.2,
+            help = "Activation threshold below which memories are pruned"
+        )]
         threshold: f32,
 
         #[arg(long, help = "Optional scope filter")]
@@ -199,7 +218,12 @@ enum Commands {
     Ui,
 
     /// Analyze architectural causal blast radius, ripple effects, and breaking risk before editing code
-    #[command(name = "blast-radius", alias = "causal", alias = "impact", alias = "world-model")]
+    #[command(
+        name = "blast-radius",
+        alias = "causal",
+        alias = "impact",
+        alias = "world-model"
+    )]
     BlastRadius(BlastRadiusArgs),
 
     /// Hierarchical goal planning, topological wave decomposition, and DAG execution scheduler
@@ -250,15 +274,29 @@ enum Commands {
     Workspace(WorkspaceArgs),
 
     /// Graph community extraction and high-level architectural clustering
-    #[command(name = "architecture", alias = "cluster", alias = "communities", alias = "macro")]
+    #[command(
+        name = "architecture",
+        alias = "cluster",
+        alias = "communities",
+        alias = "macro"
+    )]
     Architecture(ArchitectureArgs),
 
     /// Human-in-the-loop approval and promotion of memories/facts to permanent Core Tier (frozen retention, R=1.0)
-    #[command(name = "promote", alias = "memory-promote", alias = "approve", alias = "freeze")]
+    #[command(
+        name = "promote",
+        alias = "memory-promote",
+        alias = "approve",
+        alias = "freeze"
+    )]
     Promote(PromoteArgs),
 
     /// Reconcile code-anchored semantic facts bi-temporally against current code ASTs and Git commits
-    #[command(name = "reconcile", alias = "reconcile-anchors", alias = "sync-anchors")]
+    #[command(
+        name = "reconcile",
+        alias = "reconcile-anchors",
+        alias = "sync-anchors"
+    )]
     Reconcile(ReconcileArgs),
 }
 
@@ -291,8 +329,6 @@ pub enum McpAction {
     },
 }
 
-
-
 #[tokio::main]
 async fn main() -> Result<()> {
     let cli = Cli::parse();
@@ -310,7 +346,12 @@ async fn main() -> Result<()> {
         .init();
 
     // Fast-path for init (doesn't need SQLite DB opened)
-    if let Commands::Init { host, workspace, force } = &cli.command {
+    if let Commands::Init {
+        host,
+        workspace,
+        force,
+    } = &cli.command
+    {
         return run_init(InitOptions {
             workspace_dir: workspace.clone(),
             target_host: host.clone(),
@@ -319,16 +360,27 @@ async fn main() -> Result<()> {
     }
 
     // Fast-path for MCP installation / uninstallation subcommands (does not require SQLite DB)
-    if let Commands::Mcp { action: Some(ref action) } = cli.command {
+    if let Commands::Mcp {
+        action: Some(ref action),
+    } = cli.command
+    {
         match action {
-            McpAction::Install { client, global, workspace } => {
+            McpAction::Install {
+                client,
+                global,
+                workspace,
+            } => {
                 return run_mcp_install(McpInstallOptions {
                     client: client.clone(),
                     global: *global,
                     workspace_dir: workspace.clone(),
                 });
             }
-            McpAction::Uninstall { client, global, workspace } => {
+            McpAction::Uninstall {
+                client,
+                global,
+                workspace,
+            } => {
                 return run_mcp_uninstall(McpUninstallOptions {
                     client: client.clone(),
                     global: *global,
@@ -358,7 +410,14 @@ async fn main() -> Result<()> {
     }
 
     // Fast-path for CallGraph (analyzes code AST directly on-the-fly)
-    if let Commands::CallGraph { path, symbol, direction, limit, json } = &cli.command {
+    if let Commands::CallGraph {
+        path,
+        symbol,
+        direction,
+        limit,
+        json,
+    } = &cli.command
+    {
         return run_callgraph(path, symbol.as_deref(), direction, *json, *limit)
             .await
             .map_err(Into::into);
@@ -381,13 +440,23 @@ async fn main() -> Result<()> {
 
     let db_path = resolve_db_path(cli.db_path);
 
-    let engine = Arc::new(
-        SqliteMemoryEngine::open(&db_path, None)
-            .with_context(|| format!("Failed to open Strata SQLite database at: {}", db_path.display()))?,
-    );
+    let engine = Arc::new(SqliteMemoryEngine::open(&db_path, None).with_context(|| {
+        format!(
+            "Failed to open Strata SQLite database at: {}",
+            db_path.display()
+        )
+    })?);
 
     match cli.command {
-        Commands::Init { .. } | Commands::Plan(_) | Commands::Auth(_) | Commands::Key(_) | Commands::Login(_) | Commands::Logout | Commands::CallGraph { .. } | Commands::Workspace(_) | Commands::Architecture(_) => unreachable!(),
+        Commands::Init { .. }
+        | Commands::Plan(_)
+        | Commands::Auth(_)
+        | Commands::Key(_)
+        | Commands::Login(_)
+        | Commands::Logout
+        | Commands::CallGraph { .. }
+        | Commands::Workspace(_)
+        | Commands::Architecture(_) => unreachable!(),
 
         Commands::Mcp { action: None } => {
             let server = McpServer::new(engine);
@@ -399,19 +468,50 @@ async fn main() -> Result<()> {
             handle_hook(hook, engine).await?;
         }
 
-        Commands::Search { query, limit, scope, memory_type, json } => {
-            run_search(SearchOptions { query, limit, scope, memory_type, json }, engine).await?;
+        Commands::Search {
+            query,
+            limit,
+            scope,
+            memory_type,
+            json,
+        } => {
+            run_search(
+                SearchOptions {
+                    query,
+                    limit,
+                    scope,
+                    memory_type,
+                    json,
+                },
+                engine,
+            )
+            .await?;
         }
 
         Commands::Doctor => {
             run_doctor(&db_path, engine).await?;
         }
 
-        Commands::Write { content, summary, memory_type, scope, tags, importance, confidence } => {
-            let m_type = memory_type.parse::<MemoryType>().unwrap_or(MemoryType::Semantic);
+        Commands::Write {
+            content,
+            summary,
+            memory_type,
+            scope,
+            tags,
+            importance,
+            confidence,
+        } => {
+            let m_type = memory_type
+                .parse::<MemoryType>()
+                .unwrap_or(MemoryType::Semantic);
             let m_scope = scope.parse::<Scope>().unwrap_or(Scope::Global);
             let tag_list = tags
-                .map(|t| t.split(',').map(|s| s.trim().to_string()).filter(|s| !s.is_empty()).collect())
+                .map(|t| {
+                    t.split(',')
+                        .map(|s| s.trim().to_string())
+                        .filter(|s| !s.is_empty())
+                        .collect()
+                })
                 .unwrap_or_default();
 
             let mut record = MemoryRecord::new(m_type, content, m_scope)
@@ -432,7 +532,8 @@ async fn main() -> Result<()> {
         }
 
         Commands::Get { id, json } => {
-            let uuid = Uuid::parse_str(&id).with_context(|| format!("Invalid UUID format: {id}"))?;
+            let uuid =
+                Uuid::parse_str(&id).with_context(|| format!("Invalid UUID format: {id}"))?;
             match engine.get(&uuid).await? {
                 Some(record) => {
                     if json {
@@ -461,12 +562,19 @@ async fn main() -> Result<()> {
             }
         }
 
-        Commands::Digest { session_id, tokens, json } => {
+        Commands::Digest {
+            session_id,
+            tokens,
+            json,
+        } => {
             let digest = engine.digest(&session_id, Some(tokens)).await?;
             if json {
                 println!("{}", serde_json::to_string_pretty(&digest)?);
             } else {
-                println!("\n🧠 [Strata Memory Digest - Session '{}']", digest.session_id);
+                println!(
+                    "\n🧠 [Strata Memory Digest - Session '{}']",
+                    digest.session_id
+                );
                 println!("═════════════════════════════════════════");
                 if !digest.summary.is_empty() {
                     println!("Summary: {}", digest.summary);
@@ -480,7 +588,10 @@ async fn main() -> Result<()> {
                 if !digest.failure_warnings.is_empty() {
                     println!("\n⚠️ Known Failure Warnings:");
                     for f in &digest.failure_warnings {
-                        println!("  • [{}] {}: {}", f.error_type, f.pattern_name, f.mitigation);
+                        println!(
+                            "  • [{}] {}: {}",
+                            f.error_type, f.pattern_name, f.mitigation
+                        );
                     }
                 }
                 if !digest.key_pointers.is_empty() {
@@ -493,14 +604,42 @@ async fn main() -> Result<()> {
             }
         }
 
-        Commands::Consolidate { session, all, model, json } => {
+        Commands::Consolidate {
+            session,
+            all,
+            model,
+            json,
+        } => {
             let store = engine.store_arc();
-            run_consolidate(ConsolidateOptions { session, all, model, json }, store).await?;
+            run_consolidate(
+                ConsolidateOptions {
+                    session,
+                    all,
+                    model,
+                    json,
+                },
+                store,
+            )
+            .await?;
         }
 
-        Commands::Prune { threshold, scope, dry_run, json } => {
+        Commands::Prune {
+            threshold,
+            scope,
+            dry_run,
+            json,
+        } => {
             let store = engine.store_arc();
-            run_prune(PruneOptions { threshold, scope, dry_run, json }, store).await?;
+            run_prune(
+                PruneOptions {
+                    threshold,
+                    scope,
+                    dry_run,
+                    json,
+                },
+                store,
+            )
+            .await?;
         }
 
         Commands::Sync(args) => {
@@ -556,7 +695,6 @@ async fn main() -> Result<()> {
             run_reconcile(args, store).await?;
         }
     }
-
 
     Ok(())
 }

@@ -1,11 +1,10 @@
+use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 use std::time::Instant;
-use serde::{Deserialize, Serialize};
 
 use strata_core::errors::StrataError;
 use strata_memory::{
-    CallGraphAnalyzer, ClusteringConfig, CommunityDetector,
-    LanguageKind, SqliteStore,
+    CallGraphAnalyzer, ClusteringConfig, CommunityDetector, LanguageKind, SqliteStore,
 };
 
 /// Evaluation scenario measuring Architecture Graph Community Extraction accuracy, modularity, and speed (< 20ms).
@@ -117,11 +116,31 @@ def replicate_delta(event):
 
         // 2. Extract call and import edges across files
         let mut all_edges = Vec::new();
-        all_edges.extend(analyzer.analyze_source(rust_auth_jwt, LanguageKind::Rust, "src/auth/jwt.rs")?);
-        all_edges.extend(analyzer.analyze_source(rust_auth_login, LanguageKind::Rust, "src/auth/login.rs")?);
-        all_edges.extend(analyzer.analyze_source(rust_db_store, LanguageKind::Rust, "src/db/store.rs")?);
-        all_edges.extend(analyzer.analyze_source(ts_api_routes, LanguageKind::TypeScript, "src/api/routes.ts")?);
-        all_edges.extend(analyzer.analyze_source(py_sync_worker, LanguageKind::Python, "workers/sync_worker.py")?);
+        all_edges.extend(analyzer.analyze_source(
+            rust_auth_jwt,
+            LanguageKind::Rust,
+            "src/auth/jwt.rs",
+        )?);
+        all_edges.extend(analyzer.analyze_source(
+            rust_auth_login,
+            LanguageKind::Rust,
+            "src/auth/login.rs",
+        )?);
+        all_edges.extend(analyzer.analyze_source(
+            rust_db_store,
+            LanguageKind::Rust,
+            "src/db/store.rs",
+        )?);
+        all_edges.extend(analyzer.analyze_source(
+            ts_api_routes,
+            LanguageKind::TypeScript,
+            "src/api/routes.ts",
+        )?);
+        all_edges.extend(analyzer.analyze_source(
+            py_sync_worker,
+            LanguageKind::Python,
+            "workers/sync_worker.py",
+        )?);
 
         // 3. Run Community Detection & Architecture Clustering
         let config = ClusteringConfig {
@@ -152,7 +171,10 @@ def replicate_delta(event):
             if c.name.contains("Auth") || c.name.contains("Security") {
                 has_auth_cluster = true;
             }
-            if c.name.contains("Database") || c.name.contains("Persistence") || c.name.contains("Store") {
+            if c.name.contains("Database")
+                || c.name.contains("Persistence")
+                || c.name.contains("Store")
+            {
                 has_db_cluster = true;
             }
         }
@@ -161,12 +183,15 @@ def replicate_delta(event):
             && total_nodes >= 8
             && total_edges >= 7
             && (has_auth_cluster || has_db_cluster)
-            && summary.formatted_summary.contains("High-Level Architecture Map");
+            && summary
+                .formatted_summary
+                .contains("High-Level Architecture Map");
 
         // 5. Test SQLite cache persistence and retrieval
         store.cache_architecture_summary(&summary)?;
         let cached = store.get_cached_architecture_summary("eval-benchmark-workspace")?;
-        let cache_roundtrip_passed = cached.is_some() && cached.unwrap().clusters.len() == clusters_count;
+        let cache_roundtrip_passed =
+            cached.is_some() && cached.unwrap().clusters.len() == clusters_count;
 
         Ok(ArchitectureClusteringEvalResult {
             total_files_analyzed: total_files,
@@ -193,7 +218,10 @@ mod tests {
             .expect("Architecture clustering eval execution failed");
 
         assert!(result.accuracy_passed, "Accuracy verification failed");
-        assert!(result.cache_roundtrip_passed, "SQLite cache verification failed");
+        assert!(
+            result.cache_roundtrip_passed,
+            "SQLite cache verification failed"
+        );
         assert!(
             result.is_latency_sub_20ms,
             "Latency exceeded 20ms: {} micros",

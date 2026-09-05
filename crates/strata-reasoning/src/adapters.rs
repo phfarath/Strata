@@ -165,10 +165,9 @@ impl ReasoningEngine for OpenAiAdapter {
             )));
         }
 
-        let res_json: serde_json::Value = response
-            .json()
-            .await
-            .map_err(|e| StrataError::Reasoning(format!("Failed to parse OpenAI JSON response: {}", e)))?;
+        let res_json: serde_json::Value = response.json().await.map_err(|e| {
+            StrataError::Reasoning(format!("Failed to parse OpenAI JSON response: {}", e))
+        })?;
 
         let choice = res_json["choices"]
             .get(0)
@@ -185,9 +184,13 @@ impl ReasoningEngine for OpenAiAdapter {
         if let Some(calls_val) = msg["tool_calls"].as_array() {
             for call in calls_val {
                 let id = call["id"].as_str().unwrap_or_default().to_string();
-                let name = call["function"]["name"].as_str().unwrap_or_default().to_string();
+                let name = call["function"]["name"]
+                    .as_str()
+                    .unwrap_or_default()
+                    .to_string();
                 let args_raw = call["function"]["arguments"].as_str().unwrap_or("{}");
-                let arguments: serde_json::Value = serde_json::from_str(args_raw).unwrap_or(json!({}));
+                let arguments: serde_json::Value =
+                    serde_json::from_str(args_raw).unwrap_or(json!({}));
                 tool_calls.push(ToolCall::new(id, name, arguments));
             }
         }
@@ -390,7 +393,9 @@ impl ReasoningEngine for OpenRouterAdapter {
             .json(&body)
             .send()
             .await
-            .map_err(|e| StrataError::Reasoning(format!("OpenRouter HTTP request failed: {}", e)))?;
+            .map_err(|e| {
+                StrataError::Reasoning(format!("OpenRouter HTTP request failed: {}", e))
+            })?;
 
         if !response.status().is_success() {
             let status = response.status();
@@ -401,14 +406,13 @@ impl ReasoningEngine for OpenRouterAdapter {
             )));
         }
 
-        let res_json: serde_json::Value = response
-            .json()
-            .await
-            .map_err(|e| StrataError::Reasoning(format!("Failed to parse OpenRouter JSON response: {}", e)))?;
+        let res_json: serde_json::Value = response.json().await.map_err(|e| {
+            StrataError::Reasoning(format!("Failed to parse OpenRouter JSON response: {}", e))
+        })?;
 
-        let choice = res_json["choices"]
-            .get(0)
-            .ok_or_else(|| StrataError::Reasoning("OpenRouter response had no choices".to_string()))?;
+        let choice = res_json["choices"].get(0).ok_or_else(|| {
+            StrataError::Reasoning("OpenRouter response had no choices".to_string())
+        })?;
 
         let msg = &choice["message"];
         let content = msg["content"].as_str().map(|s| s.to_string());
@@ -421,9 +425,13 @@ impl ReasoningEngine for OpenRouterAdapter {
         if let Some(calls_val) = msg["tool_calls"].as_array() {
             for call in calls_val {
                 let id = call["id"].as_str().unwrap_or_default().to_string();
-                let name = call["function"]["name"].as_str().unwrap_or_default().to_string();
+                let name = call["function"]["name"]
+                    .as_str()
+                    .unwrap_or_default()
+                    .to_string();
                 let args_raw = call["function"]["arguments"].as_str().unwrap_or("{}");
-                let arguments: serde_json::Value = serde_json::from_str(args_raw).unwrap_or(json!({}));
+                let arguments: serde_json::Value =
+                    serde_json::from_str(args_raw).unwrap_or(json!({}));
                 tool_calls.push(ToolCall::new(id, name, arguments));
             }
         }
@@ -598,10 +606,9 @@ impl ReasoningEngine for AnthropicAdapter {
             )));
         }
 
-        let res_json: serde_json::Value = response
-            .json()
-            .await
-            .map_err(|e| StrataError::Reasoning(format!("Failed to parse Anthropic JSON response: {}", e)))?;
+        let res_json: serde_json::Value = response.json().await.map_err(|e| {
+            StrataError::Reasoning(format!("Failed to parse Anthropic JSON response: {}", e))
+        })?;
 
         let mut text_parts = Vec::new();
         let mut tool_calls = Vec::new();
@@ -764,7 +771,7 @@ impl ReasoningEngine for GeminiAdapter {
         if let Some(max_t) = context.max_tokens {
             gen_config["maxOutputTokens"] = json!(max_t);
         }
-        if gen_config.as_object().map_or(false, |o| !o.is_empty()) {
+        if gen_config.as_object().is_some_and(|o| !o.is_empty()) {
             body["generationConfig"] = gen_config;
         }
 
@@ -810,14 +817,13 @@ impl ReasoningEngine for GeminiAdapter {
             )));
         }
 
-        let res_json: serde_json::Value = response
-            .json()
-            .await
-            .map_err(|e| StrataError::Reasoning(format!("Failed to parse Gemini JSON response: {}", e)))?;
+        let res_json: serde_json::Value = response.json().await.map_err(|e| {
+            StrataError::Reasoning(format!("Failed to parse Gemini JSON response: {}", e))
+        })?;
 
-        let candidate = res_json["candidates"]
-            .get(0)
-            .ok_or_else(|| StrataError::Reasoning("Gemini response had no candidates".to_string()))?;
+        let candidate = res_json["candidates"].get(0).ok_or_else(|| {
+            StrataError::Reasoning("Gemini response had no candidates".to_string())
+        })?;
 
         let mut text_parts = Vec::new();
         let mut tool_calls = Vec::new();

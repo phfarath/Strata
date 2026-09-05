@@ -1,8 +1,8 @@
 use anyhow::{bail, Result};
 use chrono::Utc;
 use strata_core::events::{
-    ErrorObserved, Event, EventPayload, SessionEnded, SessionStarted, TaskCompleted,
-    TaskStarted, ToolInvoked, ToolResultReceived,
+    ErrorObserved, Event, EventPayload, SessionEnded, SessionStarted, TaskCompleted, TaskStarted,
+    ToolInvoked, ToolResultReceived,
 };
 use strata_memory::{ConsolidationPipeline, MockEmbeddingProvider, SqliteStore};
 use strata_reasoning::{
@@ -52,7 +52,10 @@ pub async fn run_procedural_skill_distillation_scenario() -> Result<()> {
         EventPayload::TaskStarted(TaskStarted {
             task_id: "task-cargo-fix-01".to_string(),
             title: "Resolve missing serde_json dependency".to_string(),
-            description: Some("Diagnose compiler errors and add missing dependency with derive features".to_string()),
+            description: Some(
+                "Diagnose compiler errors and add missing dependency with derive features"
+                    .to_string(),
+            ),
             parent_task_id: None,
             session_id: session_id.to_string(),
             timestamp: start_time,
@@ -234,7 +237,9 @@ pub async fn run_procedural_skill_distillation_scenario() -> Result<()> {
         negative_patterns: vec![],
     };
 
-    reasoning_engine.push_distillation_output(&structured_distillation).await;
+    reasoning_engine
+        .push_distillation_output(&structured_distillation)
+        .await;
 
     // 4. Run consolidation pipeline
     let result = pipeline
@@ -243,8 +248,14 @@ pub async fn run_procedural_skill_distillation_scenario() -> Result<()> {
 
     println!("  [Consolidation Output]");
     println!("    • Events Processed:    {}", result.events_processed);
-    println!("    • Episodic Memories:   {}", result.episodic_memories.len());
-    println!("    • Procedural Skills:   {}", result.procedural_skills.len());
+    println!(
+        "    • Episodic Memories:   {}",
+        result.episodic_memories.len()
+    );
+    println!(
+        "    • Procedural Skills:   {}",
+        result.procedural_skills.len()
+    );
 
     if result.episodic_memories.is_empty() {
         bail!("Expected at least 1 episodic memory to be created");
@@ -263,7 +274,10 @@ pub async fn run_procedural_skill_distillation_scenario() -> Result<()> {
     println!("    • Step Count:     {}", distilled_skill.steps.len());
 
     if distilled_skill.steps.len() != 3 {
-        bail!("Procedural skill should have exactly 3 steps, found: {}", distilled_skill.steps.len());
+        bail!(
+            "Procedural skill should have exactly 3 steps, found: {}",
+            distilled_skill.steps.len()
+        );
     }
 
     if distilled_skill.preconditions.is_empty() {
@@ -276,9 +290,15 @@ pub async fn run_procedural_skill_distillation_scenario() -> Result<()> {
         .expect("Procedural skill must exist in SQLite store");
 
     if retrieved_skill.name != distilled_skill.name {
-        bail!("Retrieved skill name mismatch: {} vs {}", retrieved_skill.name, distilled_skill.name);
+        bail!(
+            "Retrieved skill name mismatch: {} vs {}",
+            retrieved_skill.name,
+            distilled_skill.name
+        );
     }
 
-    println!("  ✓ Procedural skill distillation and failure-recovery learning verified successfully!");
+    println!(
+        "  ✓ Procedural skill distillation and failure-recovery learning verified successfully!"
+    );
     Ok(())
 }

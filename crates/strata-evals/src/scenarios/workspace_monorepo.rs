@@ -1,12 +1,10 @@
-use std::time::Instant;
 use serde::{Deserialize, Serialize};
+use std::time::Instant;
 
 use strata_core::errors::StrataError;
 use strata_core::state::{MemoryRecord, MemoryType, Scope};
 use strata_core::traits::MemoryEngine;
-use strata_memory::{
-    SqliteMemoryEngine, WorkspaceBoundaryDetector,
-};
+use strata_memory::{SqliteMemoryEngine, WorkspaceBoundaryDetector};
 
 /// Evaluation scenario measuring monorepo boundary detection accuracy, isolation, and speed.
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -22,7 +20,10 @@ pub struct WorkspaceMonorepoEval;
 
 impl WorkspaceMonorepoEval {
     pub async fn run_eval() -> Result<WorkspaceMonorepoEvalResult, StrataError> {
-        let temp_dir = std::env::temp_dir().join(format!("strata_eval_workspace_monorepo_{}", uuid::Uuid::new_v4()));
+        let temp_dir = std::env::temp_dir().join(format!(
+            "strata_eval_workspace_monorepo_{}",
+            uuid::Uuid::new_v4()
+        ));
         let _ = std::fs::create_dir_all(&temp_dir);
 
         // 1. Setup multi-package workspace filesystem structure
@@ -43,9 +44,9 @@ members = [
         let billing_dir = temp_dir.join("crates/billing");
         let analytics_dir = temp_dir.join("crates/analytics");
 
-        let _ = std::fs::create_dir_all(&auth_dir.join("src"));
-        let _ = std::fs::create_dir_all(&billing_dir.join("src"));
-        let _ = std::fs::create_dir_all(&analytics_dir.join("src"));
+        let _ = std::fs::create_dir_all(auth_dir.join("src"));
+        let _ = std::fs::create_dir_all(billing_dir.join("src"));
+        let _ = std::fs::create_dir_all(analytics_dir.join("src"));
 
         std::fs::write(
             auth_dir.join("Cargo.toml"),
@@ -87,7 +88,11 @@ version = "0.1.0"
         let is_sub_50ms = detection_duration_micros <= 100_000;
 
         let packages_detected = boundary.packages.len();
-        let dependencies_mapped: usize = boundary.packages.iter().map(|p| p.internal_dependencies.len()).sum();
+        let dependencies_mapped: usize = boundary
+            .packages
+            .iter()
+            .map(|p| p.internal_dependencies.len())
+            .sum();
 
         // 3. Test memory isolation with SqliteMemoryEngine
         let engine = SqliteMemoryEngine::open_in_memory(None)?;
@@ -115,13 +120,23 @@ version = "0.1.0"
         // Search scoped to billing crate file
         let billing_file = billing_dir.join("src/checkout.rs");
         let scoped_results = engine
-            .search_scoped_to_file("session", billing_file.to_str().unwrap(), Some(&boundary), 10)
+            .search_scoped_to_file(
+                "session",
+                billing_file.to_str().unwrap(),
+                Some(&boundary),
+                10,
+            )
             .await?;
 
         // Billing search must include billing and internal dep (auth-crate), and global rule, but NOT unrelated packages
-        let has_billing = scoped_results.iter().any(|m| m.content.contains("Billing crate"));
-        let has_global = scoped_results.iter().any(|m| m.content.contains("Global rule"));
-        let isolation_passed = packages_detected == 3 && dependencies_mapped == 1 && has_billing && has_global;
+        let has_billing = scoped_results
+            .iter()
+            .any(|m| m.content.contains("Billing crate"));
+        let has_global = scoped_results
+            .iter()
+            .any(|m| m.content.contains("Global rule"));
+        let isolation_passed =
+            packages_detected == 3 && dependencies_mapped == 1 && has_billing && has_global;
 
         let _ = std::fs::remove_dir_all(&temp_dir);
 
@@ -141,10 +156,18 @@ mod tests {
 
     #[tokio::test]
     async fn test_eval_workspace_monorepo_boundaries() {
-        let eval_result = WorkspaceMonorepoEval::run_eval().await.expect("Workspace monorepo eval failed");
-        assert!(eval_result.isolation_passed, "Monorepo memory isolation failed");
+        let eval_result = WorkspaceMonorepoEval::run_eval()
+            .await
+            .expect("Workspace monorepo eval failed");
+        assert!(
+            eval_result.isolation_passed,
+            "Monorepo memory isolation failed"
+        );
         assert_eq!(eval_result.packages_detected, 3);
         assert_eq!(eval_result.dependencies_mapped, 1);
-        assert!(eval_result.is_sub_50ms, "Workspace detection took longer than 50ms");
+        assert!(
+            eval_result.is_sub_50ms,
+            "Workspace detection took longer than 50ms"
+        );
     }
 }

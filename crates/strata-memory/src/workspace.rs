@@ -1,5 +1,5 @@
-use std::path::Path;
 use serde::{Deserialize, Serialize};
+use std::path::Path;
 
 use strata_core::errors::StrataError;
 use strata_core::state::Scope;
@@ -114,7 +114,11 @@ impl WorkspaceBoundary {
             normalized_target.clone()
         } else {
             let root = normalize_path_str(&self.root_path);
-            format!("{}/{}", root.trim_end_matches('/'), normalized_target.trim_start_matches('/'))
+            format!(
+                "{}/{}",
+                root.trim_end_matches('/'),
+                normalized_target.trim_start_matches('/')
+            )
         };
 
         let mut best_match: Option<&MonorepoPackage> = None;
@@ -128,8 +132,10 @@ impl WorkspaceBoundary {
                 format!("{normalized_pkg_root}/")
             };
 
-            if absolute_target.starts_with(&prefix) || absolute_target == normalized_pkg_root
-                || normalized_target.starts_with(&prefix) || normalized_target == normalized_pkg_root
+            if absolute_target.starts_with(&prefix)
+                || absolute_target == normalized_pkg_root
+                || normalized_target.starts_with(&prefix)
+                || normalized_target == normalized_pkg_root
             {
                 if normalized_pkg_root.len() > best_len {
                     best_len = normalized_pkg_root.len();
@@ -185,7 +191,8 @@ pub struct WorkspaceBoundaryDetector;
 impl WorkspaceBoundaryDetector {
     /// Detects monorepo workspace boundaries starting from a given directory.
     pub fn detect(dir: &Path) -> Result<WorkspaceBoundary, StrataError> {
-        let canonical_dir = strip_unc_prefix(dir.canonicalize().unwrap_or_else(|_| dir.to_path_buf()));
+        let canonical_dir =
+            strip_unc_prefix(dir.canonicalize().unwrap_or_else(|_| dir.to_path_buf()));
 
         // 1. Search upwards for enclosing workspace root (Cargo workspace, pnpm/npm workspace)
         let mut curr = Some(canonical_dir.as_path());
@@ -222,8 +229,10 @@ impl WorkspaceBoundaryDetector {
         if cargo_toml.exists() {
             if let Ok(content) = std::fs::read_to_string(&cargo_toml) {
                 if content.contains("[package]") {
-                    let name = Self::extract_cargo_package_name(&content).unwrap_or_else(|| "unnamed_crate".to_string());
-                    let mut boundary = WorkspaceBoundary::new(dir.to_string_lossy(), PackageType::CargoCrate);
+                    let name = Self::extract_cargo_package_name(&content)
+                        .unwrap_or_else(|| "unnamed_crate".to_string());
+                    let mut boundary =
+                        WorkspaceBoundary::new(dir.to_string_lossy(), PackageType::CargoCrate);
                     boundary.add_package(MonorepoPackage::new(
                         name,
                         PackageType::CargoCrate,
@@ -239,8 +248,10 @@ impl WorkspaceBoundaryDetector {
         let package_json = dir.join("package.json");
         if package_json.exists() {
             if let Ok(content) = std::fs::read_to_string(&package_json) {
-                let name = Self::extract_json_field(&content, "name").unwrap_or_else(|| "unnamed_package".to_string());
-                let mut boundary = WorkspaceBoundary::new(dir.to_string_lossy(), PackageType::NpmPackage);
+                let name = Self::extract_json_field(&content, "name")
+                    .unwrap_or_else(|| "unnamed_package".to_string());
+                let mut boundary =
+                    WorkspaceBoundary::new(dir.to_string_lossy(), PackageType::NpmPackage);
                 boundary.add_package(MonorepoPackage::new(
                     name,
                     PackageType::NpmPackage,
@@ -254,7 +265,8 @@ impl WorkspaceBoundaryDetector {
         // 4. Check for Python workspace / package
         let pyproject_toml = dir.join("pyproject.toml");
         if pyproject_toml.exists() {
-            let mut boundary = WorkspaceBoundary::new(dir.to_string_lossy(), PackageType::PythonPackage);
+            let mut boundary =
+                WorkspaceBoundary::new(dir.to_string_lossy(), PackageType::PythonPackage);
             boundary.add_package(MonorepoPackage::new(
                 "python_app",
                 PackageType::PythonPackage,
@@ -265,7 +277,8 @@ impl WorkspaceBoundaryDetector {
         }
 
         // Default Single Project fallback
-        let mut boundary = WorkspaceBoundary::new(dir.to_string_lossy(), PackageType::SingleProject);
+        let mut boundary =
+            WorkspaceBoundary::new(dir.to_string_lossy(), PackageType::SingleProject);
         boundary.add_package(MonorepoPackage::new(
             "default",
             PackageType::SingleProject,
@@ -275,8 +288,12 @@ impl WorkspaceBoundaryDetector {
         Ok(boundary)
     }
 
-    fn parse_cargo_workspace(root_dir: &Path, manifest_content: &str) -> Result<WorkspaceBoundary, StrataError> {
-        let mut boundary = WorkspaceBoundary::new(root_dir.to_string_lossy(), PackageType::CargoWorkspace);
+    fn parse_cargo_workspace(
+        root_dir: &Path,
+        manifest_content: &str,
+    ) -> Result<WorkspaceBoundary, StrataError> {
+        let mut boundary =
+            WorkspaceBoundary::new(root_dir.to_string_lossy(), PackageType::CargoWorkspace);
 
         // Extract member globs/directories
         let mut member_paths = Vec::new();
@@ -310,10 +327,14 @@ impl WorkspaceBoundaryDetector {
                         if entry.file_type().map(|t| t.is_dir()).unwrap_or(false) {
                             let crate_manifest = entry.path().join("Cargo.toml");
                             if crate_manifest.exists() {
-                                if let Ok(crate_content) = std::fs::read_to_string(&crate_manifest) {
+                                if let Ok(crate_content) = std::fs::read_to_string(&crate_manifest)
+                                {
                                     let name = Self::extract_cargo_package_name(&crate_content)
-                                        .unwrap_or_else(|| entry.file_name().to_string_lossy().to_string());
-                                    let internal_deps = Self::extract_cargo_internal_deps(&crate_content);
+                                        .unwrap_or_else(|| {
+                                            entry.file_name().to_string_lossy().to_string()
+                                        });
+                                    let internal_deps =
+                                        Self::extract_cargo_internal_deps(&crate_content);
                                     let mut pkg = MonorepoPackage::new(
                                         name,
                                         PackageType::CargoCrate,
@@ -332,7 +353,8 @@ impl WorkspaceBoundaryDetector {
                 let crate_manifest = crate_dir.join("Cargo.toml");
                 if crate_manifest.exists() {
                     if let Ok(crate_content) = std::fs::read_to_string(&crate_manifest) {
-                        let name = Self::extract_cargo_package_name(&crate_content).unwrap_or(member_pattern);
+                        let name = Self::extract_cargo_package_name(&crate_content)
+                            .unwrap_or(member_pattern);
                         let internal_deps = Self::extract_cargo_internal_deps(&crate_content);
                         let mut pkg = MonorepoPackage::new(
                             name,
@@ -350,8 +372,12 @@ impl WorkspaceBoundaryDetector {
         Ok(boundary)
     }
 
-    fn parse_npm_workspace(root_dir: &Path, _manifest_content: &str) -> Result<WorkspaceBoundary, StrataError> {
-        let mut boundary = WorkspaceBoundary::new(root_dir.to_string_lossy(), PackageType::NpmWorkspace);
+    fn parse_npm_workspace(
+        root_dir: &Path,
+        _manifest_content: &str,
+    ) -> Result<WorkspaceBoundary, StrataError> {
+        let mut boundary =
+            WorkspaceBoundary::new(root_dir.to_string_lossy(), PackageType::NpmWorkspace);
 
         // Check common monorepo package dirs: packages/*, apps/*, services/*
         let search_dirs = ["packages", "apps", "services", "crates", "libs"];
@@ -365,7 +391,9 @@ impl WorkspaceBoundaryDetector {
                             if pkg_json.exists() {
                                 if let Ok(content) = std::fs::read_to_string(&pkg_json) {
                                     let name = Self::extract_json_field(&content, "name")
-                                        .unwrap_or_else(|| entry.file_name().to_string_lossy().to_string());
+                                        .unwrap_or_else(|| {
+                                            entry.file_name().to_string_lossy().to_string()
+                                        });
                                     boundary.add_package(MonorepoPackage::new(
                                         name,
                                         PackageType::NpmPackage,
@@ -386,15 +414,22 @@ impl WorkspaceBoundaryDetector {
     fn extract_cargo_package_name(content: &str) -> Option<String> {
         for line in content.lines() {
             let trimmed = line.trim();
-            if trimmed.starts_with("name") && trimmed.contains('=') && !trimmed.contains("workspace") {
+            if trimmed.starts_with("name")
+                && trimmed.contains('=')
+                && !trimmed.contains("workspace")
+            {
                 if let Some(first_quote) = trimmed.find('"') {
                     if let Some(second_quote) = trimmed[first_quote + 1..].find('"') {
-                        return Some(trimmed[first_quote + 1..first_quote + 1 + second_quote].to_string());
+                        return Some(
+                            trimmed[first_quote + 1..first_quote + 1 + second_quote].to_string(),
+                        );
                     }
                 }
                 if let Some(first_quote) = trimmed.find('\'') {
                     if let Some(second_quote) = trimmed[first_quote + 1..].find('\'') {
-                        return Some(trimmed[first_quote + 1..first_quote + 1 + second_quote].to_string());
+                        return Some(
+                            trimmed[first_quote + 1..first_quote + 1 + second_quote].to_string(),
+                        );
                     }
                 }
             }
@@ -502,19 +537,32 @@ my-core = { path = "../core" }
         assert_eq!(boundary.workspace_type, PackageType::CargoWorkspace);
         assert_eq!(boundary.packages.len(), 2);
 
-        let core_pkg = boundary.packages.iter().find(|p| p.name == "my-core").unwrap();
+        let core_pkg = boundary
+            .packages
+            .iter()
+            .find(|p| p.name == "my-core")
+            .unwrap();
         assert_eq!(core_pkg.package_type, PackageType::CargoCrate);
 
-        let server_pkg = boundary.packages.iter().find(|p| p.name == "my-server").unwrap();
-        assert!(server_pkg.internal_dependencies.contains(&"my-core".to_string()));
+        let server_pkg = boundary
+            .packages
+            .iter()
+            .find(|p| p.name == "my-server")
+            .unwrap();
+        assert!(server_pkg
+            .internal_dependencies
+            .contains(&"my-core".to_string()));
 
         // Test finding package for file
         let file_in_core = core_dir.join("src/lib.rs");
-        let found = boundary.find_package_for_file(file_in_core.to_str().unwrap()).unwrap();
+        let found = boundary
+            .find_package_for_file(file_in_core.to_str().unwrap())
+            .unwrap();
         assert_eq!(found.name, "my-core");
 
         // Test resolving hierarchical scopes
-        let scopes = boundary.get_hierarchical_scopes(server_dir.join("src/main.rs").to_str().unwrap());
+        let scopes =
+            boundary.get_hierarchical_scopes(server_dir.join("src/main.rs").to_str().unwrap());
         assert_eq!(scopes.len(), 2);
         assert_eq!(scopes[0], Scope::Project("my-server".to_string()));
         assert_eq!(scopes[1], Scope::Project("my-core".to_string()));
@@ -545,7 +593,9 @@ my-core = { path = "../core" }
         assert_eq!(boundary.workspace_type, PackageType::NpmWorkspace);
         assert_eq!(boundary.packages.len(), 2);
 
-        let found_web = boundary.find_package_for_file(web_dir.join("src/App.tsx").to_str().unwrap()).unwrap();
+        let found_web = boundary
+            .find_package_for_file(web_dir.join("src/App.tsx").to_str().unwrap())
+            .unwrap();
         assert_eq!(found_web.name, "@org/web");
 
         let scope = boundary.resolve_package_scope(api_dir.join("src/server.ts").to_str().unwrap());

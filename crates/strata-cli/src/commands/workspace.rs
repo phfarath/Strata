@@ -1,5 +1,5 @@
-use std::path::Path;
 use serde_json::json;
+use std::path::Path;
 
 use strata_core::errors::StrataError;
 use strata_memory::WorkspaceBoundaryDetector;
@@ -7,7 +7,11 @@ use strata_memory::WorkspaceBoundaryDetector;
 /// Arguments for `strata workspace` command.
 #[derive(clap::Args, Debug, Clone)]
 pub struct WorkspaceArgs {
-    #[arg(long, default_value = ".", help = "Root directory to scan for workspace boundaries")]
+    #[arg(
+        long,
+        default_value = ".",
+        help = "Root directory to scan for workspace boundaries"
+    )]
     pub path: String,
 
     #[arg(long, help = "Optional file path to resolve to its owner package")]
@@ -53,7 +57,10 @@ pub async fn run_workspace(args: WorkspaceArgs) -> Result<(), StrataError> {
     println!("══════════════════════════════════════════════════════════════════════════");
     println!(" Root Path:       {}", boundary.root_path);
     println!(" Workspace Type:  {}", boundary.workspace_type);
-    println!(" Member Packages: {} packages detected\n", boundary.packages.len());
+    println!(
+        " Member Packages: {} packages detected\n",
+        boundary.packages.len()
+    );
 
     println!(" 📦 DISCOVERED PACKAGES:");
     for pkg in &boundary.packages {
@@ -62,14 +69,23 @@ pub async fn run_workspace(args: WorkspaceArgs) -> Result<(), StrataError> {
         } else {
             format!(" -> deps: [{}]", pkg.internal_dependencies.join(", "))
         };
-        println!("  • {:<20} [{}] @ {}{}", pkg.name, pkg.package_type, pkg.root_path, deps_str);
+        println!(
+            "  • {:<20} [{}] @ {}{}",
+            pkg.name, pkg.package_type, pkg.root_path, deps_str
+        );
     }
 
     if let Some(ref pkg) = resolved_package {
         println!("\n 🎯 FILE BOUNDARY RESOLUTION:");
-        println!("  • File:                 {}", args.file.as_deref().unwrap_or(""));
+        println!(
+            "  • File:                 {}",
+            args.file.as_deref().unwrap_or("")
+        );
         println!("  • Owning Package:       {}", pkg.name);
-        println!("  • Hierarchical Scopes:  {}", hierarchical_scopes.join(" -> "));
+        println!(
+            "  • Hierarchical Scopes:  {}",
+            hierarchical_scopes.join(" -> ")
+        );
     }
 
     println!("══════════════════════════════════════════════════════════════════════════");

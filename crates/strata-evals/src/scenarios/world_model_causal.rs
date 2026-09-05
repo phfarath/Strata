@@ -93,7 +93,8 @@ pub async fn run_world_model_causal_scenario() -> Result<()> {
     graph.add_edge(
         "invariant:offline_first_cdc_sequence",
         "table:sync_outbox",
-        CausalEdge::enforces_contract(1.0).with_description("CDC outbox must maintain monotonic seq numbering"),
+        CausalEdge::enforces_contract(1.0)
+            .with_description("CDC outbox must maintain monotonic seq numbering"),
     )?;
 
     println!("  [Causal Graph Metrics]");
@@ -101,11 +102,17 @@ pub async fn run_world_model_causal_scenario() -> Result<()> {
     println!("    • Total Directed Edges: {}", graph.edge_count());
 
     if graph.node_count() < 6 {
-        bail!("Expected at least 6 nodes in graph, got {}", graph.node_count());
+        bail!(
+            "Expected at least 6 nodes in graph, got {}",
+            graph.node_count()
+        );
     }
 
     if graph.edge_count() < 5 {
-        bail!("Expected at least 5 edges in graph, got {}", graph.edge_count());
+        bail!(
+            "Expected at least 5 edges in graph, got {}",
+            graph.edge_count()
+        );
     }
 
     // 3. Compute Blast Radius for DB Table `table:sync_outbox`
@@ -113,10 +120,22 @@ pub async fn run_world_model_causal_scenario() -> Result<()> {
 
     println!("  [Blast Radius Analysis: table:sync_outbox]");
     println!("    • Target:                {}", blast_report.target_name);
-    println!("    • Direct Dependents:     {}", blast_report.direct_impacts.len());
-    println!("    • Transitive Dependents: {}", blast_report.transitive_impacts.len());
-    println!("    • Invariants Triggered:  {}", blast_report.triggered_invariants.len());
-    println!("    • Pre-Code Risk Score:   {:.1}%", blast_report.overall_risk_score * 100.0);
+    println!(
+        "    • Direct Dependents:     {}",
+        blast_report.direct_impacts.len()
+    );
+    println!(
+        "    • Transitive Dependents: {}",
+        blast_report.transitive_impacts.len()
+    );
+    println!(
+        "    • Invariants Triggered:  {}",
+        blast_report.triggered_invariants.len()
+    );
+    println!(
+        "    • Pre-Code Risk Score:   {:.1}%",
+        blast_report.overall_risk_score * 100.0
+    );
 
     // Direct dependent must be ServerStorage
     let has_direct_storage = blast_report
@@ -150,7 +169,10 @@ pub async fn run_world_model_causal_scenario() -> Result<()> {
     }
 
     if blast_report.overall_risk_score < 0.5 {
-        bail!("Expected elevated risk score (>= 50%) for critical table change, got {:.2}", blast_report.overall_risk_score);
+        bail!(
+            "Expected elevated risk score (>= 50%) for critical table change, got {:.2}",
+            blast_report.overall_risk_score
+        );
     }
 
     // 4. Test ASCII Tree Rendering
@@ -169,13 +191,28 @@ pub async fn run_world_model_causal_scenario() -> Result<()> {
         .await?;
 
     println!("  [Pre-Flight Patch Simulation]");
-    println!("    • Modified Targets:      {}", patch_sim.modified_targets.len());
-    println!("    • Total Impacted Nodes:  {}", patch_sim.total_impacted_nodes);
-    println!("    • Breaking Risks Count:  {}", patch_sim.breaking_risks_count);
-    println!("    • Peak Risk Score:       {:.1}%", patch_sim.highest_risk_score * 100.0);
+    println!(
+        "    • Modified Targets:      {}",
+        patch_sim.modified_targets.len()
+    );
+    println!(
+        "    • Total Impacted Nodes:  {}",
+        patch_sim.total_impacted_nodes
+    );
+    println!(
+        "    • Breaking Risks Count:  {}",
+        patch_sim.breaking_risks_count
+    );
+    println!(
+        "    • Peak Risk Score:       {:.1}%",
+        patch_sim.highest_risk_score * 100.0
+    );
 
     if patch_sim.total_impacted_nodes < 2 {
-        bail!("Expected at least 2 impacted nodes in patch simulation, found {}", patch_sim.total_impacted_nodes);
+        bail!(
+            "Expected at least 2 impacted nodes in patch simulation, found {}",
+            patch_sim.total_impacted_nodes
+        );
     }
 
     println!("  ✓ Petgraph DiGraph causal topology representation verified");

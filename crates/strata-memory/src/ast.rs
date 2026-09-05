@@ -1,15 +1,15 @@
-use std::collections::{HashMap, HashSet};
-use std::path::{Path, PathBuf};
 use chrono::Utc;
 use hex;
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
+use std::collections::{HashMap, HashSet};
+use std::path::{Path, PathBuf};
 use tree_sitter::{Language, Node, Parser};
 use uuid::Uuid;
 
+use crate::store::SqliteStore;
 use strata_core::errors::StrataError;
 use strata_core::schemas::{CodeAnchor, FactStatus, SemanticFact, SymbolType};
-use crate::store::SqliteStore;
 
 /// Supported programming languages for structural AST indexing.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
@@ -108,9 +108,9 @@ impl AstParser {
         })?;
 
         let mut parser = Parser::new();
-        parser
-            .set_language(&ts_lang)
-            .map_err(|e| StrataError::Internal(format!("Failed to set tree-sitter language: {e}")))?;
+        parser.set_language(&ts_lang).map_err(|e| {
+            StrataError::Internal(format!("Failed to set tree-sitter language: {e}"))
+        })?;
 
         let tree = parser
             .parse(source_code, None)
@@ -357,7 +357,8 @@ impl AstParser {
                             let mut body_cursor = body.walk();
                             for item in body.children(&mut body_cursor) {
                                 if item.kind() == "method_definition" {
-                                    if let Some(method_name_node) = item.child_by_field_name("name") {
+                                    if let Some(method_name_node) = item.child_by_field_name("name")
+                                    {
                                         let method_name = &source[method_name_node.byte_range()];
                                         let method_raw = &source[item.byte_range()];
                                         out.push(ExtractedSymbol {
@@ -480,7 +481,8 @@ impl AstParser {
                             let mut body_cursor = body.walk();
                             for item in body.children(&mut body_cursor) {
                                 if item.kind() == "function_definition" {
-                                    if let Some(method_name_node) = item.child_by_field_name("name") {
+                                    if let Some(method_name_node) = item.child_by_field_name("name")
+                                    {
                                         let method_name = &source[method_name_node.byte_range()];
                                         let method_raw = &source[item.byte_range()];
                                         out.push(ExtractedSymbol {
@@ -722,7 +724,10 @@ impl CodeAnchorEngine {
             let normalized_path = path.replace('\\', "/");
             if let Ok(symbols) = self.parser.parse_file(&normalized_path, content) {
                 for sym in symbols {
-                    exact_map.insert((normalized_path.clone(), sym.symbol_path.clone()), sym.clone());
+                    exact_map.insert(
+                        (normalized_path.clone(), sym.symbol_path.clone()),
+                        sym.clone(),
+                    );
                     blake3_map
                         .entry(sym.content_hash.clone())
                         .or_default()
@@ -766,7 +771,9 @@ impl CodeAnchorEngine {
                 )
             };
 
-            if !is_valid && (fact.status == FactStatus::Deprecated || fact.status == FactStatus::Stale) {
+            if !is_valid
+                && (fact.status == FactStatus::Deprecated || fact.status == FactStatus::Stale)
+            {
                 continue;
             }
 
@@ -779,7 +786,9 @@ impl CodeAnchorEngine {
                     // Symbol is intact & active
                     let anchor = fact.code_anchor.as_mut().unwrap();
                     let mut updated = false;
-                    if anchor.start_line != current_sym.start_line || anchor.end_line != current_sym.end_line {
+                    if anchor.start_line != current_sym.start_line
+                        || anchor.end_line != current_sym.end_line
+                    {
                         anchor.start_line = current_sym.start_line;
                         anchor.end_line = current_sym.end_line;
                         updated = true;
@@ -811,9 +820,7 @@ impl CodeAnchorEngine {
             } else {
                 // Symbol NOT found at (file_path, symbol_path)
                 // Fallback: Check Blake3 content-hash across entire workspace to tolerate renames/moves
-                let target_hash = content_hash
-                    .as_deref()
-                    .unwrap_or(&ast_node_hash);
+                let target_hash = content_hash.as_deref().unwrap_or(&ast_node_hash);
 
                 if let Some(matches) = blake3_map.get(target_hash) {
                     if let Some((new_file, new_sym)) = matches.first() {
@@ -840,7 +847,11 @@ impl CodeAnchorEngine {
                         fact.mark_stale();
                         report.stale_facts.push(fact.id);
                         report.invalidated_facts.push(fact.id);
-                        stale_targets.push((fact.id, norm_anchor_path.clone(), symbol_path.clone()));
+                        stale_targets.push((
+                            fact.id,
+                            norm_anchor_path.clone(),
+                            symbol_path.clone(),
+                        ));
                         modified_fact_ids.insert(fact.id);
                     }
                 } else {
@@ -862,7 +873,10 @@ impl CodeAnchorEngine {
                 impacted_identifiers.insert(stale_file.clone());
                 impacted_identifiers.insert(stale_sym.clone());
 
-                if let Some(filename) = std::path::Path::new(stale_file).file_name().and_then(|f| f.to_str()) {
+                if let Some(filename) = std::path::Path::new(stale_file)
+                    .file_name()
+                    .and_then(|f| f.to_str())
+                {
                     impacted_identifiers.insert(filename.to_string());
                 }
 
@@ -972,8 +986,9 @@ impl CodeAnchorEngine {
             return Ok(());
         }
 
-        let entries = std::fs::read_dir(current_dir)
-            .map_err(|e| StrataError::Internal(format!("Failed to read dir {}: {e}", current_dir.display())))?;
+        let entries = std::fs::read_dir(current_dir).map_err(|e| {
+            StrataError::Internal(format!("Failed to read dir {}: {e}", current_dir.display()))
+        })?;
 
         for entry in entries.flatten() {
             let path = entry.path();

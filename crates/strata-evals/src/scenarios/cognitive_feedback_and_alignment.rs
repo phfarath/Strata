@@ -1,10 +1,10 @@
-use std::fs;
-use std::sync::Arc;
 use anyhow::{bail, Result};
 use chrono::Utc;
+use std::fs;
+use std::sync::Arc;
 use strata_core::events::{
-    ErrorObserved, Event, EventPayload, SessionEnded, SessionStarted, TaskCompleted,
-    TaskStarted, ToolInvoked, ToolResultReceived,
+    ErrorObserved, Event, EventPayload, SessionEnded, SessionStarted, TaskCompleted, TaskStarted,
+    ToolInvoked, ToolResultReceived,
 };
 use strata_core::schemas::{MemoryFeedback, ParameterDef, ProceduralSkill, ProceduralStep};
 use strata_core::state::{FailurePattern, FailureSeverity, MemoryRecord, MemoryType, Scope};
@@ -20,7 +20,9 @@ use uuid::Uuid;
 /// 3. Mining KTO binary alignment samples and SFT procedural skills.
 /// 4. Multi-host context compilation (.cursor/rules/strata.mdc, CLAUDE.md, AGENTS.md, .gemini/GEMINI.md) respecting token budget.
 pub async fn run_cognitive_feedback_and_alignment_scenario() -> Result<()> {
-    println!("\n▶ Running Eval Scenario: Cognitive Feedback, Preference Mining & Multi-Host Alignment");
+    println!(
+        "\n▶ Running Eval Scenario: Cognitive Feedback, Preference Mining & Multi-Host Alignment"
+    );
 
     // 1. Setup in-memory SQLite store
     let store = SqliteStore::open_in_memory()?;
@@ -136,7 +138,8 @@ pub async fn run_cognitive_feedback_and_alignment_scenario() -> Result<()> {
         EventPayload::TaskCompleted(TaskCompleted {
             task_id: "task-cargo-binary-fix".to_string(),
             success: true,
-            outcome_summary: "Resolved target name error and successfully executed all 16 tests".to_string(),
+            outcome_summary: "Resolved target name error and successfully executed all 16 tests"
+                .to_string(),
             evaluation: None,
             timestamp: start_time,
         }),
@@ -181,15 +184,24 @@ pub async fn run_cognitive_feedback_and_alignment_scenario() -> Result<()> {
     .with_confidence(0.80);
 
     store_arc.insert_or_update_memory(&mem_valid)?;
-    let fb_pos = MemoryFeedback::positive(mem_valid.id).with_comment("Verified in stress benchmarks");
+    let fb_pos =
+        MemoryFeedback::positive(mem_valid.id).with_comment("Verified in stress benchmarks");
     store_arc.record_memory_feedback(&fb_pos)?;
 
-    let updated_valid = store_arc.get_memory(&mem_valid.id)?.expect("valid memory must exist");
+    let updated_valid = store_arc
+        .get_memory(&mem_valid.id)?
+        .expect("valid memory must exist");
     if updated_valid.confidence <= 0.80 {
-        bail!("Positive feedback should increase memory confidence above initial 0.80, got {}", updated_valid.confidence);
+        bail!(
+            "Positive feedback should increase memory confidence above initial 0.80, got {}",
+            updated_valid.confidence
+        );
     }
     if updated_valid.importance <= 0.60 {
-        bail!("Positive feedback should increase memory importance above initial 0.60, got {}", updated_valid.importance);
+        bail!(
+            "Positive feedback should increase memory importance above initial 0.60, got {}",
+            updated_valid.importance
+        );
     }
 
     // Record an erroneous memory record and apply explicit negative feedback
@@ -203,12 +215,20 @@ pub async fn run_cognitive_feedback_and_alignment_scenario() -> Result<()> {
     .with_confidence(0.50);
 
     store_arc.insert_or_update_memory(&mem_bad)?;
-    let fb_neg = MemoryFeedback::negative(mem_bad.id, Some("Strata uses SQLite embedded, not PostgreSQL".to_string()));
+    let fb_neg = MemoryFeedback::negative(
+        mem_bad.id,
+        Some("Strata uses SQLite embedded, not PostgreSQL".to_string()),
+    );
     store_arc.record_memory_feedback(&fb_neg)?;
 
-    let updated_bad = store_arc.get_memory(&mem_bad.id)?.expect("bad memory must exist");
+    let updated_bad = store_arc
+        .get_memory(&mem_bad.id)?
+        .expect("bad memory must exist");
     if updated_bad.confidence >= 0.50 {
-        bail!("Negative feedback should decrease memory confidence below initial 0.50, got {}", updated_bad.confidence);
+        bail!(
+            "Negative feedback should decrease memory confidence below initial 0.50, got {}",
+            updated_bad.confidence
+        );
     }
     println!("    ✓ Implicit signals and explicit feedback recorded cleanly.");
 
@@ -226,9 +246,9 @@ pub async fn run_cognitive_feedback_and_alignment_scenario() -> Result<()> {
     }
 
     // Verify implicit command fix pair was mined
-    let implicit_pair = dpo_pairs.iter().find(|p| {
-        p.rejected.contains("non_existent") && p.chosen.contains("strata")
-    });
+    let implicit_pair = dpo_pairs
+        .iter()
+        .find(|p| p.rejected.contains("non_existent") && p.chosen.contains("strata"));
 
     if implicit_pair.is_none() {
         bail!("Preference miner failed to extract implicit CommandFix DPO pair from event stream");
@@ -237,17 +257,17 @@ pub async fn run_cognitive_feedback_and_alignment_scenario() -> Result<()> {
     println!("    • Found CommandFix DPO Pair: Prompt='{}'", pair.prompt);
 
     // Verify failure pattern pair was mined
-    let failure_pair = dpo_pairs.iter().find(|p| {
-        p.chosen.contains("Check Cargo.toml")
-    });
+    let failure_pair = dpo_pairs
+        .iter()
+        .find(|p| p.chosen.contains("Check Cargo.toml"));
     if failure_pair.is_none() {
         bail!("Preference miner failed to extract DPO pair from failure pattern mitigation");
     }
 
     // Verify explicit feedback pair was mined
-    let feedback_pair = dpo_pairs.iter().find(|p| {
-        p.rejected.contains("PostgreSQL") && p.chosen.contains("Strata uses SQLite")
-    });
+    let feedback_pair = dpo_pairs
+        .iter()
+        .find(|p| p.rejected.contains("PostgreSQL") && p.chosen.contains("Strata uses SQLite"));
     if feedback_pair.is_none() {
         bail!("Preference miner failed to extract DPO pair from explicit negative feedback correction");
     }
@@ -272,15 +292,18 @@ pub async fn run_cognitive_feedback_and_alignment_scenario() -> Result<()> {
         id: Uuid::new_v4(),
         name: "fix_cargo_target_and_test".to_string(),
         project: None,
-        description: "Diagnose invalid binary target error and execute tests on valid crate binary".to_string(),
+        description: "Diagnose invalid binary target error and execute tests on valid crate binary"
+            .to_string(),
         preconditions: vec![
             "Rust project contains Cargo.toml".to_string(),
             "Cargo command-line tool available".to_string(),
         ],
         postconditions: vec!["Tests executed with result summary".to_string()],
-        parameters: vec![
-            ParameterDef::new("bin_name", "string", "Name of target binary defined in Cargo.toml"),
-        ],
+        parameters: vec![ParameterDef::new(
+            "bin_name",
+            "string",
+            "Name of target binary defined in Cargo.toml",
+        )],
         steps: vec![
             ProceduralStep::new(
                 1,
@@ -303,7 +326,11 @@ pub async fn run_cognitive_feedback_and_alignment_scenario() -> Result<()> {
         created_at: Utc::now(),
         last_used_at: None,
         usage_count: 5,
-        tags: vec!["cargo".to_string(), "rust".to_string(), "testing".to_string()],
+        tags: vec![
+            "cargo".to_string(),
+            "rust".to_string(),
+            "testing".to_string(),
+        ],
     };
 
     store_arc.insert_or_update_procedural_skill(&skill)?;
@@ -316,14 +343,19 @@ pub async fn run_cognitive_feedback_and_alignment_scenario() -> Result<()> {
     let has_negative = kto_samples.iter().any(|s| !s.label);
 
     if !has_positive || !has_negative {
-        bail!("KTO mining should produce both positive (true) and negative (false) alignment samples");
+        bail!(
+            "KTO mining should produce both positive (true) and negative (false) alignment samples"
+        );
     }
 
     let kto_jsonl = miner.export(ExportFormat::Kto, None)?;
     for line in kto_jsonl.lines() {
         let parsed: KtoSample = serde_json::from_str(line)?;
         if parsed.prompt.is_empty() || parsed.completion.is_empty() {
-            bail!("KTO sample contains empty prompt or completion: {:?}", parsed);
+            bail!(
+                "KTO sample contains empty prompt or completion: {:?}",
+                parsed
+            );
         }
     }
 
@@ -335,7 +367,9 @@ pub async fn run_cognitive_feedback_and_alignment_scenario() -> Result<()> {
         bail!("Expected at least 1 SFT sample from procedural skills");
     }
 
-    let sft_skill = sft_samples.iter().find(|s| s.instruction.contains("fix_cargo_target_and_test"));
+    let sft_skill = sft_samples
+        .iter()
+        .find(|s| s.instruction.contains("fix_cargo_target_and_test"));
     if sft_skill.is_none() {
         bail!("SFT miner failed to extract procedural skill workflow");
     }
@@ -359,10 +393,16 @@ pub async fn run_cognitive_feedback_and_alignment_scenario() -> Result<()> {
 
     // Pre-populate existing instruction files with custom user rules to test non-destructive injection
     let claude_md = temp_dir.join("CLAUDE.md");
-    fs::write(&claude_md, "# Custom Claude Rules\n- Always run cargo fmt before committing.\n")?;
+    fs::write(
+        &claude_md,
+        "# Custom Claude Rules\n- Always run cargo fmt before committing.\n",
+    )?;
 
     let agents_md = temp_dir.join("AGENTS.md");
-    fs::write(&agents_md, "# Custom Codex Rules\n- Radical simplicity and lean code.\n")?;
+    fs::write(
+        &agents_md,
+        "# Custom Codex Rules\n- Radical simplicity and lean code.\n",
+    )?;
 
     let compiler = MultiHostCompiler::new(Arc::clone(&store_arc));
 
@@ -374,24 +414,39 @@ pub async fn run_cognitive_feedback_and_alignment_scenario() -> Result<()> {
         token_budget,
     )?;
 
-    println!("    • Compiled Tokens: ~{} / Budget: {}", report.total_tokens, token_budget);
+    println!(
+        "    • Compiled Tokens: ~{} / Budget: {}",
+        report.total_tokens, token_budget
+    );
     println!("    • Targets Updated: {}", report.target_hosts.len());
 
     if report.target_hosts.len() != 4 {
-        bail!("Expected 4 target hosts to be compiled, got {}", report.target_hosts.len());
+        bail!(
+            "Expected 4 target hosts to be compiled, got {}",
+            report.target_hosts.len()
+        );
     }
 
     if report.total_tokens > token_budget {
-        bail!("Compiled context (~{} tokens) exceeded token budget ({} tokens)", report.total_tokens, token_budget);
+        bail!(
+            "Compiled context (~{} tokens) exceeded token budget ({} tokens)",
+            report.total_tokens,
+            token_budget
+        );
     }
 
     // Verify 1: Cursor (.cursor/rules/strata.mdc)
     let cursor_file = temp_dir.join(".cursor").join("rules").join("strata.mdc");
     if !cursor_file.exists() {
-        bail!("Cursor instruction file was not created at {}", cursor_file.display());
+        bail!(
+            "Cursor instruction file was not created at {}",
+            cursor_file.display()
+        );
     }
     let cursor_content = fs::read_to_string(&cursor_file)?;
-    if !cursor_content.contains("<!-- STRATA_MEMORY_START -->") || !cursor_content.contains("<!-- STRATA_MEMORY_END -->") {
+    if !cursor_content.contains("<!-- STRATA_MEMORY_START -->")
+        || !cursor_content.contains("<!-- STRATA_MEMORY_END -->")
+    {
         bail!("Cursor file missing Strata memory markers");
     }
 
@@ -419,7 +474,10 @@ pub async fn run_cognitive_feedback_and_alignment_scenario() -> Result<()> {
     // Verify 4: Gemini (.gemini/GEMINI.md)
     let gemini_file = temp_dir.join(".gemini").join("GEMINI.md");
     if !gemini_file.exists() {
-        bail!("Gemini instruction file was not created at {}", gemini_file.display());
+        bail!(
+            "Gemini instruction file was not created at {}",
+            gemini_file.display()
+        );
     }
     let gemini_content = fs::read_to_string(&gemini_file)?;
     if !gemini_content.contains("<!-- STRATA_MEMORY_START -->") {
@@ -429,7 +487,9 @@ pub async fn run_cognitive_feedback_and_alignment_scenario() -> Result<()> {
     // Cleanup temp directory
     let _ = fs::remove_dir_all(&temp_dir);
 
-    println!("  ✓ Multi-host context compilation and token-budget alignment verified successfully!");
+    println!(
+        "  ✓ Multi-host context compilation and token-budget alignment verified successfully!"
+    );
     println!("  ✓ Cognitive feedback, preference mining & alignment eval scenario PASSED cleanly.");
     Ok(())
 }

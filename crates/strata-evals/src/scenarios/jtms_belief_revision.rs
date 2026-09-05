@@ -4,7 +4,9 @@ use strata_core::{
     schemas::{FactStatus, SemanticFact},
     state::Scope,
 };
-use strata_memory::{EmbeddingProvider, MockEmbeddingProvider, SqliteStore, TruthMaintenanceSystem};
+use strata_memory::{
+    EmbeddingProvider, MockEmbeddingProvider, SqliteStore, TruthMaintenanceSystem,
+};
 
 /// Category of labeled pair in the JTMS evaluation benchmark.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -536,7 +538,10 @@ pub async fn run_jtms_belief_revision_scenario() -> Result<()> {
     let corpus = get_evaluation_corpus();
     let total_pairs = corpus.len();
     if total_pairs < 50 {
-        bail!("Corpus must contain at least 50 labeled pairs, found: {}", total_pairs);
+        bail!(
+            "Corpus must contain at least 50 labeled pairs, found: {}",
+            total_pairs
+        );
     }
 
     let embedder = MockEmbeddingProvider::default();
@@ -547,7 +552,10 @@ pub async fn run_jtms_belief_revision_scenario() -> Result<()> {
     let mut false_positives = 0;
     let mut false_negatives = 0;
 
-    println!("  [Phase 1: Evaluating Contradiction & Coexistence Detection on {} Pairs]", total_pairs);
+    println!(
+        "  [Phase 1: Evaluating Contradiction & Coexistence Detection on {} Pairs]",
+        total_pairs
+    );
 
     for pair in &corpus {
         let store = SqliteStore::open_in_memory()?;
@@ -599,7 +607,10 @@ pub async fn run_jtms_belief_revision_scenario() -> Result<()> {
     println!("    • True Negatives (Coexists):  {}", true_negatives);
     println!("    • False Positives:            {}", false_positives);
     println!("    • False Negatives:            {}", false_negatives);
-    println!("    • Wrong-Supersede Rate:       {:.2}% (Target < 5.0%)", wrong_supersede_rate * 100.0);
+    println!(
+        "    • Wrong-Supersede Rate:       {:.2}% (Target < 5.0%)",
+        wrong_supersede_rate * 100.0
+    );
 
     if wrong_supersede_rate >= 0.05 {
         bail!(
@@ -610,7 +621,9 @@ pub async fn run_jtms_belief_revision_scenario() -> Result<()> {
         );
     }
 
-    println!("\n  [Phase 2: Verifying 100% Replay-Consistency Invariant across All Conflict Pairs]");
+    println!(
+        "\n  [Phase 2: Verifying 100% Replay-Consistency Invariant across All Conflict Pairs]"
+    );
     let mut replay_tested = 0;
     let mut replay_consistent = 0;
 
@@ -645,11 +658,19 @@ pub async fn run_jtms_belief_revision_scenario() -> Result<()> {
         jtms.resolve_and_upsert(&store_rev, &mut fact_a_rev, &emb_a)?;
 
         // Verify that store_fwd and store_rev arrived at the EXACT same belief state
-        let final_a_fwd = store_fwd.get_semantic_fact(&fact_a_fwd.id)?.expect("A in fwd");
-        let final_b_fwd = store_fwd.get_semantic_fact(&fact_b_fwd.id)?.expect("B in fwd");
+        let final_a_fwd = store_fwd
+            .get_semantic_fact(&fact_a_fwd.id)?
+            .expect("A in fwd");
+        let final_b_fwd = store_fwd
+            .get_semantic_fact(&fact_b_fwd.id)?
+            .expect("B in fwd");
 
-        let final_a_rev = store_rev.get_semantic_fact(&fact_a_rev.id)?.expect("A in rev");
-        let final_b_rev = store_rev.get_semantic_fact(&fact_b_rev.id)?.expect("B in rev");
+        let final_a_rev = store_rev
+            .get_semantic_fact(&fact_a_rev.id)?
+            .expect("A in rev");
+        let final_b_rev = store_rev
+            .get_semantic_fact(&fact_b_rev.id)?
+            .expect("B in rev");
 
         if final_a_fwd.status == final_a_rev.status
             && final_b_fwd.status == final_b_rev.status
@@ -670,7 +691,10 @@ pub async fn run_jtms_belief_revision_scenario() -> Result<()> {
     }
 
     println!("    • Conflict Pairs Replay Tested: {}", replay_tested);
-    println!("    • Replay Consistent Outcome:    {}/{} (100.0%)", replay_consistent, replay_tested);
+    println!(
+        "    • Replay Consistent Outcome:    {}/{} (100.0%)",
+        replay_consistent, replay_tested
+    );
 
     println!("\n  [Phase 3: Verifying SQLite Audit Row Traceability]");
     let store_audit = SqliteStore::open_in_memory()?;
@@ -716,24 +740,24 @@ pub async fn run_jtms_belief_revision_scenario() -> Result<()> {
     // Step 2: Dependent Fact B (Sqlx pool connects to Postgres, depends on A)
     let stmt_b = "Sqlx pool is configured to connect to PostgreSQL.";
     let emb_b = embedder.embed_text(stmt_b).await?;
-    let mut fact_dep_b = SemanticFact::new(stmt_b, "pool", Scope::Global)
-        .with_dependency(fact_root.id);
+    let mut fact_dep_b =
+        SemanticFact::new(stmt_b, "pool", Scope::Global).with_dependency(fact_root.id);
     fact_dep_b.created_at = Utc::now() - chrono::Duration::hours(3);
     jtms.resolve_and_upsert(&store_cascade, &mut fact_dep_b, &emb_b)?;
 
     // Step 3: Dependent Fact C (User repository uses Sqlx pool, depends on B)
     let stmt_c = "User repository queries database via Sqlx pool.";
     let emb_c = embedder.embed_text(stmt_c).await?;
-    let mut fact_dep_c = SemanticFact::new(stmt_c, "repo", Scope::Global)
-        .with_dependency(fact_dep_b.id);
+    let mut fact_dep_c =
+        SemanticFact::new(stmt_c, "repo", Scope::Global).with_dependency(fact_dep_b.id);
     fact_dep_c.created_at = Utc::now() - chrono::Duration::hours(2);
     jtms.resolve_and_upsert(&store_cascade, &mut fact_dep_c, &emb_c)?;
 
     // Step 4: Dependent Fact D (Auth service queries user repository, depends on C)
     let stmt_d = "Auth service authenticates user logins via User repository.";
     let emb_d = embedder.embed_text(stmt_d).await?;
-    let mut fact_dep_d = SemanticFact::new(stmt_d, "auth_service", Scope::Global)
-        .with_dependency(fact_dep_c.id);
+    let mut fact_dep_d =
+        SemanticFact::new(stmt_d, "auth_service", Scope::Global).with_dependency(fact_dep_c.id);
     fact_dep_d.created_at = Utc::now() - chrono::Duration::hours(1);
     jtms.resolve_and_upsert(&store_cascade, &mut fact_dep_d, &emb_d)?;
 
@@ -757,7 +781,10 @@ pub async fn run_jtms_belief_revision_scenario() -> Result<()> {
     let res_c = store_cascade.get_semantic_fact(&fact_dep_c.id)?.unwrap();
     let res_d = store_cascade.get_semantic_fact(&fact_dep_d.id)?.unwrap();
 
-    println!("    • New Root Fact (MySQL):      {:?} (Version {})", res_new_root.status, res_new_root.version);
+    println!(
+        "    • New Root Fact (MySQL):      {:?} (Version {})",
+        res_new_root.status, res_new_root.version
+    );
     println!("    • Old Root Fact (PostgreSQL): {:?}", res_root.status);
     println!("    • Dependent B (Sqlx pool):    {:?}", res_b.status);
     println!("    • Dependent C (User repo):    {:?}", res_c.status);
@@ -769,11 +796,13 @@ pub async fn run_jtms_belief_revision_scenario() -> Result<()> {
     if res_root.status != FactStatus::Deprecated {
         bail!("Old root fact should be Deprecated");
     }
-    if res_b.status != FactStatus::Stale || res_c.status != FactStatus::Stale || res_d.status != FactStatus::Stale {
+    if res_b.status != FactStatus::Stale
+        || res_c.status != FactStatus::Stale
+        || res_d.status != FactStatus::Stale
+    {
         bail!("Downstream dependencies B, C, D must all cascade to Stale status");
     }
 
     println!("\n  ✓ JTMS v2 comprehensive evaluation passed all criteria with 100% metrics!");
     Ok(())
 }
-

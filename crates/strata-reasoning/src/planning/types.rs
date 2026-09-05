@@ -1,5 +1,5 @@
-use std::collections::HashMap;
 use serde::{Deserialize, Serialize};
+use std::collections::HashMap;
 
 /// Categorization of goal nodes in the hierarchical planning DAG.
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, Hash)]
@@ -62,7 +62,10 @@ impl std::fmt::Display for GoalStatus {
 
 impl GoalStatus {
     pub fn is_final(&self) -> bool {
-        matches!(self, GoalStatus::Completed | GoalStatus::Failed | GoalStatus::Skipped)
+        matches!(
+            self,
+            GoalStatus::Completed | GoalStatus::Failed | GoalStatus::Skipped
+        )
     }
 
     pub fn is_successful(&self) -> bool {
@@ -299,11 +302,15 @@ pub struct DagExecutionReport {
 /// Dynamic recovery action returned when a goal fails during execution.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 #[serde(tag = "type", content = "payload", rename_all = "snake_case")]
+#[allow(clippy::large_enum_variant)]
 pub enum RecoveryAction {
     /// Retry the failed node immediately up to max retries.
     RetryNode { node_id: String, attempt: u32 },
     /// Replace the failed node with an alternate implementation.
-    SubstituteNode { failed_node_id: String, replacement_node: GoalNode },
+    SubstituteNode {
+        failed_node_id: String,
+        replacement_node: GoalNode,
+    },
     /// Inject mitigation tasks and re-wire dependencies dynamically.
     InjectMitigation {
         failed_node_id: String,
@@ -311,7 +318,10 @@ pub enum RecoveryAction {
         edges: Vec<(String, String, GoalEdgeKind)>,
     },
     /// Bypass the non-critical node and continue execution.
-    BypassNode { failed_node_id: String, reason: String },
+    BypassNode {
+        failed_node_id: String,
+        reason: String,
+    },
     /// Abort execution completely due to unrecoverable invariant violation.
     Abort { reason: String },
 }

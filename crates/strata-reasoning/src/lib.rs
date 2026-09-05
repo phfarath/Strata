@@ -36,7 +36,10 @@ mod tests {
             .with_message(ChatMessage::user("Hi there"));
 
         let output = mock.complete(&ctx).await.unwrap();
-        assert_eq!(output.content.as_deref(), Some("Hello from mock reasoning engine!"));
+        assert_eq!(
+            output.content.as_deref(),
+            Some("Hello from mock reasoning engine!")
+        );
         assert!(!output.has_tool_calls());
 
         mock.assert_called_times(1).await;
@@ -80,7 +83,8 @@ mod tests {
     #[tokio::test]
     async fn test_mock_reasoning_engine_error() {
         let mock = MockReasoningEngine::new();
-        mock.set_error("Rate limit from upstream LLM provider").await;
+        mock.set_error("Rate limit from upstream LLM provider")
+            .await;
 
         let ctx = PromptContext::new().with_message(ChatMessage::user("Test"));
         let err = mock.complete(&ctx).await.unwrap_err();
@@ -141,8 +145,8 @@ mod tests {
         let old_fact = SemanticFact::new("System uses REST JSON API")
             .with_summary("API Architecture")
             .with_importance(0.9);
-        let new_fact = SemanticFact::new("System migrated to gRPC Protobuf")
-            .with_summary("gRPC Migration");
+        let new_fact =
+            SemanticFact::new("System migrated to gRPC Protobuf").with_summary("gRPC Migration");
 
         let prompt = build_jtms_arbitration_prompt(&old_fact, &new_fact);
         assert!(prompt.contains("REST JSON API"));
@@ -157,9 +161,9 @@ mod tests {
     async fn test_mock_distillation_output() {
         let mock = MockReasoningEngine::new();
         let mut distillation = DistillationOutput::default();
-        distillation.semantic_facts.push(
-            SemanticFact::new("Database is SQLite WAL mode").with_importance(0.95),
-        );
+        distillation
+            .semantic_facts
+            .push(SemanticFact::new("Database is SQLite WAL mode").with_importance(0.95));
         distillation.episodic_memories.push(EpisodicMemoryItem {
             summary: "Completed migration".to_string(),
             content: "Successfully migrated to SQLite storage".to_string(),
@@ -174,7 +178,10 @@ mod tests {
         let parsed = parse_distillation_output(output.content.as_deref().unwrap()).unwrap();
 
         assert_eq!(parsed.semantic_facts.len(), 1);
-        assert_eq!(parsed.semantic_facts[0].statement, "Database is SQLite WAL mode");
+        assert_eq!(
+            parsed.semantic_facts[0].statement,
+            "Database is SQLite WAL mode"
+        );
         assert_eq!(parsed.episodic_memories.len(), 1);
         assert_eq!(parsed.episodic_memories[0].summary, "Completed migration");
     }
@@ -245,7 +252,9 @@ mod tests {
     #[test]
     fn test_goal_decomposer_templates() {
         let decomposer = GoalDecomposer::new();
-        let dag = decomposer.decompose("Refactor memory engine and add Redis sync").unwrap();
+        let dag = decomposer
+            .decompose("Refactor memory engine and add Redis sync")
+            .unwrap();
 
         assert!(dag.node_count() >= 5);
         assert!(dag.contains_node("analyze_architecture"));
@@ -260,7 +269,9 @@ mod tests {
     #[tokio::test]
     async fn test_dag_scheduler_execution() {
         let decomposer = GoalDecomposer::new();
-        let dag = decomposer.decompose("Build distributed sync layer").unwrap();
+        let dag = decomposer
+            .decompose("Build distributed sync layer")
+            .unwrap();
 
         let scheduler = DagScheduler::new().with_concurrency(2);
         let (finished_dag, report) = scheduler.execute(dag).await.unwrap();
@@ -314,7 +325,11 @@ mod tests {
         let temp_dir = std::env::temp_dir().join("strata_test_pipeline_artifacts");
         let pipeline = TrainingPipeline::new(config);
         let res = pipeline
-            .generate_artifacts(&temp_dir, Some("{\"prompt\":\"p\",\"chosen\":\"c\",\"rejected\":\"r\"}\n"), 1)
+            .generate_artifacts(
+                &temp_dir,
+                Some("{\"prompt\":\"p\",\"chosen\":\"c\",\"rejected\":\"r\"}\n"),
+                1,
+            )
             .unwrap();
 
         assert!(res.success);

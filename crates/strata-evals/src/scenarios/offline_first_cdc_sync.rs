@@ -54,12 +54,18 @@ pub async fn run_offline_first_cdc_sync_scenario() -> Result<()> {
     }
     assert_eq!(pending_deltas[0].id, delta_1.id);
     assert_eq!(pending_deltas[0].version_hash, version_hash);
-    println!("    ✓ Enqueued delta [{}] with version hash {}", delta_1.id, version_hash);
+    println!(
+        "    ✓ Enqueued delta [{}] with version hash {}",
+        delta_1.id, version_hash
+    );
 
     let (pending_count, max_seq) = host_a_store.get_sync_status("ws-strata-primary")?;
     assert_eq!(pending_count, 1);
     assert_eq!(max_seq, 1);
-    println!("    ✓ Sync status confirmed: pending={}, max_seq={}", pending_count, max_seq);
+    println!(
+        "    ✓ Sync status confirmed: pending={}, max_seq={}",
+        pending_count, max_seq
+    );
 
     // -------------------------------------------------------------------------
     // Test B: Offline Retry Handling with Exponential Backoff
@@ -98,7 +104,9 @@ pub async fn run_offline_first_cdc_sync_scenario() -> Result<()> {
     // -------------------------------------------------------------------------
     // Test C: Remote Delta Pull and JTMS Multi-Host Belief Conflict Resolution
     // -------------------------------------------------------------------------
-    println!("  [Test C] Testing remote delta pull and JTMS multi-host belief conflict resolution...");
+    println!(
+        "  [Test C] Testing remote delta pull and JTMS multi-host belief conflict resolution..."
+    );
 
     // Setup initial belief on Host B (e.g. older architectural fact)
     let initial_fact_b = SemanticFact::new(
@@ -142,7 +150,10 @@ pub async fn run_offline_first_cdc_sync_scenario() -> Result<()> {
             updated_fact_b.statement
         );
     }
-    println!("    ✓ JTMS resolved multi-host belief: updated statement on Host B to '{}'", updated_fact_b.statement);
+    println!(
+        "    ✓ JTMS resolved multi-host belief: updated statement on Host B to '{}'",
+        updated_fact_b.statement
+    );
 
     println!("  ✓ Offline-First CDC Sync evaluation scenario PASSED (3/3 tests).\n");
     Ok(())

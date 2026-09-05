@@ -1,5 +1,5 @@
-use std::sync::Arc;
 use anyhow::{bail, Result};
+use std::sync::Arc;
 use strata_cli::mcp::{
     protocol::{
         negotiate_protocol_version, CallToolResult, JsonRpcRequest, ToolsListResult,
@@ -34,10 +34,18 @@ pub async fn run_mcp_protocol_multi_version_scenario() -> Result<()> {
         })),
         meta: None,
     };
-    let resp_2024 = server.handle_request(req_2024).await.expect("Expected response for initialize 2024-11-05");
-    let result_2024 = resp_2024.result.expect("Expected result in initialize response");
+    let resp_2024 = server
+        .handle_request(req_2024)
+        .await
+        .expect("Expected response for initialize 2024-11-05");
+    let result_2024 = resp_2024
+        .result
+        .expect("Expected result in initialize response");
     if result_2024.get("protocolVersion").and_then(|v| v.as_str()) != Some("2024-11-05") {
-        bail!("Failed negotiation for 2024-11-05: got {:?}", result_2024.get("protocolVersion"));
+        bail!(
+            "Failed negotiation for 2024-11-05: got {:?}",
+            result_2024.get("protocolVersion")
+        );
     }
     println!("    ✓ Handshake negotiated '2024-11-05' successfully");
 
@@ -53,10 +61,18 @@ pub async fn run_mcp_protocol_multi_version_scenario() -> Result<()> {
         })),
         meta: None,
     };
-    let resp_2025 = server.handle_request(req_2025).await.expect("Expected response for initialize 2025-11-25");
-    let result_2025 = resp_2025.result.expect("Expected result in initialize response");
+    let resp_2025 = server
+        .handle_request(req_2025)
+        .await
+        .expect("Expected response for initialize 2025-11-25");
+    let result_2025 = resp_2025
+        .result
+        .expect("Expected result in initialize response");
     if result_2025.get("protocolVersion").and_then(|v| v.as_str()) != Some("2025-11-25") {
-        bail!("Failed negotiation for 2025-11-25: got {:?}", result_2025.get("protocolVersion"));
+        bail!(
+            "Failed negotiation for 2025-11-25: got {:?}",
+            result_2025.get("protocolVersion")
+        );
     }
     println!("    ✓ Handshake negotiated '2025-11-25' successfully");
 
@@ -72,10 +88,18 @@ pub async fn run_mcp_protocol_multi_version_scenario() -> Result<()> {
         })),
         meta: None,
     };
-    let resp_2026 = server.handle_request(req_2026).await.expect("Expected response for initialize 2026-07-28");
-    let result_2026 = resp_2026.result.expect("Expected result in initialize response");
+    let resp_2026 = server
+        .handle_request(req_2026)
+        .await
+        .expect("Expected response for initialize 2026-07-28");
+    let result_2026 = resp_2026
+        .result
+        .expect("Expected result in initialize response");
     if result_2026.get("protocolVersion").and_then(|v| v.as_str()) != Some("2026-07-28") {
-        bail!("Failed negotiation for 2026-07-28: got {:?}", result_2026.get("protocolVersion"));
+        bail!(
+            "Failed negotiation for 2026-07-28: got {:?}",
+            result_2026.get("protocolVersion")
+        );
     }
     println!("    ✓ Handshake negotiated '2026-07-28' successfully");
 
@@ -97,15 +121,23 @@ pub async fn run_mcp_protocol_multi_version_scenario() -> Result<()> {
         params: None,
         meta: None,
     };
-    let resp_tools = server.handle_request(req_tools).await.expect("Expected response for tools/list");
-    let result_tools = resp_tools.result.expect("Expected result in tools/list response");
+    let resp_tools = server
+        .handle_request(req_tools)
+        .await
+        .expect("Expected response for tools/list");
+    let result_tools = resp_tools
+        .result
+        .expect("Expected result in tools/list response");
     let tools_list: ToolsListResult = serde_json::from_value(result_tools.clone())?;
 
     let tool_names: Vec<String> = tools_list.tools.iter().map(|t| t.name.clone()).collect();
     println!("    Discovered tools: {:?}", tool_names);
 
     if tools_list.tools.len() < 9 {
-        bail!("Expected at least 9 tools registered, got {}", tools_list.tools.len());
+        bail!(
+            "Expected at least 9 tools registered, got {}",
+            tools_list.tools.len()
+        );
     }
 
     let expected_tools = [
@@ -126,14 +158,26 @@ pub async fn run_mcp_protocol_multi_version_scenario() -> Result<()> {
     }
 
     // Check _meta cache hint
-    let meta = tools_list.meta.expect("Expected _meta field on tools/list response");
+    let meta = tools_list
+        .meta
+        .expect("Expected _meta field on tools/list response");
     if meta.get("ttlMs").and_then(|v| v.as_u64()) != Some(3600000) {
-        bail!("Expected _meta.ttlMs = 3600000, got {:?}", meta.get("ttlMs"));
+        bail!(
+            "Expected _meta.ttlMs = 3600000, got {:?}",
+            meta.get("ttlMs")
+        );
     }
     if meta.get("cacheScope").and_then(|v| v.as_str()) != Some("session") {
-        bail!("Expected _meta.cacheScope = 'session', got {:?}", meta.get("cacheScope"));
+        bail!(
+            "Expected _meta.cacheScope = 'session', got {:?}",
+            meta.get("cacheScope")
+        );
     }
-    println!("    ✓ tools/list returned {} tools and verified _meta cache hints: {:?}", tools_list.tools.len(), meta);
+    println!(
+        "    ✓ tools/list returned {} tools and verified _meta cache hints: {:?}",
+        tools_list.tools.len(),
+        meta
+    );
 
     // -------------------------------------------------------------------------
     // Test C: Execution of all 5 tools (search, get, write, digest, feedback)
@@ -152,71 +196,137 @@ pub async fn run_mcp_protocol_multi_version_scenario() -> Result<()> {
     })).await;
 
     if write_res.is_error == Some(true) {
-        bail!("memory_write tool execution failed: {:?}", write_res.content);
+        bail!(
+            "memory_write tool execution failed: {:?}",
+            write_res.content
+        );
     }
-    println!("    ✓ memory_write succeeded: {}", write_res.content[0].text);
+    println!(
+        "    ✓ memory_write succeeded: {}",
+        write_res.content[0].text
+    );
 
     // 2. Tool: memory_search
-    let search_res = server.execute_tool("memory_search", serde_json::json!({
-        "query": "multi-version MCP protocol",
-        "limit": 5
-    })).await;
+    let search_res = server
+        .execute_tool(
+            "memory_search",
+            serde_json::json!({
+                "query": "multi-version MCP protocol",
+                "limit": 5
+            }),
+        )
+        .await;
 
     if search_res.is_error == Some(true) {
-        bail!("memory_search tool execution failed: {:?}", search_res.content);
+        bail!(
+            "memory_search tool execution failed: {:?}",
+            search_res.content
+        );
     }
     let search_json: serde_json::Value = serde_json::from_str(&search_res.content[0].text)?;
-    let search_arr = search_json.as_array().expect("Search results should be JSON array");
+    let search_arr = search_json
+        .as_array()
+        .expect("Search results should be JSON array");
     if search_arr.is_empty() {
         bail!("memory_search returned 0 results for written memory");
     }
-    let memory_id = search_arr[0].get("id").and_then(|v| v.as_str()).expect("Memory ID in handle");
-    println!("    ✓ memory_search succeeded, found memory ID: {}", memory_id);
+    let memory_id = search_arr[0]
+        .get("id")
+        .and_then(|v| v.as_str())
+        .expect("Memory ID in handle");
+    println!(
+        "    ✓ memory_search succeeded, found memory ID: {}",
+        memory_id
+    );
 
     // 3. Tool: memory_get
-    let get_res = server.execute_tool("memory_get", serde_json::json!({
-        "id": memory_id
-    })).await;
+    let get_res = server
+        .execute_tool(
+            "memory_get",
+            serde_json::json!({
+                "id": memory_id
+            }),
+        )
+        .await;
 
     if get_res.is_error == Some(true) {
         bail!("memory_get tool execution failed: {:?}", get_res.content);
     }
     let get_json: serde_json::Value = serde_json::from_str(&get_res.content[0].text)?;
     if get_json.get("id").and_then(|v| v.as_str()) != Some(memory_id) {
-        bail!("memory_get ID mismatch: expected {}, got {:?}", memory_id, get_json.get("id"));
+        bail!(
+            "memory_get ID mismatch: expected {}, got {:?}",
+            memory_id,
+            get_json.get("id")
+        );
     }
-    println!("    ✓ memory_get succeeded: summary='{}'", get_json.get("summary").and_then(|v| v.as_str()).unwrap_or(""));
+    println!(
+        "    ✓ memory_get succeeded: summary='{}'",
+        get_json
+            .get("summary")
+            .and_then(|v| v.as_str())
+            .unwrap_or("")
+    );
 
     // 4. Tool: memory_feedback
-    let feedback_res = server.execute_tool("memory_feedback", serde_json::json!({
-        "id": memory_id,
-        "rating": "positive",
-        "score": 0.98,
-        "comment": "Accurate retrieval and solid multi-version architecture"
-    })).await;
+    let feedback_res = server
+        .execute_tool(
+            "memory_feedback",
+            serde_json::json!({
+                "id": memory_id,
+                "rating": "positive",
+                "score": 0.98,
+                "comment": "Accurate retrieval and solid multi-version architecture"
+            }),
+        )
+        .await;
 
     if feedback_res.is_error == Some(true) {
-        bail!("memory_feedback tool execution failed: {:?}", feedback_res.content);
+        bail!(
+            "memory_feedback tool execution failed: {:?}",
+            feedback_res.content
+        );
     }
-    let fb_data = feedback_res.structured_content.expect("memory_feedback should return structured_content");
+    let fb_data = feedback_res
+        .structured_content
+        .expect("memory_feedback should return structured_content");
     if fb_data.get("status").and_then(|v| v.as_str()) != Some("feedback_recorded") {
-        bail!("Expected feedback_recorded status, got {:?}", fb_data.get("status"));
+        bail!(
+            "Expected feedback_recorded status, got {:?}",
+            fb_data.get("status")
+        );
     }
-    let conf = fb_data.get("confidence").and_then(|v| v.as_f64()).unwrap_or(0.0);
+    let conf = fb_data
+        .get("confidence")
+        .and_then(|v| v.as_f64())
+        .unwrap_or(0.0);
     if (conf - 0.98).abs() > 0.001 {
-        bail!("Expected updated confidence ~0.98, got {:?}", fb_data.get("confidence"));
+        bail!(
+            "Expected updated confidence ~0.98, got {:?}",
+            fb_data.get("confidence")
+        );
     }
-    println!("    ✓ memory_feedback succeeded: updated confidence to {}", fb_data["confidence"]);
-
+    println!(
+        "    ✓ memory_feedback succeeded: updated confidence to {}",
+        fb_data["confidence"]
+    );
 
     // 5. Tool: memory_digest
-    let digest_res = server.execute_tool("memory_digest", serde_json::json!({
-        "session_id": "eval-session-mcp",
-        "max_tokens": 400
-    })).await;
+    let digest_res = server
+        .execute_tool(
+            "memory_digest",
+            serde_json::json!({
+                "session_id": "eval-session-mcp",
+                "max_tokens": 400
+            }),
+        )
+        .await;
 
     if digest_res.is_error == Some(true) {
-        bail!("memory_digest tool execution failed: {:?}", digest_res.content);
+        bail!(
+            "memory_digest tool execution failed: {:?}",
+            digest_res.content
+        );
     }
     println!("    ✓ memory_digest succeeded");
 
@@ -240,16 +350,26 @@ pub async fn run_mcp_protocol_multi_version_scenario() -> Result<()> {
         meta: None,
     };
 
-    let direct_call_resp = stateless_server.handle_request(direct_call_req).await
+    let direct_call_resp = stateless_server
+        .handle_request(direct_call_req)
+        .await
         .expect("Stateless server MUST handle tools/call directly without prior initialize");
 
     if direct_call_resp.error.is_some() {
-        bail!("Stateless tools/call returned error: {:?}", direct_call_resp.error);
+        bail!(
+            "Stateless tools/call returned error: {:?}",
+            direct_call_resp.error
+        );
     }
-    let direct_result = direct_call_resp.result.expect("Expected result from stateless tools/call");
+    let direct_result = direct_call_resp
+        .result
+        .expect("Expected result from stateless tools/call");
     let call_res: CallToolResult = serde_json::from_value(direct_result)?;
     if call_res.is_error == Some(true) {
-        bail!("Direct tool execution returned tool error: {:?}", call_res.content);
+        bail!(
+            "Direct tool execution returned tool error: {:?}",
+            call_res.content
+        );
     }
     println!("    ✓ Stateless tools/call succeeded cleanly without handshake");
 

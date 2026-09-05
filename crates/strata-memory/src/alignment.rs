@@ -1,10 +1,8 @@
+use crate::store::SqliteStore;
 use std::sync::Arc;
 use strata_core::errors::StrataError;
 use strata_core::events::{Event, EventPayload};
-use strata_core::schemas::{
-    ExportFormat, KtoSample, PreferencePair, SftSample, SignalKind,
-};
-use crate::store::SqliteStore;
+use strata_core::schemas::{ExportFormat, KtoSample, PreferencePair, SftSample, SignalKind};
 
 /// Extracts alignment datasets (DPO pairs, KTO binary feedback, SFT instruction data)
 /// from persistent memory, failure patterns, episodic signals, and procedural skills,
@@ -98,13 +96,18 @@ impl PreferenceMiner {
             if fb.rating == strata_core::schemas::FeedbackRating::Negative {
                 if let (Some(mem_id), Some(comment)) = (fb.memory_id, fb.comment) {
                     if let Ok(Some(mem)) = self.store.get_memory(&mem_id) {
-                        let prompt = mem.summary.clone().unwrap_or_else(|| "Memory context retrieval".to_string());
+                        let prompt = mem
+                            .summary
+                            .clone()
+                            .unwrap_or_else(|| "Memory context retrieval".to_string());
                         let rejected = mem.content.clone();
                         let chosen = comment;
                         let sid = session_id.unwrap_or("feedback").to_string();
                         pairs.push(
-                            PreferencePair::new(prompt, chosen, rejected, sid)
-                                .with_verification(true, Some("human_feedback_verified".to_string())),
+                            PreferencePair::new(prompt, chosen, rejected, sid).with_verification(
+                                true,
+                                Some("human_feedback_verified".to_string()),
+                            ),
                         );
                     }
                 }
@@ -137,7 +140,10 @@ impl PreferenceMiner {
         let mut session_map: std::collections::HashMap<String, Vec<&Event>> =
             std::collections::HashMap::new();
         for ev in events {
-            session_map.entry(ev.session_id.clone()).or_default().push(ev);
+            session_map
+                .entry(ev.session_id.clone())
+                .or_default()
+                .push(ev);
         }
 
         for (sid, s_events) in session_map {
@@ -148,10 +154,16 @@ impl PreferenceMiner {
             for ev in s_events {
                 match &ev.payload {
                     EventPayload::TaskStarted(t) => {
-                        current_task = Some(format!("{}: {}", t.title, t.description.as_deref().unwrap_or("")));
+                        current_task = Some(format!(
+                            "{}: {}",
+                            t.title,
+                            t.description.as_deref().unwrap_or("")
+                        ));
                     }
                     EventPayload::ToolInvoked(inv) => {
-                        let cmd = inv.input.get("command")
+                        let cmd = inv
+                            .input
+                            .get("command")
                             .and_then(|c| c.as_str())
                             .map(|s| s.to_string())
                             .unwrap_or_else(|| inv.input.to_string());
@@ -164,7 +176,9 @@ impl PreferenceMiner {
                                 failed_tool_inv = Some((tool_name, input_cmd, err_str));
                             }
                         } else if let Some((f_tool, f_input, f_err)) = failed_tool_inv.take() {
-                            let (c_tool, c_input) = last_tool_inv.take().unwrap_or_else(|| (res.tool_name.clone(), String::new()));
+                            let (c_tool, c_input) = last_tool_inv
+                                .take()
+                                .unwrap_or_else(|| (res.tool_name.clone(), String::new()));
                             let prompt = current_task.clone().unwrap_or_else(|| {
                                 format!("Resolve tool execution failure in session '{sid}'")
                             });
@@ -193,12 +207,19 @@ impl PreferenceMiner {
                         if task.success {
                             if let Some((f_tool, f_input, f_err)) = failed_tool_inv.take() {
                                 let prompt = format!("Task '{}' resolution", task.task_id);
-                                let rejected = format!("Failing trajectory (Tool: {}):\nInput: {}\nError: {}", f_tool, f_input, f_err);
-                                let chosen = format!("Successful resolution: {}", task.outcome_summary);
+                                let rejected = format!(
+                                    "Failing trajectory (Tool: {}):\nInput: {}\nError: {}",
+                                    f_tool, f_input, f_err
+                                );
+                                let chosen =
+                                    format!("Successful resolution: {}", task.outcome_summary);
 
                                 pairs.push(
                                     PreferencePair::new(prompt, chosen, rejected, &sid)
-                                        .with_verification(true, Some("task_completed_success".to_string())),
+                                        .with_verification(
+                                            true,
+                                            Some("task_completed_success".to_string()),
+                                        ),
                                 );
                             }
                         } else {
@@ -225,22 +246,12 @@ impl PreferenceMiner {
         let pairs = self.mine_dpo_pairs(session_id)?;
         for pair in pairs {
             samples.push(
-                KtoSample::new(
-                    &pair.prompt,
-                    &pair.chosen,
-                    true,
-                    &pair.source_session_id,
-                )
-                .with_verification(pair.oracle_verified, pair.verification_source.clone()),
+                KtoSample::new(&pair.prompt, &pair.chosen, true, &pair.source_session_id)
+                    .with_verification(pair.oracle_verified, pair.verification_source.clone()),
             );
             samples.push(
-                KtoSample::new(
-                    &pair.prompt,
-                    &pair.rejected,
-                    false,
-                    &pair.source_session_id,
-                )
-                .with_verification(pair.oracle_verified, pair.verification_source.clone()),
+                KtoSample::new(&pair.prompt, &pair.rejected, false, &pair.source_session_id)
+                    .with_verification(pair.oracle_verified, pair.verification_source.clone()),
             );
         }
 
@@ -266,17 +277,14 @@ impl PreferenceMiner {
                     None
                 };
                 samples.push(
-                    KtoSample::new(
-                        &prompt,
-                        &ep.outcomes.join("; "),
-                        true,
-                        &ep.session_id,
-                    )
-                    .with_verification(is_verified, v_source),
+                    KtoSample::new(&prompt, &ep.outcomes.join("; "), true, &ep.session_id)
+                        .with_verification(is_verified, v_source),
                 );
             }
 
-            if (ep.signals.success < 0.4 || ep.signals.frustration >= 0.6) && !ep.obstacles.is_empty() {
+            if (ep.signals.success < 0.4 || ep.signals.frustration >= 0.6)
+                && !ep.obstacles.is_empty()
+            {
                 let is_verified = ep.signals.frustration >= 0.8 || ep.signals.success <= 0.2;
                 let v_source = if is_verified {
                     Some("episodic_verified_failure".to_string())
@@ -284,13 +292,8 @@ impl PreferenceMiner {
                     None
                 };
                 samples.push(
-                    KtoSample::new(
-                        &prompt,
-                        &ep.obstacles.join("; "),
-                        false,
-                        &ep.session_id,
-                    )
-                    .with_verification(is_verified, v_source),
+                    KtoSample::new(&prompt, &ep.obstacles.join("; "), false, &ep.session_id)
+                        .with_verification(is_verified, v_source),
                 );
             }
         }
@@ -375,7 +378,12 @@ impl PreferenceMiner {
             let steps_str = skill
                 .steps
                 .iter()
-                .map(|s| format!("{}. [{}] {}: {:?}", s.order, s.tool, s.action, s.expected_result))
+                .map(|s| {
+                    format!(
+                        "{}. [{}] {}: {:?}",
+                        s.order, s.tool, s.action, s.expected_result
+                    )
+                })
                 .collect::<Vec<_>>()
                 .join("\n");
 
@@ -397,13 +405,8 @@ impl PreferenceMiner {
                 let ex_instruction = format!("Perform skill execution: {}", skill.name);
                 let ex_input = format!("Session context: {}", ex.session_id);
                 samples.push(
-                    SftSample::new(
-                        &ex_instruction,
-                        &ex_input,
-                        &ex.outcome,
-                        &ex.session_id,
-                    )
-                    .with_verification(true, Some("skill_execution_example".to_string())),
+                    SftSample::new(&ex_instruction, &ex_input, &ex.outcome, &ex.session_id)
+                        .with_verification(true, Some("skill_execution_example".to_string())),
                 );
             }
         }
@@ -476,7 +479,9 @@ impl PreferenceMiner {
                 let mut md = String::new();
                 md.push_str("# Strata Alignment & Preference Dataset\n\n");
                 if require_verified {
-                    md.push_str("> **Filter**: Oracle-Verified Only (`require_verified = true`)\n\n");
+                    md.push_str(
+                        "> **Filter**: Oracle-Verified Only (`require_verified = true`)\n\n",
+                    );
                 }
                 md.push_str(&format!("- Total DPO Pairs: {}\n", pairs.len()));
                 md.push_str(&format!("- Total KTO Samples: {}\n", kto.len()));
@@ -487,7 +492,10 @@ impl PreferenceMiner {
                     for (i, p) in pairs.iter().enumerate() {
                         md.push_str(&format!("### Pair {}\n", i + 1));
                         if let Some(ref src) = p.verification_source {
-                            md.push_str(&format!("*Oracle Verification*: `{}` (verified: {})\n\n", src, p.oracle_verified));
+                            md.push_str(&format!(
+                                "*Oracle Verification*: `{}` (verified: {})\n\n",
+                                src, p.oracle_verified
+                            ));
                         }
                         md.push_str(&format!("**Prompt**:\n```\n{}\n```\n\n", p.prompt));
                         md.push_str(&format!("**Chosen**:\n```\n{}\n```\n\n", p.chosen));
@@ -500,7 +508,10 @@ impl PreferenceMiner {
                     for (i, s) in sft.iter().enumerate() {
                         md.push_str(&format!("### Sample {}\n", i + 1));
                         if let Some(ref src) = s.verification_source {
-                            md.push_str(&format!("*Oracle Verification*: `{}` (verified: {})\n\n", src, s.oracle_verified));
+                            md.push_str(&format!(
+                                "*Oracle Verification*: `{}` (verified: {})\n\n",
+                                src, s.oracle_verified
+                            ));
                         }
                         md.push_str(&format!("**Instruction**: {}\n\n", s.instruction));
                         md.push_str(&format!("**Input**:\n```\n{}\n```\n\n", s.input));
@@ -519,4 +530,3 @@ impl PreferenceMiner {
         self.export_with_gating(format, scope, false)
     }
 }
-

@@ -12,7 +12,7 @@ pub use events::{
     SessionEnded, SessionStarted, TaskCompleted, TaskStarted, ToolInvoked, ToolResultReceived,
 };
 pub use schemas::{
-    CodeAnchor, ContextBudgetConfig, DecayConfig, DecayMetrics, EvidenceRef, EpisodicMemory,
+    CodeAnchor, ContextBudgetConfig, DecayConfig, DecayMetrics, EpisodicMemory, EvidenceRef,
     ExportFormat, FactDependency, FactStatus, FeedbackEvent, FeedbackRating, HostTargetConfig,
     ImplicitSignal, JtmsAuditRow, KtoSample, MemoryFeedback, ParameterDef, PreferencePair,
     ProceduralExample, ProceduralSkill, ProceduralStep, SemanticFact, SftSample, SignalKind,
@@ -109,28 +109,23 @@ mod tests {
     #[test]
     fn test_phase2_schemas_serialization() {
         let now = Utc::now();
-        let ep = EpisodicMemory::new(
-            "sess-p2",
-            "assistant",
-            "Implemented new features",
-            now,
-            now,
-        )
-        .with_project("strata")
-        .with_goals(vec!["Goal 1".to_string()])
-        .with_obstacles(vec!["Obstacle 1".to_string()])
-        .with_outcomes(vec!["Success".to_string()])
-        .with_tools(vec!["cargo_build".to_string()])
-        .with_files(vec!["src/main.rs".to_string()])
-        .with_signals(SignalScores {
-            success: 0.9,
-            frustration: 0.1,
-            novelty: 0.8,
-            importance: 0.85,
-        });
+        let ep = EpisodicMemory::new("sess-p2", "assistant", "Implemented new features", now, now)
+            .with_project("strata")
+            .with_goals(vec!["Goal 1".to_string()])
+            .with_obstacles(vec!["Obstacle 1".to_string()])
+            .with_outcomes(vec!["Success".to_string()])
+            .with_tools(vec!["cargo_build".to_string()])
+            .with_files(vec!["src/main.rs".to_string()])
+            .with_signals(SignalScores {
+                success: 0.9,
+                frustration: 0.1,
+                novelty: 0.8,
+                importance: 0.85,
+            });
 
         let json_ep = serde_json::to_string(&ep).expect("serialize episodic memory");
-        let de_ep: EpisodicMemory = serde_json::from_str(&json_ep).expect("deserialize episodic memory");
+        let de_ep: EpisodicMemory =
+            serde_json::from_str(&json_ep).expect("deserialize episodic memory");
         assert_eq!(ep.id, de_ep.id);
         assert_eq!(ep.session_id, de_ep.session_id);
         assert_eq!(ep.signals.success, de_ep.signals.success);
@@ -159,7 +154,11 @@ mod tests {
         let skill = ProceduralSkill::new("compile_workspace", "Build all workspace crates")
             .with_preconditions(vec!["Rust toolchain installed".to_string()])
             .with_postconditions(vec!["Binaries compiled in target/".to_string()])
-            .with_parameters(vec![ParameterDef::new("release", "bool", "Build with optimizations")])
+            .with_parameters(vec![ParameterDef::new(
+                "release",
+                "bool",
+                "Build with optimizations",
+            )])
             .with_steps(vec![ProceduralStep::new(
                 1,
                 "cargo",
@@ -169,7 +168,8 @@ mod tests {
             .with_examples(vec![ProceduralExample::new("sess-1", "Compiled in 2.3s")]);
 
         let skill_json = serde_json::to_string(&skill).expect("serialize skill");
-        let de_skill: ProceduralSkill = serde_json::from_str(&skill_json).expect("deserialize skill");
+        let de_skill: ProceduralSkill =
+            serde_json::from_str(&skill_json).expect("deserialize skill");
         assert_eq!(skill.name, de_skill.name);
         assert_eq!(de_skill.steps.len(), 1);
 
@@ -211,7 +211,10 @@ mod tests {
             .with_token("secret-token")
             .with_batch_size(50);
         assert_eq!(config.workspace_id, "ws-test");
-        assert_eq!(config.endpoint.as_deref(), Some("https://api.strata.dev/sync"));
+        assert_eq!(
+            config.endpoint.as_deref(),
+            Some("https://api.strata.dev/sync")
+        );
         assert_eq!(config.batch_size, 50);
         assert_eq!(config.max_retries, 5);
         assert_eq!(config.base_backoff_ms, 500);
@@ -231,17 +234,14 @@ mod tests {
 
     #[test]
     fn test_track3_schemas_serialization() {
-        let signal = ImplicitSignal::new(
-            SignalKind::ToolLoop,
-            "sess-test-3",
-            "agent-beta",
-        )
-        .with_tool_name("file_search")
-        .with_file_path("src/lib.rs")
-        .with_extra("Loop detected 4 times");
+        let signal = ImplicitSignal::new(SignalKind::ToolLoop, "sess-test-3", "agent-beta")
+            .with_tool_name("file_search")
+            .with_file_path("src/lib.rs")
+            .with_extra("Loop detected 4 times");
 
         let signal_json = serde_json::to_string(&signal).expect("serialize implicit signal");
-        let de_signal: ImplicitSignal = serde_json::from_str(&signal_json).expect("deserialize signal");
+        let de_signal: ImplicitSignal =
+            serde_json::from_str(&signal_json).expect("deserialize signal");
         assert_eq!(signal.id, de_signal.id);
         assert_eq!(signal.kind, SignalKind::ToolLoop);
         assert_eq!(de_signal.tool_name.as_deref(), Some("file_search"));
@@ -252,7 +252,8 @@ mod tests {
             .with_signal_id(signal.id)
             .with_comment("Outdated rule");
         let fb_json = serde_json::to_string(&fb_event).expect("serialize feedback event");
-        let de_fb: FeedbackEvent = serde_json::from_str(&fb_json).expect("deserialize feedback event");
+        let de_fb: FeedbackEvent =
+            serde_json::from_str(&fb_json).expect("deserialize feedback event");
         assert_eq!(de_fb.rating, FeedbackRating::Negative);
         assert_eq!(de_fb.memory_id, Some(mem_id));
         assert_eq!(de_fb.signal_id, Some(signal.id));
@@ -264,7 +265,8 @@ mod tests {
             "sess-test-3",
         );
         let pref_json = serde_json::to_string(&pref).expect("serialize pref pair");
-        let de_pref: PreferencePair = serde_json::from_str(&pref_json).expect("deserialize pref pair");
+        let de_pref: PreferencePair =
+            serde_json::from_str(&pref_json).expect("deserialize pref pair");
         assert_eq!(pref.id, de_pref.id);
         assert_eq!(pref.chosen, de_pref.chosen);
 

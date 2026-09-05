@@ -1,6 +1,6 @@
-use std::collections::{HashSet, VecDeque};
 use chrono::Utc;
 use serde::{Deserialize, Serialize};
+use std::collections::{HashSet, VecDeque};
 use strata_core::errors::StrataError;
 use strata_core::schemas::{FactStatus, JtmsAuditRow, SemanticFact};
 use strata_core::state::MemoryTier;
@@ -65,30 +65,78 @@ impl TruthMaintenanceSystem {
         let b = text_b.to_lowercase();
 
         // 1. Frontend vs Backend tier
-        let frontend_cues = ["frontend", "ui", "client-side", "react", "vue", "svelte", "tailwind", "css", "html", "browser"];
-        let backend_cues = ["backend", "server-side", "axum", "actix", "tokio", "microservice", "daemon", "server"];
+        let frontend_cues = [
+            "frontend",
+            "ui",
+            "client-side",
+            "react",
+            "vue",
+            "svelte",
+            "tailwind",
+            "css",
+            "html",
+            "browser",
+        ];
+        let backend_cues = [
+            "backend",
+            "server-side",
+            "axum",
+            "actix",
+            "tokio",
+            "microservice",
+            "daemon",
+            "server",
+        ];
         let a_is_fe = frontend_cues.iter().any(|c| a.contains(c));
         let b_is_fe = frontend_cues.iter().any(|c| b.contains(c));
         let a_is_be = backend_cues.iter().any(|c| a.contains(c));
         let b_is_be = backend_cues.iter().any(|c| b.contains(c));
-        if (a_is_fe && b_is_be && !a_is_be && !b_is_fe) || (a_is_be && b_is_fe && !a_is_fe && !b_is_be) {
+        if (a_is_fe && b_is_be && !a_is_be && !b_is_fe)
+            || (a_is_be && b_is_fe && !a_is_fe && !b_is_be)
+        {
             return true;
         }
 
         // 2. Relational Database vs Cache / In-Memory
-        let relational_cues = ["relational", "primary database", "oltp", "postgres", "postgresql", "mysql", "mariadb", "sqlite"];
-        let cache_cues = ["cache", "caching", "in-memory", "redis", "memcached", "keydb", "dragonfly"];
+        let relational_cues = [
+            "relational",
+            "primary database",
+            "oltp",
+            "postgres",
+            "postgresql",
+            "mysql",
+            "mariadb",
+            "sqlite",
+        ];
+        let cache_cues = [
+            "cache",
+            "caching",
+            "in-memory",
+            "redis",
+            "memcached",
+            "keydb",
+            "dragonfly",
+        ];
         let a_is_rel = relational_cues.iter().any(|c| a.contains(c));
         let b_is_rel = relational_cues.iter().any(|c| b.contains(c));
         let a_is_cache = cache_cues.iter().any(|c| a.contains(c));
         let b_is_cache = cache_cues.iter().any(|c| b.contains(c));
-        if (a_is_rel && b_is_cache && !a_is_cache && !b_is_rel) || (a_is_cache && b_is_rel && !a_is_rel && !b_is_cache) {
+        if (a_is_rel && b_is_cache && !a_is_cache && !b_is_rel)
+            || (a_is_cache && b_is_rel && !a_is_rel && !b_is_cache)
+        {
             return true;
         }
 
         // 3. Telemetry Subsystems: Metrics vs Traces vs Logs
         let metrics_cues = ["metric", "metrics", "prometheus", "statsd", "grafana"];
-        let traces_cues = ["trace", "traces", "tracing", "opentelemetry", "jaeger", "zipkin"];
+        let traces_cues = [
+            "trace",
+            "traces",
+            "tracing",
+            "opentelemetry",
+            "jaeger",
+            "zipkin",
+        ];
         let logs_cues = ["log", "logs", "logging", "loki", "fluentd", "syslog"];
         let a_is_m = metrics_cues.iter().any(|c| a.contains(c));
         let b_is_m = metrics_cues.iter().any(|c| b.contains(c));
@@ -96,16 +144,31 @@ impl TruthMaintenanceSystem {
         let b_is_t = traces_cues.iter().any(|c| b.contains(c));
         let a_is_l = logs_cues.iter().any(|c| a.contains(c));
         let b_is_l = logs_cues.iter().any(|c| b.contains(c));
-        let telemetry_distinct = (a_is_m && b_is_t) || (a_is_t && b_is_m)
-            || (a_is_m && b_is_l) || (a_is_l && b_is_m)
-            || (a_is_t && b_is_l) || (a_is_l && b_is_t);
+        let telemetry_distinct = (a_is_m && b_is_t)
+            || (a_is_t && b_is_m)
+            || (a_is_m && b_is_l)
+            || (a_is_l && b_is_m)
+            || (a_is_t && b_is_l)
+            || (a_is_l && b_is_t);
         if telemetry_distinct {
             return true;
         }
 
         // 4. Operation Paths: Read vs Write
-        let read_cues = ["read operations", "reads", "read replica", "read pool", "queries"];
-        let write_cues = ["write operations", "writes", "primary node", "master node", "mutations"];
+        let read_cues = [
+            "read operations",
+            "reads",
+            "read replica",
+            "read pool",
+            "queries",
+        ];
+        let write_cues = [
+            "write operations",
+            "writes",
+            "primary node",
+            "master node",
+            "mutations",
+        ];
         let a_is_r = read_cues.iter().any(|c| a.contains(c));
         let b_is_r = read_cues.iter().any(|c| b.contains(c));
         let a_is_w = write_cues.iter().any(|c| a.contains(c));
@@ -115,76 +178,151 @@ impl TruthMaintenanceSystem {
         }
 
         // 5. Environment Qualifiers: Staging vs Production
-        let staging_cues = ["staging environment", "staging", "development environment", "dev environment", "local dev"];
-        let prod_cues = ["production environment", "production cluster", "prod environment", "live environment"];
+        let staging_cues = [
+            "staging environment",
+            "staging",
+            "development environment",
+            "dev environment",
+            "local dev",
+        ];
+        let prod_cues = [
+            "production environment",
+            "production cluster",
+            "prod environment",
+            "live environment",
+        ];
         let a_is_stg = staging_cues.iter().any(|c| a.contains(c));
         let b_is_stg = staging_cues.iter().any(|c| b.contains(c));
         let a_is_prod = prod_cues.iter().any(|c| a.contains(c));
         let b_is_prod = prod_cues.iter().any(|c| b.contains(c));
-        if (a_is_stg && b_is_prod && !a_is_prod && !b_is_stg) || (a_is_prod && b_is_stg && !a_is_stg && !b_is_prod) {
+        if (a_is_stg && b_is_prod && !a_is_prod && !b_is_stg)
+            || (a_is_prod && b_is_stg && !a_is_stg && !b_is_prod)
+        {
             return true;
         }
 
         // 6. Platform Qualifiers: Mobile vs Web
         let mobile_cues = ["mobile app", "mobile", "ios", "android", "swift", "kotlin"];
-        let web_cues = ["web app", "web client", "desktop browser", "chrome", "firefox"];
+        let web_cues = [
+            "web app",
+            "web client",
+            "desktop browser",
+            "chrome",
+            "firefox",
+        ];
         let a_is_mob = mobile_cues.iter().any(|c| a.contains(c));
         let b_is_mob = mobile_cues.iter().any(|c| b.contains(c));
         let a_is_web = web_cues.iter().any(|c| a.contains(c));
         let b_is_web = web_cues.iter().any(|c| b.contains(c));
-        if (a_is_mob && b_is_web && !a_is_web && !b_is_mob) || (a_is_web && b_is_mob && !a_is_mob && !b_is_web) {
+        if (a_is_mob && b_is_web && !a_is_web && !b_is_mob)
+            || (a_is_web && b_is_mob && !a_is_mob && !b_is_web)
+        {
             return true;
         }
 
         // 7. Security contexts: User Passwords vs API Authentication
         let pw_cues = ["user password", "passwords", "argon2", "bcrypt", "pbkdf2"];
-        let api_key_cues = ["api key", "api keys", "jwt", "bearer token", "oauth2", "oidc", "sha-256"];
+        let api_key_cues = [
+            "api key",
+            "api keys",
+            "jwt",
+            "bearer token",
+            "oauth2",
+            "oidc",
+            "sha-256",
+        ];
         let a_is_pw = pw_cues.iter().any(|c| a.contains(c));
         let b_is_pw = pw_cues.iter().any(|c| b.contains(c));
         let a_is_ak = api_key_cues.iter().any(|c| a.contains(c));
         let b_is_ak = api_key_cues.iter().any(|c| b.contains(c));
-        if (a_is_pw && b_is_ak && !a_is_ak && !b_is_pw) || (a_is_ak && b_is_pw && !a_is_pw && !b_is_ak) {
+        if (a_is_pw && b_is_ak && !a_is_ak && !b_is_pw)
+            || (a_is_ak && b_is_pw && !a_is_pw && !b_is_ak)
+        {
             return true;
         }
 
         // 8. Testing methodologies: Unit testing vs E2E testing
-        let unit_cues = ["unit test", "unit tests", "cargo test", "jest unit", "pytest unit"];
-        let e2e_cues = ["e2e test", "e2e tests", "integration tests", "playwright", "cypress"];
+        let unit_cues = [
+            "unit test",
+            "unit tests",
+            "cargo test",
+            "jest unit",
+            "pytest unit",
+        ];
+        let e2e_cues = [
+            "e2e test",
+            "e2e tests",
+            "integration tests",
+            "playwright",
+            "cypress",
+        ];
         let a_is_unit = unit_cues.iter().any(|c| a.contains(c));
         let b_is_unit = unit_cues.iter().any(|c| b.contains(c));
         let a_is_e2e = e2e_cues.iter().any(|c| a.contains(c));
         let b_is_e2e = e2e_cues.iter().any(|c| b.contains(c));
-        if (a_is_unit && b_is_e2e && !a_is_e2e && !b_is_unit) || (a_is_e2e && b_is_unit && !a_is_unit && !b_is_e2e) {
+        if (a_is_unit && b_is_e2e && !a_is_e2e && !b_is_unit)
+            || (a_is_e2e && b_is_unit && !a_is_unit && !b_is_e2e)
+        {
             return true;
         }
 
         // 9. Distinct Configuration Properties
         let thread_cues = ["worker threads", "thread pool", "concurrency workers"];
-        let conn_cues = ["connection pool", "database pool", "max connections", "pool size"];
+        let conn_cues = [
+            "connection pool",
+            "database pool",
+            "max connections",
+            "pool size",
+        ];
         let a_is_th = thread_cues.iter().any(|c| a.contains(c));
         let b_is_th = thread_cues.iter().any(|c| b.contains(c));
         let a_is_co = conn_cues.iter().any(|c| a.contains(c));
         let b_is_co = conn_cues.iter().any(|c| b.contains(c));
-        if (a_is_th && b_is_co && !a_is_co && !b_is_th) || (a_is_co && b_is_th && !a_is_th && !b_is_co) {
+        if (a_is_th && b_is_co && !a_is_co && !b_is_th)
+            || (a_is_co && b_is_th && !a_is_th && !b_is_co)
+        {
             return true;
         }
 
         // 10. Database Server/Engine vs Client Driver/Pool
-        let driver_cues = ["sqlx", "diesel", "sea-orm", "connection pool", "database pool", "client pool", "jdbc"];
-        let server_cues = ["primary database", "storage engine", "database server", "database cluster"];
+        let driver_cues = [
+            "sqlx",
+            "diesel",
+            "sea-orm",
+            "connection pool",
+            "database pool",
+            "client pool",
+            "jdbc",
+        ];
+        let server_cues = [
+            "primary database",
+            "storage engine",
+            "database server",
+            "database cluster",
+        ];
         let a_is_drv = driver_cues.iter().any(|c| a.contains(c));
         let b_is_drv = driver_cues.iter().any(|c| b.contains(c));
         let a_is_srv = server_cues.iter().any(|c| a.contains(c));
         let b_is_srv = server_cues.iter().any(|c| b.contains(c));
-        if (a_is_drv && b_is_srv && !a_is_srv && !b_is_drv) || (a_is_srv && b_is_drv && !a_is_drv && !b_is_srv) {
+        if (a_is_drv && b_is_srv && !a_is_srv && !b_is_drv)
+            || (a_is_srv && b_is_drv && !a_is_drv && !b_is_srv)
+        {
             return true;
         }
 
         // 11. Application Repository/Service Layer vs Database Infrastructure
-        let repo_cues = ["repository", "user repository", "order repository", "data access layer", "dao"];
+        let repo_cues = [
+            "repository",
+            "user repository",
+            "order repository",
+            "data access layer",
+            "dao",
+        ];
         let a_is_repo = repo_cues.iter().any(|c| a.contains(c));
         let b_is_repo = repo_cues.iter().any(|c| b.contains(c));
-        if (a_is_repo && b_is_srv && !a_is_srv && !b_is_repo) || (a_is_srv && b_is_repo && !a_is_repo && !b_is_srv) {
+        if (a_is_repo && b_is_srv && !a_is_srv && !b_is_repo)
+            || (a_is_srv && b_is_repo && !a_is_repo && !b_is_srv)
+        {
             return true;
         }
 
@@ -261,10 +399,27 @@ impl TruthMaintenanceSystem {
 
         // Negation & migration keywords present in only one of the texts
         let negation_words = [
-            "not", "never", "no longer", "deprecated", "deprecating", "removed",
-            "disabled", "avoid", "cannot", "migrated", "migration", "replaced",
-            "replaces", "supersedes", "superseded", "disallowed", "forbidden",
-            "instead of", "transitioned to", "switched to", "swapped for"
+            "not",
+            "never",
+            "no longer",
+            "deprecated",
+            "deprecating",
+            "removed",
+            "disabled",
+            "avoid",
+            "cannot",
+            "migrated",
+            "migration",
+            "replaced",
+            "replaces",
+            "supersedes",
+            "superseded",
+            "disallowed",
+            "forbidden",
+            "instead of",
+            "transitioned to",
+            "switched to",
+            "swapped for",
         ];
         for neg in negation_words {
             let in_a = a_lower.contains(neg);
@@ -318,12 +473,18 @@ impl TruthMaintenanceSystem {
         if exist_tier > cand_tier {
             return (
                 ConflictResolution::Reject,
-                format!("Existing memory tier ({:?}) dominates candidate lower tier ({:?})", existing.tier, candidate.tier),
+                format!(
+                    "Existing memory tier ({:?}) dominates candidate lower tier ({:?})",
+                    existing.tier, candidate.tier
+                ),
             );
         } else if cand_tier > exist_tier {
             return (
                 ConflictResolution::Supersede,
-                format!("Candidate memory tier ({:?}) supersedes lower tier ({:?})", candidate.tier, existing.tier),
+                format!(
+                    "Candidate memory tier ({:?}) supersedes lower tier ({:?})",
+                    candidate.tier, existing.tier
+                ),
             );
         }
 
@@ -332,23 +493,46 @@ impl TruthMaintenanceSystem {
 
         // 3. Explicit migration or supersession intent in text
         let migration_phrases = [
-            "migrated to", "migrating to", "switched to", "swapped for", "transitioned to",
-            "replaced by", "replaces", "supersedes", "superseded by", "deprecating",
-            "deprecated", "upgraded to", "no longer uses", "now uses", "instead of"
+            "migrated to",
+            "migrating to",
+            "switched to",
+            "swapped for",
+            "transitioned to",
+            "replaced by",
+            "replaces",
+            "supersedes",
+            "superseded by",
+            "deprecating",
+            "deprecated",
+            "upgraded to",
+            "no longer uses",
+            "now uses",
+            "instead of",
         ];
 
-        let cand_has_migration = migration_phrases.iter().any(|k| candidate_lower.contains(k));
+        let cand_has_migration = migration_phrases
+            .iter()
+            .any(|k| candidate_lower.contains(k));
         let exist_has_migration = migration_phrases.iter().any(|k| existing_lower.contains(k));
 
         if cand_has_migration && !exist_has_migration {
             return (
                 ConflictResolution::Supersede,
-                format!("Candidate explicitly declares migration/replacement intent: '{}'", cues.join(", ")),
+                format!(
+                    "Candidate explicitly declares migration/replacement intent: '{}'",
+                    cues.join(", ")
+                ),
             );
-        } else if exist_has_migration && !cand_has_migration && existing.created_at >= candidate.created_at {
+        } else if exist_has_migration
+            && !cand_has_migration
+            && existing.created_at >= candidate.created_at
+        {
             return (
                 ConflictResolution::Reject,
-                format!("Existing active fact explicitly declared migration/replacement intent: '{}'", cues.join(", ")),
+                format!(
+                    "Existing active fact explicitly declared migration/replacement intent: '{}'",
+                    cues.join(", ")
+                ),
             );
         }
 
@@ -373,24 +557,36 @@ impl TruthMaintenanceSystem {
         if candidate.confidence > existing.confidence + 0.05 {
             return (
                 ConflictResolution::Supersede,
-                format!("Candidate confidence ({:.2}) exceeds existing ({:.2})", candidate.confidence, existing.confidence),
+                format!(
+                    "Candidate confidence ({:.2}) exceeds existing ({:.2})",
+                    candidate.confidence, existing.confidence
+                ),
             );
         } else if existing.confidence > candidate.confidence + 0.05 {
             return (
                 ConflictResolution::Reject,
-                format!("Existing confidence ({:.2}) exceeds candidate ({:.2})", existing.confidence, candidate.confidence),
+                format!(
+                    "Existing confidence ({:.2}) exceeds candidate ({:.2})",
+                    existing.confidence, candidate.confidence
+                ),
             );
         }
 
         if candidate.importance > existing.importance + 0.10 {
             return (
                 ConflictResolution::Supersede,
-                format!("Candidate importance ({:.2}) exceeds existing ({:.2})", candidate.importance, existing.importance),
+                format!(
+                    "Candidate importance ({:.2}) exceeds existing ({:.2})",
+                    candidate.importance, existing.importance
+                ),
             );
         } else if existing.importance > candidate.importance + 0.10 {
             return (
                 ConflictResolution::Reject,
-                format!("Existing importance ({:.2}) exceeds candidate ({:.2})", existing.importance, candidate.importance),
+                format!(
+                    "Existing importance ({:.2}) exceeds candidate ({:.2})",
+                    existing.importance, candidate.importance
+                ),
             );
         }
 
@@ -442,10 +638,18 @@ impl TruthMaintenanceSystem {
             // 2. Extremely high embedding similarity (> 0.94) with different statements
             // 3. Same category and direct negation / polarity cues
             // 4. Direct lexical contradiction with overlapping tokens
-            let same_statement = existing.statement.trim().eq_ignore_ascii_case(new_fact.statement.trim());
-            let is_conflict = (!same_statement && lexical_contradiction && (sim >= 0.35 || existing.category == new_fact.category || cues.len() >= 2))
+            let same_statement = existing
+                .statement
+                .trim()
+                .eq_ignore_ascii_case(new_fact.statement.trim());
+            let is_conflict = (!same_statement
+                && lexical_contradiction
+                && (sim >= 0.35 || existing.category == new_fact.category || cues.len() >= 2))
                 || (sim >= self.similarity_threshold && lexical_contradiction)
-                || (sim >= 0.94 && !same_statement && !lexical_contradiction && !self.is_orthogonal_coexistence(&existing.statement, &new_fact.statement));
+                || (sim >= 0.94
+                    && !same_statement
+                    && !lexical_contradiction
+                    && !self.is_orthogonal_coexistence(&existing.statement, &new_fact.statement));
 
             if is_conflict {
                 let (resolution, reason) = self.arbitrate_pair(existing, new_fact, &cues);
@@ -543,7 +747,10 @@ impl TruthMaintenanceSystem {
                     self.propagate_downstream_invalidation(
                         store,
                         &old_fact.id,
-                        &format!("Downstream invalidation after fact {} was superseded", old_fact.id),
+                        &format!(
+                            "Downstream invalidation after fact {} was superseded",
+                            old_fact.id
+                        ),
                     )?;
 
                     // Activate new fact (IN) with incremented version
@@ -569,7 +776,10 @@ impl TruthMaintenanceSystem {
                     *old_fact_id,
                     new_fact.id,
                     "reject",
-                    format!("Candidate fact {} rejected in favor of existing fact {}", new_fact.id, old_fact_id),
+                    format!(
+                        "Candidate fact {} rejected in favor of existing fact {}",
+                        new_fact.id, old_fact_id
+                    ),
                 );
                 store.insert_jtms_audit(&audit)?;
 
@@ -577,7 +787,10 @@ impl TruthMaintenanceSystem {
                 self.propagate_downstream_invalidation(
                     store,
                     &new_fact.id,
-                    &format!("Downstream invalidation after candidate fact {} was rejected", new_fact.id),
+                    &format!(
+                        "Downstream invalidation after candidate fact {} was rejected",
+                        new_fact.id
+                    ),
                 )?;
             }
             ConflictResolution::Coexist => {
@@ -596,7 +809,10 @@ impl TruthMaintenanceSystem {
                 self.propagate_downstream_invalidation(
                     store,
                     &new_fact.id,
-                    &format!("Downstream invalidation after fact {} was marked stale", new_fact.id),
+                    &format!(
+                        "Downstream invalidation after fact {} was marked stale",
+                        new_fact.id
+                    ),
                 )?;
             }
         }
@@ -621,7 +837,9 @@ impl TruthMaintenanceSystem {
         let conflicts = self.find_conflicts(new_fact, new_embedding, &active_with_embs);
 
         // Check if any existing fact defeats this candidate
-        let defeated_by = conflicts.iter().find(|c| c.resolution == ConflictResolution::Reject);
+        let defeated_by = conflicts
+            .iter()
+            .find(|c| c.resolution == ConflictResolution::Reject);
 
         if let Some(defeat) = defeated_by {
             // Existing fact wins, candidate loses (marked Deprecated / OUT)
@@ -651,7 +869,9 @@ impl TruthMaintenanceSystem {
 
             for conflict in &conflicts {
                 if conflict.resolution == ConflictResolution::Supersede {
-                    if let Some(mut old_fact) = store.get_semantic_fact(&conflict.existing_fact_id)? {
+                    if let Some(mut old_fact) =
+                        store.get_semantic_fact(&conflict.existing_fact_id)?
+                    {
                         highest_old_version = highest_old_version.max(old_fact.version);
 
                         // Deprecate losing old fact (OUT)
@@ -677,7 +897,10 @@ impl TruthMaintenanceSystem {
                         self.propagate_downstream_invalidation(
                             store,
                             &old_fact.id,
-                            &format!("Prerequisite fact {} was superseded by {}", old_fact.id, new_fact.id),
+                            &format!(
+                                "Prerequisite fact {} was superseded by {}",
+                                old_fact.id, new_fact.id
+                            ),
                         )?;
                     }
                 }
@@ -699,7 +922,11 @@ impl TruthMaintenanceSystem {
     }
 
     /// Verifies if a belief is currently valid (`Active` status and all prerequisite beliefs are `Active`).
-    pub fn is_belief_valid(&self, store: &SqliteStore, fact_id: &Uuid) -> Result<bool, StrataError> {
+    pub fn is_belief_valid(
+        &self,
+        store: &SqliteStore,
+        fact_id: &Uuid,
+    ) -> Result<bool, StrataError> {
         let Some(fact) = store.get_semantic_fact(fact_id)? else {
             return Ok(false);
         };

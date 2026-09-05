@@ -1,13 +1,14 @@
+use reqwest::Client;
 use std::collections::hash_map::DefaultHasher;
 use std::hash::{Hash, Hasher};
 use std::sync::Arc;
-use reqwest::Client;
 
 use serde_json::Value;
 use strata_core::errors::StrataError;
 use strata_core::events::Event;
 use strata_core::schemas::{
-    EpisodicMemory, MemoryFeedback, ProceduralSkill, SemanticFact, SyncConfig, SyncDelta, SyncReport,
+    EpisodicMemory, MemoryFeedback, ProceduralSkill, SemanticFact, SyncConfig, SyncDelta,
+    SyncReport,
 };
 use strata_core::state::{FailurePattern, MemoryRecord};
 use uuid::Uuid;
@@ -24,7 +25,11 @@ pub fn compute_version_hash(payload: &Value) -> String {
 }
 
 /// Compute exponential retry backoff duration with base milliseconds and maximum cap.
-pub fn calculate_exponential_backoff(retry_count: u32, base_ms: u64, max_ms: u64) -> std::time::Duration {
+pub fn calculate_exponential_backoff(
+    retry_count: u32,
+    base_ms: u64,
+    max_ms: u64,
+) -> std::time::Duration {
     let factor = 2_u64.saturating_pow(retry_count.min(10));
     let backoff = base_ms.saturating_mul(factor);
     std::time::Duration::from_millis(backoff.min(max_ms))
@@ -292,7 +297,9 @@ impl SyncEngine {
                         report.conflicts_resolved = conflicts;
                     }
                     Err(e) => {
-                        report.errors.push(format!("Apply remote deltas error: {e}"));
+                        report
+                            .errors
+                            .push(format!("Apply remote deltas error: {e}"));
                     }
                 },
                 Err(e) => {

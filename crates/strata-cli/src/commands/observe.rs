@@ -1,8 +1,8 @@
-use std::sync::Arc;
-use std::time::Duration;
 use anyhow::Result;
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
+use std::sync::Arc;
+use std::time::Duration;
 use uuid::Uuid;
 
 use strata_core::{
@@ -19,11 +19,18 @@ pub struct ObserveArgs {
     pub live: bool,
 
     /// Live refresh interval in seconds
-    #[arg(long, default_value_t = 2, help = "Refresh interval in seconds for live mode")]
+    #[arg(
+        long,
+        default_value_t = 2,
+        help = "Refresh interval in seconds for live mode"
+    )]
     pub interval_secs: u64,
 
     /// Filter view to specific tab: 'overview', 'decay', 'anti-patterns', 'feedback'
-    #[arg(long, help = "Focus view on a specific section: overview, decay, anti-patterns, feedback")]
+    #[arg(
+        long,
+        help = "Focus view on a specific section: overview, decay, anti-patterns, feedback"
+    )]
     pub tab: Option<String>,
 
     /// Filter by workspace or scope
@@ -31,7 +38,11 @@ pub struct ObserveArgs {
     pub scope: Option<String>,
 
     /// Time horizon in hours for Ebbinghaus retention curve rendering
-    #[arg(long, default_value_t = 168.0, help = "Horizon in hours for retention curve (e.g. 168 = 7 days)")]
+    #[arg(
+        long,
+        default_value_t = 168.0,
+        help = "Horizon in hours for retention curve (e.g. 168 = 7 days)"
+    )]
     pub horizon_hours: f32,
 
     /// Maximum rows to display in lists
@@ -144,7 +155,10 @@ async fn run_live_tui(store: &SqliteStore, args: &ObserveArgs) -> Result<()> {
         // Clear screen with ANSI and print updated dashboard
         print!("\x1b[2J\x1b[1;1H");
         render_cli_dashboard(&report, args);
-        println!("\n⏳ Live auto-refresh every {}s • Press Ctrl+C to stop", args.interval_secs);
+        println!(
+            "\n⏳ Live auto-refresh every {}s • Press Ctrl+C to stop",
+            args.interval_secs
+        );
 
         tokio::time::sleep(interval).await;
     }
@@ -156,7 +170,9 @@ pub fn generate_report(store: &SqliteStore, args: &ObserveArgs) -> Result<Cognit
     let calculator = DecayCalculator::with_default_config();
 
     // 1. Gather semantic facts
-    let facts = store.get_all_semantic_facts(None, None, 10000).unwrap_or_default();
+    let facts = store
+        .get_all_semantic_facts(None, None, 10000)
+        .unwrap_or_default();
     let mut active_facts = 0;
     let mut deprecated_facts = 0;
     let mut memory_items = Vec::new();
@@ -209,7 +225,9 @@ pub fn generate_report(store: &SqliteStore, args: &ObserveArgs) -> Result<Cognit
     }
 
     // 2. Gather general memories
-    let general_mems = store.get_all_memories(None, None, 10000).unwrap_or_default();
+    let general_mems = store
+        .get_all_memories(None, None, 10000)
+        .unwrap_or_default();
     for m in &general_mems {
         let access_logs = store.get_memory_access_logs(&m.id).unwrap_or_default();
         let metrics = calculator.evaluate_memory_record(m, &access_logs, now);
@@ -235,12 +253,10 @@ pub fn generate_report(store: &SqliteStore, args: &ObserveArgs) -> Result<Cognit
 
         memory_items.push(MemoryDecayItem {
             id: m.id,
-            title: m.summary.clone().unwrap_or_else(|| {
-                m.content
-                    .chars()
-                    .take(60)
-                    .collect::<String>()
-            }),
+            title: m
+                .summary
+                .clone()
+                .unwrap_or_else(|| m.content.chars().take(60).collect::<String>()),
             memory_type: m.memory_type.to_string(),
             scope: m.scope.to_string(),
             importance: m.importance,
@@ -274,7 +290,9 @@ pub fn generate_report(store: &SqliteStore, args: &ObserveArgs) -> Result<Cognit
         .count();
 
     // 3. Gather Procedural Skills
-    let skills = store.get_all_procedural_skills(None, 1000).unwrap_or_default();
+    let skills = store
+        .get_all_procedural_skills(None, 1000)
+        .unwrap_or_default();
 
     // 4. Gather Failure Patterns / Anti-Patterns
     let patterns = store.search_failures(None, None, 1000).unwrap_or_default();
@@ -375,7 +393,8 @@ pub fn render_cli_dashboard(report: &CognitiveReport, args: &ObserveArgs) {
     // 1. Header Banner
     println!("\x1b[1;36m╔══════════════════════════════════════════════════════════════════════════════════════════╗\x1b[0m");
     println!("\x1b[1;36m║\x1b[0m \x1b[1;37m🧠 STRATA COGNITIVE OBSERVABILITY & DECAY DASHBOARD\x1b[0m                                \x1b[1;36m║\x1b[0m");
-    println!("\x1b[1;36m║\x1b[0m \x1b[90mActive Snapshot: {} • Scope: {}\x1b[0m \x1b[1;36m║\x1b[0m", 
+    println!(
+        "\x1b[1;36m║\x1b[0m \x1b[90mActive Snapshot: {} • Scope: {}\x1b[0m \x1b[1;36m║\x1b[0m",
         report.generated_at.format("%Y-%m-%d %H:%M:%S UTC"),
         args.scope.as_deref().unwrap_or("[All Global/Project]")
     );
@@ -387,7 +406,7 @@ pub fn render_cli_dashboard(report: &CognitiveReport, args: &ObserveArgs) {
         report.total_memories, report.active_semantic_facts, report.procedural_skills);
     println!("│ Mined Anti-Patterns:   \x1b[1;31m{:<5}\x1b[0m │ Memories At Risk:  \x1b[1;33m{:<5}\x1b[0m │ Deprecated Facts:  \x1b[1;90m{:<5}\x1b[0m │",
         report.anti_patterns_count, report.at_risk_memories_count, report.deprecated_semantic_facts);
-    
+
     let fb_ratio = if report.total_feedback_events > 0 {
         (report.positive_feedback as f32 / report.total_feedback_events as f32) * 100.0
     } else {
@@ -399,8 +418,13 @@ pub fn render_cli_dashboard(report: &CognitiveReport, args: &ObserveArgs) {
 
     // 3. Render Ebbinghaus Mathematical Decay Curve (if overview or decay)
     if focus == "overview" || focus == "decay" {
-        println!("\n\x1b[1;35m📈 Mathematical Ebbinghaus Retention Curves R(t) = exp(-t / S_m)\x1b[0m");
-        println!("\x1b[90m   Simulated across time horizon: 0h → {:.0}h\x1b[0m", args.horizon_hours);
+        println!(
+            "\n\x1b[1;35m📈 Mathematical Ebbinghaus Retention Curves R(t) = exp(-t / S_m)\x1b[0m"
+        );
+        println!(
+            "\x1b[90m   Simulated across time horizon: 0h → {:.0}h\x1b[0m",
+            args.horizon_hours
+        );
         println!("   \x1b[32m■\x1b[0m High Importance (I=0.8, 10 Accesses)  \x1b[33m▲\x1b[0m Medium (I=0.5, 3 Acc)  \x1b[31m▼\x1b[0m Low (I=0.2, 0 Acc)");
         println!();
         print_ascii_ebbinghaus_graph(&report.ebbinghaus_curve_points);
@@ -408,7 +432,9 @@ pub fn render_cli_dashboard(report: &CognitiveReport, args: &ObserveArgs) {
 
     // 4. Memory Retention & ACT-R Activation Inspector Table
     if focus == "overview" || focus == "decay" {
-        println!("\n\x1b[1;34m🔍 Memory Decay & ACT-R Activation Inspector (Sorted by Risk):\x1b[0m");
+        println!(
+            "\n\x1b[1;34m🔍 Memory Decay & ACT-R Activation Inspector (Sorted by Risk):\x1b[0m"
+        );
         println!("┌────────────┬─────────────────────────────┬──────────┬──────────┬──────────┬──────────┬────────────┐");
         println!("│ Status     │ Content / Summary           │ Scope    │ ACT-R Aₘ │ Stab(hr) │ Retent % │ Last Access│");
         println!("├────────────┼─────────────────────────────┼──────────┼──────────┼──────────┼──────────┼────────────┤");
@@ -429,7 +455,8 @@ pub fn render_cli_dashboard(report: &CognitiveReport, args: &ObserveArgs) {
                 let short_scope: String = m.scope.chars().take(8).collect();
                 let ret_pct = m.ebbinghaus_retention * 100.0;
 
-                println!("│ {} │ {:<27} │ {:<8} │ {:>8.2} │ {:>8.1} │ {:>7.1}% │ {:>8.1}h │",
+                println!(
+                    "│ {} │ {:<27} │ {:<8} │ {:>8.2} │ {:>8.1} │ {:>7.1}% │ {:>8.1}h │",
                     status_colored,
                     short_title,
                     short_scope,
@@ -462,11 +489,9 @@ pub fn render_cli_dashboard(report: &CognitiveReport, args: &ObserveArgs) {
                 let name: String = ap.pattern_name.chars().take(31).collect();
                 let mit: String = ap.mitigation.chars().take(38).collect();
 
-                println!("│ {} │ {:<31} │ {:>4} │ {:<38} │",
-                    sev_colored,
-                    name,
-                    ap.occurrences,
-                    mit
+                println!(
+                    "│ {} │ {:<31} │ {:>4} │ {:<38} │",
+                    sev_colored, name, ap.occurrences, mit
                 );
             }
             println!("└──────────┴─────────────────────────────────┴──────┴────────────────────────────────────────┘");
@@ -476,7 +501,8 @@ pub fn render_cli_dashboard(report: &CognitiveReport, args: &ObserveArgs) {
     // 6. Feedback & Reinforcement Alignment Signals Panel
     if focus == "overview" || focus == "feedback" || focus == "signals" {
         println!("\n\x1b[1;32m🎯 Reinforcement Feedback & Implicit Behavioural Signals:\x1b[0m");
-        println!("   • Explicit Ratings: \x1b[32m{} Positive 👍\x1b[0m | \x1b[31m{} Negative 👎\x1b[0m", 
+        println!(
+            "   • Explicit Ratings: \x1b[32m{} Positive 👍\x1b[0m | \x1b[31m{} Negative 👎\x1b[0m",
             report.positive_feedback, report.negative_feedback
         );
 
@@ -491,8 +517,13 @@ pub fn render_cli_dashboard(report: &CognitiveReport, args: &ObserveArgs) {
         if !report.feedback_events.is_empty() {
             println!("\n   Recent Feedback Log:");
             for fb in report.feedback_events.iter().take(4) {
-                let icon = if fb.rating == "positive" { "\x1b[32m[+]\x1b[0m" } else { "\x1b[31m[-]\x1b[0m" };
-                println!("     {} {} \x1b[90m(from {})\x1b[0m: {}",
+                let icon = if fb.rating == "positive" {
+                    "\x1b[32m[+]\x1b[0m"
+                } else {
+                    "\x1b[31m[-]\x1b[0m"
+                };
+                println!(
+                    "     {} {} \x1b[90m(from {})\x1b[0m: {}",
                     icon,
                     fb.timestamp.format("%H:%M:%S"),
                     fb.source,
