@@ -124,7 +124,7 @@ flowchart TD
 #### One-Line Universal Install (Zero Prerequisites)
 ```bash
 # macOS and Linux
-curl -fsSL https://raw.githubusercontent.com/phfarath/Strata/main/install.sh | sh
+curl -fsSL https://raw.githubusercontent.com/phfarath/Strata/main/install.sh | bash
 
 # Windows (PowerShell)
 irm https://raw.githubusercontent.com/phfarath/Strata/main/install.ps1 | iex
@@ -132,10 +132,14 @@ irm https://raw.githubusercontent.com/phfarath/Strata/main/install.ps1 | iex
 
 #### Via Cargo
 ```bash
+# Instant pre-built binary (< 5s via cargo-binstall)
+cargo binstall strata-cli
+
+# Or compile from source
 cargo install strata-cli
 ```
 
-*Pre-built standalone binaries for all architectures are also available in [GitHub Releases](https://github.com/phfarath/Strata/releases).*
+*Pre-built standalone binaries for all platforms (Linux x86_64/arm64, macOS Apple Silicon/Intel, Windows x64) are also available in [GitHub Releases](https://github.com/phfarath/Strata/releases).*
 
 ### 2. Auto-Configure MCP in 1 Command
 Automatically inject Strata into your installed coding agents (Cursor, Claude Desktop, Windsurf) without touching JSON files manually:
