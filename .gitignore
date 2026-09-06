@@ -17,4 +17,5 @@ output/
 playwright-report/
 test-results/
 .strata-reports/
+.strata/
 

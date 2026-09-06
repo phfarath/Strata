@@ -18,6 +18,7 @@ use strata_cli::{
         auth::{run_auth, AuthArgs},
         blast_radius::{run_blast_radius, BlastRadiusArgs},
         callgraph::run_callgraph,
+        config::{run_config, ConfigArgs},
         consolidate::{run_consolidate, ConsolidateOptions},
         daemon::{run_daemon, DaemonArgs},
         doctor::run_doctor,
@@ -171,6 +172,12 @@ enum Commands {
         )]
         model: Option<String>,
 
+        #[arg(
+            long,
+            help = "Reasoning provider: 'ollama', 'gemini', 'anthropic', 'openai', 'openrouter', 'mock'"
+        )]
+        provider: Option<String>,
+
         #[arg(long, help = "Output report as raw JSON")]
         json: bool,
     },
@@ -303,6 +310,10 @@ enum Commands {
     /// Agent-to-Agent (A2A) stigmergic coordination and temporal resource leases
     #[command(name = "a2a", alias = "stigmergy", alias = "leases")]
     A2a(A2aArgs),
+
+    /// View or modify Strata runtime configuration and local/cloud reasoning providers
+    #[command(name = "config", alias = "cfg", alias = "settings")]
+    Config(ConfigArgs),
 }
 
 #[derive(Subcommand, Debug)]
@@ -613,6 +624,7 @@ async fn main() -> Result<()> {
             session,
             all,
             model,
+            provider,
             json,
         } => {
             let store = engine.store_arc();
@@ -621,6 +633,7 @@ async fn main() -> Result<()> {
                     session,
                     all,
                     model,
+                    provider,
                     json,
                 },
                 store,
@@ -703,6 +716,10 @@ async fn main() -> Result<()> {
         Commands::A2a(args) => {
             let coordinator = engine.stigmergy();
             run_a2a(args, coordinator).await?;
+        }
+
+        Commands::Config(args) => {
+            run_config(args).await?;
         }
     }
 

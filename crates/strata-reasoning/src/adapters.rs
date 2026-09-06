@@ -12,6 +12,13 @@ use crate::engine::{
 // OpenAI Adapter (also compatible with DeepSeek, Ollama, vLLM, OpenRouter)
 // ============================================================================
 
+fn build_default_client() -> reqwest::Client {
+    reqwest::Client::builder()
+        .timeout(std::time::Duration::from_secs(90))
+        .build()
+        .unwrap_or_default()
+}
+
 pub struct OpenAiAdapter {
     api_key: String,
     model: String,
@@ -25,7 +32,7 @@ impl OpenAiAdapter {
             api_key: api_key.into(),
             model: model.into(),
             base_url: "https://api.openai.com/v1".to_string(),
-            client: reqwest::Client::new(),
+            client: build_default_client(),
         }
     }
 
@@ -41,6 +48,18 @@ impl OpenAiAdapter {
 
     pub fn new_openrouter(api_key: impl Into<String>, model_slug: impl Into<String>) -> Self {
         Self::new(api_key, model_slug).with_base_url("https://openrouter.ai/api/v1")
+    }
+
+    pub fn from_env(model_slug: Option<String>) -> Result<Self, StrataError> {
+        let api_key = std::env::var("OPENAI_API_KEY")
+            .or_else(|_| std::env::var("STRATA_OPENAI_API_KEY"))
+            .map_err(|_| {
+                StrataError::Configuration(
+                    "OpenAI API key not found in OPENAI_API_KEY or STRATA_OPENAI_API_KEY environment variables".to_string(),
+                )
+            })?;
+        let model = model_slug.unwrap_or_else(|| "gpt-4o-mini".to_string());
+        Ok(Self::new(api_key, model))
     }
 
     pub fn model(&self) -> &str {
@@ -249,7 +268,7 @@ impl OpenRouterAdapter {
             api_key: api_key.into(),
             model: model.into(),
             base_url: "https://openrouter.ai/api/v1".to_string(),
-            client: reqwest::Client::new(),
+            client: build_default_client(),
         }
     }
 
@@ -488,13 +507,33 @@ impl AnthropicAdapter {
             api_key: api_key.into(),
             model: model.into(),
             base_url: "https://api.anthropic.com/v1".to_string(),
-            client: reqwest::Client::new(),
+            client: build_default_client(),
         }
     }
 
     pub fn with_base_url(mut self, base_url: impl Into<String>) -> Self {
         self.base_url = base_url.into();
         self
+    }
+
+    pub fn from_env(model_slug: Option<String>) -> Result<Self, StrataError> {
+        let api_key = std::env::var("ANTHROPIC_API_KEY")
+            .or_else(|_| std::env::var("STRATA_ANTHROPIC_API_KEY"))
+            .map_err(|_| {
+                StrataError::Configuration(
+                    "Anthropic API key not found in ANTHROPIC_API_KEY or STRATA_ANTHROPIC_API_KEY environment variables".to_string(),
+                )
+            })?;
+        let model = model_slug.unwrap_or_else(|| "claude-3-5-sonnet-20241022".to_string());
+        Ok(Self::new(api_key, model))
+    }
+
+    pub fn model(&self) -> &str {
+        &self.model
+    }
+
+    pub fn base_url(&self) -> &str {
+        &self.base_url
     }
 }
 
@@ -696,13 +735,34 @@ impl GeminiAdapter {
             api_key: api_key.into(),
             model: model.into(),
             base_url: "https://generativelanguage.googleapis.com/v1beta".to_string(),
-            client: reqwest::Client::new(),
+            client: build_default_client(),
         }
     }
 
     pub fn with_base_url(mut self, base_url: impl Into<String>) -> Self {
         self.base_url = base_url.into();
         self
+    }
+
+    pub fn from_env(model_slug: Option<String>) -> Result<Self, StrataError> {
+        let api_key = std::env::var("GEMINI_API_KEY")
+            .or_else(|_| std::env::var("GOOGLE_API_KEY"))
+            .or_else(|_| std::env::var("STRATA_GEMINI_API_KEY"))
+            .map_err(|_| {
+                StrataError::Configuration(
+                    "Gemini API key not found in GEMINI_API_KEY, GOOGLE_API_KEY, or STRATA_GEMINI_API_KEY environment variables".to_string(),
+                )
+            })?;
+        let model = model_slug.unwrap_or_else(|| "gemini-2.0-flash".to_string());
+        Ok(Self::new(api_key, model))
+    }
+
+    pub fn model(&self) -> &str {
+        &self.model
+    }
+
+    pub fn base_url(&self) -> &str {
+        &self.base_url
     }
 }
 
@@ -724,12 +784,12 @@ impl ReasoningEngine for GeminiAdapter {
                 parts.push(json!({ "text": msg.content }));
             }
 
-            if let Some(ref calls) = msg.tool_calls {
-                for c in calls {
+            if let Some(ref tools) = msg.tool_calls {
+                for c in tools {
                     parts.push(json!({
                         "functionCall": {
                             "name": c.name,
-                            "args": c.arguments,
+                            "args": c.arguments
                         }
                     }));
                 }
@@ -740,18 +800,16 @@ impl ReasoningEngine for GeminiAdapter {
                     parts.push(json!({
                         "functionResponse": {
                             "name": res.name,
-                            "response": res.result,
+                            "response": res.result
                         }
                     }));
                 }
             }
 
-            if !parts.is_empty() {
-                contents.push(json!({
-                    "role": role,
-                    "parts": parts,
-                }));
-            }
+            contents.push(json!({
+                "role": role,
+                "parts": parts,
+            }));
         }
 
         let mut body = json!({
@@ -760,6 +818,7 @@ impl ReasoningEngine for GeminiAdapter {
 
         if let Some(ref sys) = context.system_prompt {
             body["systemInstruction"] = json!({
+                "role": "system",
                 "parts": [{ "text": sys }]
             });
         }
@@ -771,7 +830,7 @@ impl ReasoningEngine for GeminiAdapter {
         if let Some(max_t) = context.max_tokens {
             gen_config["maxOutputTokens"] = json!(max_t);
         }
-        if gen_config.as_object().is_some_and(|o| !o.is_empty()) {
+        if gen_config.as_object().map_or(false, |o| !o.is_empty()) {
             body["generationConfig"] = gen_config;
         }
 
@@ -793,15 +852,15 @@ impl ReasoningEngine for GeminiAdapter {
         }
 
         let url = format!(
-            "{}/models/{}:generateContent?key={}",
+            "{}/models/{}:generateContent",
             self.base_url.trim_end_matches('/'),
-            self.model,
-            self.api_key
+            self.model
         );
 
         let response = self
             .client
             .post(&url)
+            .header("x-goog-api-key", &self.api_key)
             .header(CONTENT_TYPE, "application/json")
             .json(&body)
             .send()
@@ -870,6 +929,134 @@ impl ReasoningEngine for GeminiAdapter {
 
 #[async_trait]
 impl strata_core::traits::ReasoningEngine for GeminiAdapter {
+    async fn prompt(
+        &self,
+        system: Option<&str>,
+        user: &str,
+        context: Option<serde_json::Value>,
+    ) -> Result<String, StrataError> {
+        let mut ctx = PromptContext::new().with_message(ChatMessage::user(user));
+        if let Some(sys) = system {
+            ctx = ctx.with_system(sys);
+        }
+        if let Some(meta) = context {
+            ctx.metadata = meta;
+        }
+        let output = self.complete(&ctx).await?;
+        Ok(output.content.unwrap_or_default())
+    }
+}
+
+// ============================================================================
+// Ollama Adapter (Local-first offline LLM runtime: Qwen, Llama, DeepSeek)
+// ============================================================================
+
+pub const DEFAULT_OLLAMA_URL: &str = "http://localhost:11434";
+pub const DEFAULT_OLLAMA_MODEL: &str = "qwen2.5-coder:7b";
+
+pub struct OllamaAdapter {
+    base_url: String,
+    model: String,
+}
+
+impl OllamaAdapter {
+    pub fn new(model: impl Into<String>) -> Self {
+        let base_url = std::env::var("OLLAMA_HOST")
+            .or_else(|_| std::env::var("STRATA_OLLAMA_URL"))
+            .unwrap_or_else(|_| DEFAULT_OLLAMA_URL.to_string());
+        Self {
+            base_url,
+            model: model.into(),
+        }
+    }
+
+    pub fn with_base_url(mut self, base_url: impl Into<String>) -> Self {
+        self.base_url = base_url.into();
+        self
+    }
+
+    pub fn model(&self) -> &str {
+        &self.model
+    }
+
+    pub fn base_url(&self) -> &str {
+        &self.base_url
+    }
+
+    /// Probes Ollama with a single HTTP request (<1500ms timeout), returning installed models if online.
+    pub async fn probe_models(base_url: &str) -> Option<Vec<String>> {
+        let client = reqwest::Client::builder()
+            .timeout(std::time::Duration::from_millis(1500))
+            .build()
+            .unwrap_or_default();
+        let url = format!("{}/api/tags", base_url.trim_end_matches('/'));
+        if let Ok(resp) = client.get(&url).send().await {
+            if resp.status().is_success() {
+                if let Ok(json_val) = resp.json::<serde_json::Value>().await {
+                    if let Some(models) = json_val["models"].as_array() {
+                        let list: Vec<String> = models
+                            .iter()
+                            .filter_map(|m| m["name"].as_str().map(|s| s.to_string()))
+                            .collect();
+                        return Some(list);
+                    }
+                    return Some(Vec::new());
+                }
+            }
+        }
+        None
+    }
+
+    /// Quickly checks whether Ollama is running and responsive at the given base URL.
+    pub async fn ping_available(base_url: &str) -> bool {
+        Self::probe_models(base_url).await.is_some()
+    }
+
+    /// Lists all model tags currently installed locally in Ollama.
+    pub async fn list_installed_models(base_url: &str) -> Vec<String> {
+        Self::probe_models(base_url).await.unwrap_or_default()
+    }
+
+    /// Attempts to auto-detect a running local Ollama instance and pick the best installed model.
+    pub async fn auto_detect() -> Option<Self> {
+        let base_url = std::env::var("OLLAMA_HOST")
+            .or_else(|_| std::env::var("STRATA_OLLAMA_URL"))
+            .unwrap_or_else(|_| DEFAULT_OLLAMA_URL.to_string());
+
+        if let Some(models) = Self::probe_models(&base_url).await {
+            if models.is_empty() {
+                return None;
+            }
+            let chosen_model = models
+                .iter()
+                .find(|m| m.contains("coder") || m.contains("code"))
+                .or_else(|| {
+                    models.iter().find(|m| {
+                        m.contains("qwen") || m.contains("llama") || m.contains("deepseek")
+                    })
+                })
+                .or_else(|| models.first())
+                .cloned()
+                .unwrap_or_else(|| DEFAULT_OLLAMA_MODEL.to_string());
+
+            Some(Self::new(chosen_model).with_base_url(base_url))
+        } else {
+            None
+        }
+    }
+}
+
+#[async_trait]
+impl ReasoningEngine for OllamaAdapter {
+    async fn complete(&self, context: &PromptContext) -> Result<ReasoningOutput, StrataError> {
+        let v1_url = format!("{}/v1", self.base_url.trim_end_matches('/'));
+        let inner = OpenAiAdapter::new("ollama", &self.model).with_base_url(v1_url);
+        inner.complete(context).await
+    }
+}
+
+#[async_trait]
+impl strata_core::traits::ReasoningEngine for OllamaAdapter {
     async fn prompt(
         &self,
         system: Option<&str>,

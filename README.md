@@ -245,6 +245,9 @@ Strata turns everyday developer-agent iterations into fine-tuning datasets:
 | `strata mcp install` | Auto-configure MCP in Cursor, Claude Desktop, and Windsurf | `strata mcp install` |
 | `strata mcp uninstall` | Safely remove Strata from host editor configs | `strata mcp uninstall` |
 | `strata search` | Hybrid Reciprocal Rank Fusion (FTS5 BM25 + FastEmbed) | `strata search "auth middleware"` |
+| `strata config` | Manage runtime configuration and reasoning providers | `strata config set provider ollama` |
+| `strata consolidate` | Distill episodic traces with pluggable reasoning engine | `strata consolidate --provider ollama` |
+| `strata a2a` | Multi-agent stigmergic presence and atomic temporal leases | `strata a2a status` |
 | `strata remember` | Store a semantic fact, anti-pattern, or architectural decision | `strata remember "Never bypass JWT auth"` |
 | `strata reconcile` | Scan workspace against Git Merkle tree to detect relocated/stale code | `strata reconcile --auto-relink` |
 | `strata digest` | Generate high-level architectural overview and community clusters | `strata digest` |

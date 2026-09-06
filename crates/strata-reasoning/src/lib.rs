@@ -4,6 +4,7 @@ pub mod engine;
 pub mod mock;
 pub mod planning;
 pub mod prompts;
+pub mod resolver;
 pub mod training;
 
 pub use adapters::*;
@@ -19,6 +20,7 @@ pub use planning::{
     SerializedGoalEdge, TaskExecutor,
 };
 pub use prompts::*;
+pub use resolver::*;
 pub use training::*;
 
 #[cfg(test)]

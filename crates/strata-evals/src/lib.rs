@@ -27,9 +27,10 @@ pub async fn run_all_scenarios() -> Result<()> {
     ArchitectureClusteringEval::run_eval().await?;
     HitlCoreApprovalEval::run_eval().await?;
     run_a2a_stigmergic_leases_scenario().await?;
+    run_pluggable_reasoning_cascade_scenario().await?;
 
     println!("\n========================================================");
-    println!("🎉 ALL EVAL SCENARIOS PASSED (17/17)");
+    println!("🎉 ALL EVAL SCENARIOS PASSED (18/18)");
     println!("========================================================\n");
 
     Ok(())
@@ -169,5 +170,12 @@ mod tests {
         run_a2a_stigmergic_leases_scenario()
             .await
             .expect("A2A stigmergic leases scenario failed");
+    }
+
+    #[tokio::test]
+    async fn test_eval_pluggable_reasoning_cascade() {
+        run_pluggable_reasoning_cascade_scenario()
+            .await
+            .expect("Pluggable reasoning cascade scenario failed");
     }
 }

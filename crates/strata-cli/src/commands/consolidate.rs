@@ -2,18 +2,27 @@ use anyhow::{Context, Result};
 use std::sync::Arc;
 use tracing::info;
 
+use strata_core::config::StrataConfig;
 use strata_memory::{ConsolidationPipeline, MockEmbeddingProvider, SqliteStore};
-use strata_reasoning::{AnthropicAdapter, MockReasoningEngine, OpenAiAdapter, OpenRouterAdapter};
+use strata_reasoning::resolve_reasoning_engine;
 
 pub struct ConsolidateOptions {
     pub session: Option<String>,
     pub all: bool,
     pub model: Option<String>,
+    pub provider: Option<String>,
     pub json: bool,
 }
 
 pub async fn run_consolidate(opts: ConsolidateOptions, store: Arc<SqliteStore>) -> Result<()> {
-    let reasoning_engine = resolve_reasoning_engine(opts.model.as_deref());
+    let config = StrataConfig::load();
+    let resolved =
+        resolve_reasoning_engine(&config, opts.provider.as_deref(), opts.model.as_deref())
+            .await
+            .context("Failed to resolve reasoning engine provider")?;
+
+    info!("Reasoning engine active: {}", resolved.kind);
+    let reasoning_engine = resolved.engine;
     let pipeline = ConsolidationPipeline::with_default_config();
     let embedder = MockEmbeddingProvider::default();
 
@@ -72,28 +81,4 @@ pub async fn run_consolidate(opts: ConsolidateOptions, store: Arc<SqliteStore>) 
     }
 
     Ok(())
-}
-
-pub fn resolve_reasoning_engine(
-    model_slug: Option<&str>,
-) -> Arc<dyn strata_core::traits::ReasoningEngine> {
-    // 1. Try OpenRouter (first priority per spec)
-    if let Ok(adapter) = OpenRouterAdapter::from_env(model_slug.map(|s| s.to_string())) {
-        return Arc::new(adapter);
-    }
-
-    // 2. Try OpenAI
-    if let Ok(key) = std::env::var("OPENAI_API_KEY") {
-        let model = model_slug.unwrap_or("gpt-4o-mini");
-        return Arc::new(OpenAiAdapter::new(key, model));
-    }
-
-    // 3. Try Anthropic
-    if let Ok(key) = std::env::var("ANTHROPIC_API_KEY") {
-        let model = model_slug.unwrap_or("claude-3-5-sonnet-20241022");
-        return Arc::new(AnthropicAdapter::new(key, model));
-    }
-
-    // 4. Default: Deterministic Mock Engine
-    Arc::new(MockReasoningEngine::new())
 }
