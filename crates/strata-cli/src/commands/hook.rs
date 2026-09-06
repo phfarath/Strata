@@ -1,4 +1,3 @@
-use crate::commands::consolidate::resolve_reasoning_engine;
 use anyhow::Result;
 use clap::Subcommand;
 use std::sync::Arc;
@@ -254,11 +253,18 @@ pub async fn handle_hook(command: HookCommand, engine: Arc<SqliteMemoryEngine>) 
             );
             let store = engine.store_arc();
             let embedder = engine.embedding_provider();
-            let reasoning = resolve_reasoning_engine(None);
             let pipeline = ConsolidationPipeline::with_default_config();
             let sid = session_id.clone();
 
             tokio::spawn(async move {
+                let config = strata_core::config::StrataConfig::load();
+                let reasoning = strata_reasoning::resolve_reasoning_engine(&config, None, None)
+                    .await
+                    .map(|r| r.engine)
+                    .unwrap_or_else(|_| {
+                        std::sync::Arc::new(strata_reasoning::MockReasoningEngine::new())
+                    });
+
                 if let Ok(events) = store.get_events(&sid, None, None) {
                     if let Err(e) = pipeline
                         .run_pipeline(&store, embedder.as_ref(), &events, Some(reasoning.as_ref()))
