@@ -11,6 +11,7 @@ pub struct SearchOptions {
     pub scope: Option<String>,
     pub memory_type: Option<String>,
     pub json: bool,
+    pub graph: bool,
 }
 
 pub async fn run_search(options: SearchOptions, engine: Arc<dyn MemoryEngine>) -> Result<()> {
@@ -48,9 +49,14 @@ pub async fn run_search(options: SearchOptions, engine: Arc<dyn MemoryEngine>) -
     }
 
     println!(
-        "\n🔍 Found {} memories matching \"{}\":\n",
+        "\n🔍 Found {} memories matching \"{}\"{}:\n",
         filtered.len(),
-        options.query
+        options.query,
+        if options.graph {
+            " [Graph Spreading Activation]"
+        } else {
+            ""
+        }
     );
     for (i, rec) in filtered.iter().enumerate() {
         let handle = rec.to_handle(None);

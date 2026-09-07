@@ -76,9 +76,35 @@ impl McpServer {
                             "type": "string",
                             "enum": ["episodic", "semantic", "procedural", "negative_pattern"],
                             "description": "Optional filter by memory category"
+                        },
+                        "graph_recall": {
+                            "type": "boolean",
+                            "description": "Whether to augment retrieval with associative Knowledge Graph spreading activation (default: true)"
                         }
                     },
                     "required": ["query"]
+                }),
+            },
+            ToolDefinition {
+                name: "memory_graph_explore".to_string(),
+                description: "Explore the associative Knowledge Graph (HippoRAG / ACT-R style) starting from a seed term (symbol name, file path, concept tag, or memory UUID). Traverses call edges, file anchors, and justification links to reveal connected architecture context with 0 tokens.".to_string(),
+                input_schema: serde_json::json!({
+                    "type": "object",
+                    "properties": {
+                        "seed": {
+                            "type": "string",
+                            "description": "Seed term to explore: memory UUID, symbol name, file path, or concept tag"
+                        },
+                        "limit": {
+                            "type": "integer",
+                            "description": "Maximum number of connected memories to return (default: 5)"
+                        },
+                        "scope": {
+                            "type": "string",
+                            "description": "Optional scope filter: 'global', 'project:<name>', 'session:<id>'"
+                        }
+                    },
+                    "required": ["seed"]
                 }),
             },
             ToolDefinition {
@@ -675,6 +701,54 @@ impl McpServer {
                         }
                     }
                     Err(e) => CallToolResult::error(format!("Memory search error: {e}")),
+                }
+            }
+            "memory_graph_explore" => {
+                let seed = match args.get("seed").and_then(|v| v.as_str()) {
+                    Some(s) => s,
+                    None => return CallToolResult::error("Missing required parameter: seed"),
+                };
+
+                let limit = args.get("limit").and_then(|v| v.as_u64()).unwrap_or(5) as usize;
+                let scope = args
+                    .get("scope")
+                    .and_then(|v| v.as_str())
+                    .map(|s| s.parse::<Scope>().unwrap_or(Scope::Global));
+
+                if let Some(engine) = &self.sqlite_engine {
+                    match engine.search_graph_associative(seed, scope.as_ref(), limit) {
+                        Ok(records_with_scores) => {
+                            if records_with_scores.is_empty() {
+                                CallToolResult::text(format!(
+                                    "No associative connections found for seed: \"{seed}\""
+                                ))
+                            } else {
+                                let output: Vec<serde_json::Value> = records_with_scores
+                                    .into_iter()
+                                    .map(|(rec, score)| {
+                                        let mut val = serde_json::to_value(rec.to_handle(None))
+                                            .unwrap_or(serde_json::json!({}));
+                                        if let Some(obj) = val.as_object_mut() {
+                                            obj.insert(
+                                                "spreading_activation_score".to_string(),
+                                                serde_json::json!(score),
+                                            );
+                                        }
+                                        val
+                                    })
+                                    .collect();
+                                match serde_json::to_string_pretty(&output) {
+                                    Ok(json) => CallToolResult::text(json),
+                                    Err(e) => CallToolResult::error(format!(
+                                        "Failed to serialize graph explore results: {e}"
+                                    )),
+                                }
+                            }
+                        }
+                        Err(e) => CallToolResult::error(format!("Graph explore error: {e}")),
+                    }
+                } else {
+                    CallToolResult::error("Knowledge Graph explore requires SQLite engine")
                 }
             }
             "memory_get" => {

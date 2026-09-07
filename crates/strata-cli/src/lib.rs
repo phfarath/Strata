@@ -705,6 +705,76 @@ pub fn process_data(msg: &str) {
     }
 
     #[tokio::test]
+    async fn test_mcp_memory_graph_explore_tool() {
+        use crate::mcp::server::McpServer;
+        use strata_core::state::{MemoryRecord, MemoryType, Scope};
+        use strata_core::traits::MemoryEngine;
+        use strata_memory::SqliteMemoryEngine;
+
+        let engine = Arc::new(SqliteMemoryEngine::open_in_memory(None).unwrap());
+
+        // Insert connected memories in Knowledge Graph
+        let mut mem1 = MemoryRecord::new(
+            MemoryType::Semantic,
+            "Database pool initialized via init_db in src/database/postgres.rs",
+            Scope::Project("test-proj".to_string()),
+        );
+        mem1.metadata = serde_json::json!({
+            "symbols": ["init_db"],
+            "file_paths": ["src/database/postgres.rs"]
+        });
+        mem1.tags = vec!["database".to_string()];
+        engine.write(&mem1).await.unwrap();
+
+        let mut mem2 = MemoryRecord::new(
+            MemoryType::NegativePattern,
+            "Connection pool starvation: deadpool_postgres max_size must match server limits",
+            Scope::Project("test-proj".to_string()),
+        );
+        mem2.metadata = serde_json::json!({
+            "symbols": ["init_db"],
+            "file_paths": ["src/database/postgres.rs"]
+        });
+        mem2.tags = vec!["database".to_string(), "tuning".to_string()];
+        mem2.importance = 0.95;
+        engine.write(&mem2).await.unwrap();
+
+        let server = McpServer::new_with_engine(Arc::clone(&engine));
+
+        // 1. Verify tool definition exists
+        let defs = McpServer::tool_definitions();
+        assert!(
+            defs.iter().any(|d| d.name == "memory_graph_explore"),
+            "memory_graph_explore must be registered in MCP tool definitions"
+        );
+
+        // 2. Call memory_graph_explore with seed "init_db"
+        let tool_res = server
+            .execute_tool(
+                "memory_graph_explore",
+                serde_json::json!({
+                    "seed": "init_db",
+                    "limit": 5
+                }),
+            )
+            .await;
+
+        assert!(
+            tool_res.is_error != Some(true),
+            "memory_graph_explore must succeed"
+        );
+        let text = &tool_res.content[0].text;
+        assert!(
+            text.contains("spreading_activation_score"),
+            "Result must include spreading activation scores"
+        );
+        assert!(
+            text.contains(&mem2.id.to_string()),
+            "Connected memory must be recalled via graph activation"
+        );
+    }
+
+    #[tokio::test]
     async fn test_cli_hook_session_end_automatic_consolidation() {
         use crate::commands::hook::{handle_hook, HookCommand};
         use chrono::Utc;

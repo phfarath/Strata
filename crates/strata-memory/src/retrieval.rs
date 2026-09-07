@@ -4,27 +4,39 @@ use strata_core::state::{MemoryRecord, MemoryType, Scope};
 use uuid::Uuid;
 
 use crate::embedding::{cosine_similarity, EmbeddingProvider};
+use crate::spreading_activation::{
+    GraphNode, SpreadingActivationConfig, SpreadingActivationEngine,
+};
 use crate::store::SqliteStore;
 
 #[derive(Debug, Clone)]
 pub struct HybridRankerConfig {
     /// RRF smoothing constant (default: 60.0)
     pub rrf_k: f32,
-    /// Lexical BM25 ranker weight (default: 0.5)
+    /// Lexical BM25 ranker weight (default: 0.4)
     pub bm25_weight: f32,
-    /// Vector cosine similarity ranker weight (default: 0.5)
+    /// Vector cosine similarity ranker weight (default: 0.4)
     pub vector_weight: f32,
+    /// Graph spreading activation ranker weight (default: 0.35)
+    pub graph_weight: f32,
     /// Minimum cosine similarity threshold for vector candidates (default: 0.0)
     pub min_similarity: f32,
+    /// Enable associative Knowledge Graph spreading activation retrieval
+    pub enable_spreading_activation: bool,
+    /// Spreading activation engine configuration
+    pub activation_config: SpreadingActivationConfig,
 }
 
 impl Default for HybridRankerConfig {
     fn default() -> Self {
         Self {
             rrf_k: 60.0,
-            bm25_weight: 0.5,
-            vector_weight: 0.5,
+            bm25_weight: 0.4,
+            vector_weight: 0.4,
+            graph_weight: 0.35,
             min_similarity: 0.0,
+            enable_spreading_activation: true,
+            activation_config: SpreadingActivationConfig::default(),
         }
     }
 }
@@ -32,18 +44,32 @@ impl Default for HybridRankerConfig {
 #[derive(Debug, Clone)]
 pub struct HybridRanker {
     config: HybridRankerConfig,
+    spreading_engine: SpreadingActivationEngine,
 }
 
 impl HybridRanker {
     pub fn new(config: HybridRankerConfig) -> Self {
-        Self { config }
+        let spreading_engine = SpreadingActivationEngine::new(config.activation_config.clone());
+        Self {
+            config,
+            spreading_engine,
+        }
     }
 
     pub fn with_default_config() -> Self {
         Self::new(HybridRankerConfig::default())
     }
 
-    /// Perform hybrid retrieval by combining FTS5 BM25 and Vector Cosine Similarity via RRF.
+    pub fn config(&self) -> &HybridRankerConfig {
+        &self.config
+    }
+
+    pub fn spreading_engine(&self) -> &SpreadingActivationEngine {
+        &self.spreading_engine
+    }
+
+    /// Perform hybrid retrieval combining FTS5 BM25, Vector Cosine Similarity,
+    /// and Knowledge Graph Spreading Activation via Tri-Modal RRF.
     pub async fn retrieve(
         &self,
         store: &SqliteStore,
@@ -79,21 +105,79 @@ impl HybridRanker {
             }
         }
 
-        // If both FTS and vector results are empty, fall back to recent memories
-        if fts_results.is_empty() && vector_results.is_empty() {
+        // 3. Associative Graph Spreading Activation retrieval (HippoRAG style)
+        let mut graph_results: Vec<(MemoryRecord, f32)> = Vec::new();
+        if self.config.enable_spreading_activation {
+            if let Ok(graph) = self.spreading_engine.build_graph_from_store(store, scope) {
+                // Build initial seed activations
+                let mut seeds = self.spreading_engine.seed_from_query(&graph, query);
+
+                // Add top FTS candidates as memory seeds
+                for (rec, fts_score) in fts_results.iter().take(5) {
+                    let norm_score = (1.0 / (1.0 + fts_score.abs())).clamp(0.2, 1.0);
+                    seeds.push((GraphNode::Memory(rec.id), norm_score));
+                }
+
+                // Add top vector candidates as memory seeds
+                for (rec, sim) in vector_results.iter().take(5) {
+                    seeds.push((GraphNode::Memory(rec.id), *sim));
+                }
+
+                if !seeds.is_empty() {
+                    let activations = self.spreading_engine.propagate(&graph, &seeds);
+                    let top_memories = self
+                        .spreading_engine
+                        .extract_top_memories(&activations, candidate_limit);
+
+                    // Collect records for activated memory IDs
+                    for (mem_id, act_score) in top_memories {
+                        // Check if already fetched in FTS or vector results
+                        if let Some((rec, _)) = fts_results.iter().find(|(r, _)| r.id == mem_id) {
+                            graph_results.push((rec.clone(), act_score));
+                        } else if let Some((rec, _)) =
+                            vector_results.iter().find(|(r, _)| r.id == mem_id)
+                        {
+                            graph_results.push((rec.clone(), act_score));
+                        } else if let Ok(Some(rec)) = store.get_memory(&mem_id) {
+                            // Discovered via associative multi-hop jump!
+                            if scope.map_or(true, |s| s.is_compatible(&rec.scope))
+                                && memory_types
+                                    .map_or(true, |types| types.contains(&rec.memory_type))
+                            {
+                                graph_results.push((rec, act_score));
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        // If all candidate streams are empty, fall back to recent memories
+        if fts_results.is_empty() && vector_results.is_empty() && graph_results.is_empty() {
             return store.get_all_memories(scope, memory_types, limit);
         }
 
-        // 3. Compute Reciprocal Rank Fusion (RRF)
-        let fused = self.fuse_ranks(&fts_results, &vector_results, limit);
+        // 4. Compute Tri-Modal Reciprocal Rank Fusion (RRF)
+        let fused = self.fuse_tri_ranks(&fts_results, &vector_results, &graph_results, limit);
         Ok(fused)
     }
 
-    /// Fuse BM25 and Vector rankings using Reciprocal Rank Fusion (RRF).
+    /// Backward-compatible dual-modal fusion (BM25 + Vector).
     pub fn fuse_ranks(
         &self,
         fts_ranked: &[(MemoryRecord, f32)],
         vector_ranked: &[(MemoryRecord, f32)],
+        limit: usize,
+    ) -> Vec<MemoryRecord> {
+        self.fuse_tri_ranks(fts_ranked, vector_ranked, &[], limit)
+    }
+
+    /// Fuse BM25, Vector, and Spreading Activation rankings using Tri-Modal Reciprocal Rank Fusion (RRF).
+    pub fn fuse_tri_ranks(
+        &self,
+        fts_ranked: &[(MemoryRecord, f32)],
+        vector_ranked: &[(MemoryRecord, f32)],
+        graph_ranked: &[(MemoryRecord, f32)],
         limit: usize,
     ) -> Vec<MemoryRecord> {
         let mut score_map: HashMap<Uuid, f32> = HashMap::new();
@@ -102,6 +186,7 @@ impl HybridRanker {
         let k = self.config.rrf_k;
         let w_bm25 = self.config.bm25_weight;
         let w_vec = self.config.vector_weight;
+        let w_graph = self.config.graph_weight;
 
         // Score FTS results
         for (rank_idx, (record, _bm25_score)) in fts_ranked.iter().enumerate() {
@@ -115,6 +200,15 @@ impl HybridRanker {
         // Score Vector results
         for (rank_idx, (record, _sim)) in vector_ranked.iter().enumerate() {
             let rrf_score = w_vec * (1.0 / (k + (rank_idx as f32) + 1.0));
+            *score_map.entry(record.id).or_insert(0.0) += rrf_score;
+            record_map
+                .entry(record.id)
+                .or_insert_with(|| record.clone());
+        }
+
+        // Score Knowledge Graph Spreading Activation results
+        for (rank_idx, (record, _act_score)) in graph_ranked.iter().enumerate() {
+            let rrf_score = w_graph * (1.0 / (k + (rank_idx as f32) + 1.0));
             *score_map.entry(record.id).or_insert(0.0) += rrf_score;
             record_map
                 .entry(record.id)

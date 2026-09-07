@@ -2280,6 +2280,39 @@ impl SqliteStore {
         Ok(results)
     }
 
+    /// Retrieves all recorded semantic fact dependencies across the workspace.
+    pub fn get_all_fact_dependencies(&self) -> Result<Vec<(Uuid, Uuid, String)>, StrataError> {
+        let conn = self
+            .conn
+            .lock()
+            .map_err(|_| StrataError::Database("Lock poisoned on SQLite connection".to_string()))?;
+
+        let mut stmt = conn
+            .prepare(
+                "SELECT dependent_fact_id, prerequisite_fact_id, dependency_type FROM fact_dependencies",
+            )
+            .map_err(|e| StrataError::Database(e.to_string()))?;
+
+        let rows = stmt
+            .query_map([], |row| {
+                let dep_str: String = row.get(0)?;
+                let prereq_str: String = row.get(1)?;
+                let dep_type: String = row.get(2)?;
+                let dep_id =
+                    Uuid::parse_str(&dep_str).map_err(|_| rusqlite::Error::InvalidQuery)?;
+                let prereq_id =
+                    Uuid::parse_str(&prereq_str).map_err(|_| rusqlite::Error::InvalidQuery)?;
+                Ok((dep_id, prereq_id, dep_type))
+            })
+            .map_err(|e| StrataError::Database(e.to_string()))?;
+
+        let mut results = Vec::new();
+        for r in rows {
+            results.push(r.map_err(|e| StrataError::Database(e.to_string()))?);
+        }
+        Ok(results)
+    }
+
     /// Promotes a semantic fact to permanent Core Tier (frozen retention, R=1.0).
     /// Enforces strict requirement for explicit human approval (`approved_by_human == true`).
     pub fn promote_semantic_fact_to_core(
@@ -3928,6 +3961,34 @@ impl SqliteStore {
             .unwrap_or(0);
 
         Ok(count as usize)
+    }
+
+    /// Retrieves all recorded call edges up to the specified limit.
+    pub fn get_all_call_edges(&self, limit: usize) -> Result<Vec<CallEdge>, StrataError> {
+        let conn = self
+            .conn
+            .lock()
+            .map_err(|_| StrataError::Database("Lock poisoned on SQLite connection".to_string()))?;
+
+        let mut stmt = conn
+            .prepare(
+                "SELECT id, caller_file, caller_symbol, callee_symbol,
+                        callee_file_hint, line_number, call_type, created_at
+                 FROM call_edges
+                 ORDER BY created_at DESC
+                 LIMIT ?1",
+            )
+            .map_err(|e| StrataError::Database(e.to_string()))?;
+
+        let rows = stmt
+            .query_map(params![limit as i64], |row| Self::row_to_call_edge(row))
+            .map_err(|e| StrataError::Database(e.to_string()))?;
+
+        let mut results = Vec::new();
+        for r in rows {
+            results.push(r.map_err(|e| StrataError::Database(e.to_string()))?);
+        }
+        Ok(results)
     }
 
     fn row_to_call_edge(row: &rusqlite::Row) -> rusqlite::Result<CallEdge> {
