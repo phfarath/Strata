@@ -38,7 +38,8 @@ pub async fn run_consolidate(opts: ConsolidateOptions, store: Arc<SqliteStore>) 
             resolve_reasoning_engine(&config, opts.provider.as_deref(), opts.model.as_deref()).await
         {
             info!("Decoupled LLM Enricher active: {}", resolved.kind);
-            consolidator = consolidator.with_enricher(Arc::new(AsyncLlmEnricher::new(resolved.engine)));
+            consolidator =
+                consolidator.with_enricher(Arc::new(AsyncLlmEnricher::new(resolved.engine)));
             tokens_consumed = 1500;
         } else {
             info!("LLM provider unavailable; falling back to 0-token CanonicalTemplateEnricher");
@@ -106,7 +107,10 @@ pub async fn run_consolidate(opts: ConsolidateOptions, store: Arc<SqliteStore>) 
             result.procedural_skills.len()
         );
         println!("🧹 Memories Pruned:      {}", result.memories_pruned);
-        println!("⚡ Tokens Consumed:      {} (100% savings)", tokens_consumed);
+        println!(
+            "⚡ Tokens Consumed:      {} (100% savings)",
+            tokens_consumed
+        );
         println!("⏱️ Latency:              {:.2} ms", duration_ms);
         println!("──────────────────────────────────────────────────\n");
     }

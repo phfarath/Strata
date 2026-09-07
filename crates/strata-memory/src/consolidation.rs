@@ -1,7 +1,7 @@
+use chrono::Utc;
 use std::collections::hash_map::DefaultHasher;
 use std::hash::{Hash, Hasher};
 use std::sync::Arc;
-use chrono::Utc;
 
 use strata_core::errors::StrataError;
 use strata_core::events::{Event, EventPayload};
@@ -873,12 +873,25 @@ impl NeuroSymbolicConsolidator {
 
         for event in &events {
             let text = match &event.payload {
-                EventPayload::TaskStarted(t) => format!("TaskStarted: {} - {:?}", t.title, t.description),
-                EventPayload::TaskCompleted(t) => format!("TaskCompleted: {} - {}", t.task_id, t.outcome_summary),
-                EventPayload::ErrorObserved(e) => format!("ErrorObserved {}: {}", e.error_type, e.message),
-                EventPayload::ToolInvoked(inv) => format!("ToolInvoked: {} with input {:?}", inv.tool_name, inv.input),
-                EventPayload::ToolResultReceived(res) => format!("ToolResult: {} (error: {}) {:?}", res.tool_name, res.is_error, res.result),
-                EventPayload::ObservationReceived(obs) => format!("Observation: {} - {}", obs.source, obs.content),
+                EventPayload::TaskStarted(t) => {
+                    format!("TaskStarted: {} - {:?}", t.title, t.description)
+                }
+                EventPayload::TaskCompleted(t) => {
+                    format!("TaskCompleted: {} - {}", t.task_id, t.outcome_summary)
+                }
+                EventPayload::ErrorObserved(e) => {
+                    format!("ErrorObserved {}: {}", e.error_type, e.message)
+                }
+                EventPayload::ToolInvoked(inv) => {
+                    format!("ToolInvoked: {} with input {:?}", inv.tool_name, inv.input)
+                }
+                EventPayload::ToolResultReceived(res) => format!(
+                    "ToolResult: {} (error: {}) {:?}",
+                    res.tool_name, res.is_error, res.result
+                ),
+                EventPayload::ObservationReceived(obs) => {
+                    format!("Observation: {} - {}", obs.source, obs.content)
+                }
                 EventPayload::SessionEnded(se) => format!("SessionEnded: {:?}", se.final_state),
                 _ => format!("Event: {:?}", event.id),
             };
@@ -886,10 +899,21 @@ impl NeuroSymbolicConsolidator {
             let emb = self.embedder.embed_text(&text).await?;
             let importance = match &event.payload {
                 EventPayload::ErrorObserved(_) => 0.85,
-                EventPayload::TaskCompleted(t) => if t.success { 0.80 } else { 0.70 },
+                EventPayload::TaskCompleted(t) => {
+                    if t.success {
+                        0.80
+                    } else {
+                        0.70
+                    }
+                }
                 EventPayload::ObservationReceived(obs) => {
                     let c = obs.content.to_string().to_lowercase();
-                    if c.contains("architecture") || c.contains("database") || c.contains("migrated") || c.contains("protocol") || c.contains("decision") {
+                    if c.contains("architecture")
+                        || c.contains("database")
+                        || c.contains("migrated")
+                        || c.contains("protocol")
+                        || c.contains("decision")
+                    {
                         0.95 // High-importance bypass
                     } else {
                         0.60
@@ -898,7 +922,9 @@ impl NeuroSymbolicConsolidator {
                 _ => 0.50,
             };
 
-            let _gating = self.subconscious.ingest(event.clone(), emb.clone(), importance);
+            let _gating = self
+                .subconscious
+                .ingest(event.clone(), emb.clone(), importance);
 
             if let EventPayload::ObservationReceived(obs) = &event.payload {
                 let content_str = obs.content.as_str().unwrap_or_default().trim();
@@ -954,7 +980,8 @@ impl NeuroSymbolicConsolidator {
         }
 
         let prune_rep = self.decay.prune_expired(&self.store, None, None)?;
-        result.memories_pruned = prune_rep.memories_pruned + prune_rep.facts_pruned + prune_rep.skills_pruned;
+        result.memories_pruned =
+            prune_rep.memories_pruned + prune_rep.facts_pruned + prune_rep.skills_pruned;
 
         // 3. REM Phase (Trajectory Folding & Spatial Clustering with Medoids)
         let recovery_skills = self.trajectory_miner.mine_recovery_trajectories(&events);
@@ -964,7 +991,9 @@ impl NeuroSymbolicConsolidator {
             let skill_text = format!("{} {}", skill.name, skill.description);
             if let Ok(skill_emb) = self.embedder.embed_text(&skill_text).await {
                 self.store.insert_or_update_procedural_skill(&skill)?;
-                let _ = self.store.update_procedural_skill_embedding(&skill.id, &skill_emb);
+                let _ = self
+                    .store
+                    .update_procedural_skill_embedding(&skill.id, &skill_emb);
             } else {
                 self.store.insert_or_update_procedural_skill(&skill)?;
             }
@@ -996,13 +1025,19 @@ impl NeuroSymbolicConsolidator {
                     .map(|e| e.agent_id.clone())
                     .unwrap_or_else(|| "agent".to_string());
 
-                let ep = EpisodicMemory::new(session_id, &actor, &enriched_summary, time_start, time_end)
-                    .with_signals(SignalScores {
-                        success: 1.0,
-                        frustration: 0.0,
-                        novelty: 0.70,
-                        importance: 0.75,
-                    });
+                let ep = EpisodicMemory::new(
+                    session_id,
+                    &actor,
+                    &enriched_summary,
+                    time_start,
+                    time_end,
+                )
+                .with_signals(SignalScores {
+                    success: 1.0,
+                    frustration: 0.0,
+                    novelty: 0.70,
+                    importance: 0.75,
+                });
                 self.store.insert_episodic_memory(&ep)?;
                 result.episodic_memories.push(ep);
             }

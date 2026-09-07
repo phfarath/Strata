@@ -2502,11 +2502,17 @@ async fn test_subconscious_recurrence_and_bypass() {
             timestamp: Utc::now(),
         }),
     );
-    let emb_bypass = embedder.embed_text("Critical architectural directive: must use PostgreSQL").await.unwrap();
+    let emb_bypass = embedder
+        .embed_text("Critical architectural directive: must use PostgreSQL")
+        .await
+        .unwrap();
 
     // 1. Test bypass for high importance (0.95 >= 0.90)
     let decision = buffer.ingest(ev_bypass, emb_bypass, 0.95);
-    assert!(matches!(decision, crate::subconscious::GatingDecision::BypassImmediate { .. }));
+    assert!(matches!(
+        decision,
+        crate::subconscious::GatingDecision::BypassImmediate { .. }
+    ));
     assert_eq!(buffer.drain_bypass().len(), 1);
 
     // 2. Test recurrence holding and consolidation
@@ -2521,14 +2527,23 @@ async fn test_subconscious_recurrence_and_bypass() {
             timestamp: Utc::now(),
         }),
     );
-    let emb1 = embedder.embed_text("cargo check failure in auth module").await.unwrap();
+    let emb1 = embedder
+        .embed_text("cargo check failure in auth module")
+        .await
+        .unwrap();
 
     let d1 = buffer.ingest(ev1.clone(), emb1.clone(), 0.6);
-    assert!(matches!(d1, crate::subconscious::GatingDecision::HoldInBuffer { .. }));
+    assert!(matches!(
+        d1,
+        crate::subconscious::GatingDecision::HoldInBuffer { .. }
+    ));
 
     // Second occurrence with high similarity should trigger consolidation
     let d2 = buffer.ingest(ev1, emb1, 0.6);
-    assert!(matches!(d2, crate::subconscious::GatingDecision::Consolidate { .. }));
+    assert!(matches!(
+        d2,
+        crate::subconscious::GatingDecision::Consolidate { .. }
+    ));
 }
 
 #[test]
@@ -2560,7 +2575,11 @@ fn test_spatial_clustering_and_medoid_election() {
     };
 
     let clusters = clusterer.cluster(vec![p1, p2, p3, p4]);
-    assert_eq!(clusters.len(), 2, "Should create 2 clusters: alpha group and orthogonal point");
+    assert_eq!(
+        clusters.len(),
+        2,
+        "Should create 2 clusters: alpha group and orthogonal point"
+    );
 
     let alpha_cluster = clusters.iter().find(|c| c.points.len() == 3).unwrap();
     assert!(!alpha_cluster.medoid_id.is_empty());
@@ -2646,7 +2665,10 @@ async fn test_neuro_symbolic_consolidator_full_offline_cycle() {
     let mut consolidator = NeuroSymbolicConsolidator::new(store.clone(), embedder.clone());
     let res1 = consolidator.consolidate_session(session_id).await.unwrap();
     assert_eq!(res1.semantic_facts.len(), 1);
-    assert_eq!(res1.semantic_facts[0].statement, "The primary database server is SQLite");
+    assert_eq!(
+        res1.semantic_facts[0].statement,
+        "The primary database server is SQLite"
+    );
 
     // 2. Add an update migrating to PostgreSQL + an error and repair
     let update_event = Event::new(
@@ -2655,7 +2677,9 @@ async fn test_neuro_symbolic_consolidator_full_offline_cycle() {
         EventPayload::ObservationReceived(strata_core::events::ObservationReceived {
             session_id: session_id.to_string(),
             source: "user".to_string(),
-            content: serde_json::json!("We migrated to PostgreSQL instead of SQLite as the primary database"),
+            content: serde_json::json!(
+                "We migrated to PostgreSQL instead of SQLite as the primary database"
+            ),
             observation_type: "architecture".to_string(),
             timestamp: Utc::now(),
         }),
@@ -2707,14 +2731,23 @@ async fn test_neuro_symbolic_consolidator_full_offline_cycle() {
 
     // Verify:
     // a) JTMS resolved the contradiction and superseded SQLite
-    assert!(res2.conflicts_resolved >= 1, "Conflict between SQLite and Postgres must be resolved");
-    let active_facts = store.get_all_semantic_facts(None, Some(FactStatus::Active), 10).unwrap();
     assert!(
-        active_facts.iter().any(|f| f.statement.contains("PostgreSQL")),
+        res2.conflicts_resolved >= 1,
+        "Conflict between SQLite and Postgres must be resolved"
+    );
+    let active_facts = store
+        .get_all_semantic_facts(None, Some(FactStatus::Active), 10)
+        .unwrap();
+    assert!(
+        active_facts
+            .iter()
+            .any(|f| f.statement.contains("PostgreSQL")),
         "Postgres must be active"
     );
     assert!(
-        !active_facts.iter().any(|f| f.statement.contains("SQLite") && !f.statement.contains("migrated")),
+        !active_facts
+            .iter()
+            .any(|f| f.statement.contains("SQLite") && !f.statement.contains("migrated")),
         "Old SQLite fact must be deprecated / not active"
     );
 

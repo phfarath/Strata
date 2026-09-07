@@ -23,10 +23,13 @@ impl TrajectoryMiner {
         while i < events.len() {
             // Check if events[i] is an error
             let error_info = match &events[i].payload {
-                EventPayload::ErrorObserved(err) => Some((err.error_type.clone(), err.message.clone())),
-                EventPayload::ToolResultReceived(res) if res.is_error => {
-                    Some((format!("ToolExecutionError({})", res.tool_name), format!("{:?}", res.result)))
+                EventPayload::ErrorObserved(err) => {
+                    Some((err.error_type.clone(), err.message.clone()))
                 }
+                EventPayload::ToolResultReceived(res) if res.is_error => Some((
+                    format!("ToolExecutionError({})", res.tool_name),
+                    format!("{:?}", res.result),
+                )),
                 _ => None,
             };
 
@@ -74,7 +77,10 @@ impl TrajectoryMiner {
 
                     let mut skill = ProceduralSkill::new(name, description)
                         .with_steps(corrective_steps)
-                        .with_preconditions(vec![format!("Error pattern matches '{}'", error_type)]);
+                        .with_preconditions(vec![format!(
+                            "Error pattern matches '{}'",
+                            error_type
+                        )]);
                     skill.importance = 0.85;
                     skill.tags = vec!["auto_mined".to_string(), "recovery".to_string(), error_type];
 
@@ -118,10 +124,16 @@ impl TrajectoryMiner {
                     if !task_steps.is_empty() {
                         let task_id = current_task_id.take().unwrap_or_else(|| "task".to_string());
                         let name = format!("Procedure_{}", task_id.replace('-', "_"));
-                        let desc = format!("Workflow for '{}' ({})", current_task_title, tc.outcome_summary);
+                        let desc = format!(
+                            "Workflow for '{}' ({})",
+                            current_task_title, tc.outcome_summary
+                        );
                         let mut skill = ProceduralSkill::new(name, desc)
                             .with_steps(task_steps.clone())
-                            .with_preconditions(vec![format!("Task domain: {}", current_task_title)]);
+                            .with_preconditions(vec![format!(
+                                "Task domain: {}",
+                                current_task_title
+                            )]);
                         skill.importance = 0.75;
                         skill.tags = vec!["workflow".to_string(), "task_pattern".to_string()];
                         skills.push(skill);

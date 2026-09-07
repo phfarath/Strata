@@ -7,7 +7,12 @@ use strata_core::traits::ReasoningEngine;
 /// When an LLM provider is available, `AsyncLlmEnricher` can be attached to optionally polish text in the background.
 #[async_trait]
 pub trait MemoryEnricher: Send + Sync {
-    async fn enrich_summary(&self, title: &str, raw_summary: &str, context: &serde_json::Value) -> String;
+    async fn enrich_summary(
+        &self,
+        title: &str,
+        raw_summary: &str,
+        context: &serde_json::Value,
+    ) -> String;
 }
 
 /// Default canonical enricher: 100% offline, 0 tokens, zero latency.
@@ -22,7 +27,12 @@ impl CanonicalTemplateEnricher {
 
 #[async_trait]
 impl MemoryEnricher for CanonicalTemplateEnricher {
-    async fn enrich_summary(&self, title: &str, raw_summary: &str, _context: &serde_json::Value) -> String {
+    async fn enrich_summary(
+        &self,
+        title: &str,
+        raw_summary: &str,
+        _context: &serde_json::Value,
+    ) -> String {
         let trimmed = raw_summary.trim();
         if trimmed.is_empty() {
             title.to_string()
@@ -51,22 +61,41 @@ impl AsyncLlmEnricher {
 
 #[async_trait]
 impl MemoryEnricher for AsyncLlmEnricher {
-    async fn enrich_summary(&self, title: &str, raw_summary: &str, context: &serde_json::Value) -> String {
+    async fn enrich_summary(
+        &self,
+        title: &str,
+        raw_summary: &str,
+        context: &serde_json::Value,
+    ) -> String {
         let prompt = format!(
             "Rewrite the following technical memory into one concise, clear, fluent summary sentence for a software agent.\nTitle: {}\nRaw content: {}\nContext: {}\nRespond with ONLY the single summary sentence.",
             title, raw_summary, context
         );
 
-        match self.engine.prompt(Some("You are a concise technical summarizer."), &prompt, None).await {
+        match self
+            .engine
+            .prompt(
+                Some("You are a concise technical summarizer."),
+                &prompt,
+                None,
+            )
+            .await
+        {
             Ok(polished) => {
                 let p = polished.trim();
                 if p.is_empty() {
-                    self.fallback.enrich_summary(title, raw_summary, context).await
+                    self.fallback
+                        .enrich_summary(title, raw_summary, context)
+                        .await
                 } else {
                     p.to_string()
                 }
             }
-            Err(_) => self.fallback.enrich_summary(title, raw_summary, context).await,
+            Err(_) => {
+                self.fallback
+                    .enrich_summary(title, raw_summary, context)
+                    .await
+            }
         }
     }
 }

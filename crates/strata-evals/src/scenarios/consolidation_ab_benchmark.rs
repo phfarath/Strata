@@ -71,9 +71,7 @@ pub async fn run_consolidation_ab_benchmark_scenario() -> Result<()> {
         NeuroSymbolicConsolidator::new(store_neuro.clone(), embedder.clone());
 
     let t1 = Instant::now();
-    let neuro_result = neuro_consolidator
-        .consolidate_session(session_id)
-        .await?;
+    let neuro_result = neuro_consolidator.consolidate_session(session_id).await?;
     let neuro_realistic_ms = t1.elapsed().as_secs_f64() * 1000.0;
     let neuro_tokens = 0usize;
 
@@ -115,7 +113,8 @@ pub async fn run_consolidation_ab_benchmark_scenario() -> Result<()> {
     // -------------------------------------------------------------------------
     // Probing Battery (Factual Suppression & Procedural Recovery)
     // -------------------------------------------------------------------------
-    let active_facts_neuro = store_neuro.get_all_semantic_facts(None, Some(FactStatus::Active), 50)?;
+    let active_facts_neuro =
+        store_neuro.get_all_semantic_facts(None, Some(FactStatus::Active), 50)?;
     let deprecated_facts_neuro =
         store_neuro.get_all_semantic_facts(None, Some(FactStatus::Deprecated), 50)?;
 
@@ -133,10 +132,12 @@ pub async fn run_consolidation_ab_benchmark_scenario() -> Result<()> {
     let outdated_leakage_pct = if sqlite_active { 100.0 } else { 0.0 };
 
     // Probe 2: Was the build recovery procedural skill mined?
-    let recovery_skill_found = neuro_result
-        .procedural_skills
-        .iter()
-        .any(|s| s.name.contains("Recover") || s.name.contains("Compile") || s.name.contains("Build") || s.name.contains("cargo"));
+    let recovery_skill_found = neuro_result.procedural_skills.iter().any(|s| {
+        s.name.contains("Recover")
+            || s.name.contains("Compile")
+            || s.name.contains("Build")
+            || s.name.contains("cargo")
+    });
 
     // Noise compression ratio (Raw events vs retained consolidated records)
     let total_retained = neuro_result.semantic_facts.len()
@@ -210,7 +211,9 @@ pub async fn run_consolidation_ab_benchmark_scenario() -> Result<()> {
     }
 
     if sqlite_active {
-        bail!("Benchmark Failed: Old SQLite fact leaked into active retrieval (failed suppression).");
+        bail!(
+            "Benchmark Failed: Old SQLite fact leaked into active retrieval (failed suppression)."
+        );
     }
 
     if !sqlite_deprecated {
@@ -221,7 +224,9 @@ pub async fn run_consolidation_ab_benchmark_scenario() -> Result<()> {
         bail!("Benchmark Failed: Recovery procedural skill was not mined from the error-repair sequence.");
     }
 
-    println!("✅ ALL A/B BENCHMARK ASSERTIONS PASSED (100% Deterministic, 0 Tokens, <200ms Latency)");
+    println!(
+        "✅ ALL A/B BENCHMARK ASSERTIONS PASSED (100% Deterministic, 0 Tokens, <200ms Latency)"
+    );
     Ok(())
 }
 
@@ -371,7 +376,12 @@ fn build_realistic_coding_events(session_id: &str) -> Vec<Event> {
             agent_id,
             EventPayload::ToolInvoked(ToolInvoked {
                 invocation_id: inv_id,
-                tool_name: if i % 2 == 0 { "read_file" } else { "format_code" }.to_string(),
+                tool_name: if i % 2 == 0 {
+                    "read_file"
+                } else {
+                    "format_code"
+                }
+                .to_string(),
                 input: serde_json::json!({ "path": format!("src/module_{}.rs", i) }),
                 session_id: session_id.to_string(),
                 timestamp: now,

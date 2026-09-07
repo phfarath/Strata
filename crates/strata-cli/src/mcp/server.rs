@@ -1234,14 +1234,13 @@ impl McpServer {
                 }
             }
             "memory_consolidate" | "consolidate_memories" => {
-                let sqlite = match &self.sqlite_engine {
-                    Some(s) => s,
-                    None => {
-                        return CallToolResult::error(
+                let sqlite =
+                    match &self.sqlite_engine {
+                        Some(s) => s,
+                        None => return CallToolResult::error(
                             "Neuro-Symbolic consolidation requires a local SQLite storage engine",
-                        )
-                    }
-                };
+                        ),
+                    };
 
                 let session_id = args
                     .get("session_id")
@@ -1261,13 +1260,18 @@ impl McpServer {
                 let start_time = std::time::Instant::now();
                 let store = sqlite.store_arc();
                 let embedder = sqlite.embedding_provider();
-                let mut consolidator = strata_memory::NeuroSymbolicConsolidator::new(store, embedder);
+                let mut consolidator =
+                    strata_memory::NeuroSymbolicConsolidator::new(store, embedder);
                 let mut tokens_consumed = 0;
 
                 if enrich_with_llm {
                     let config = strata_core::config::StrataConfig::load();
-                    if let Ok(resolved) = strata_reasoning::resolve_reasoning_engine(&config, None, None).await {
-                        consolidator = consolidator.with_enricher(Arc::new(strata_memory::AsyncLlmEnricher::new(resolved.engine)));
+                    if let Ok(resolved) =
+                        strata_reasoning::resolve_reasoning_engine(&config, None, None).await
+                    {
+                        consolidator = consolidator.with_enricher(Arc::new(
+                            strata_memory::AsyncLlmEnricher::new(resolved.engine),
+                        ));
                         tokens_consumed = 1500;
                     }
                 }

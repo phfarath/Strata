@@ -637,12 +637,22 @@ pub fn process_data(msg: &str) {
         assert!(res.is_ok(), "CLI run_consolidate must succeed");
 
         // Verify that semantic facts and procedural skills were mined
-        let facts = store.get_all_semantic_facts(None, Some(FactStatus::Active), 10).unwrap();
-        assert!(!facts.is_empty(), "Must consolidate architectural decision into semantic fact");
+        let facts = store
+            .get_all_semantic_facts(None, Some(FactStatus::Active), 10)
+            .unwrap();
+        assert!(
+            !facts.is_empty(),
+            "Must consolidate architectural decision into semantic fact"
+        );
 
         let skills = store.get_all_procedural_skills(None, 10).unwrap();
         assert!(!skills.is_empty(), "Must mine procedural recovery skill");
-        assert!(skills.iter().any(|s| s.name.contains("Recover_CompilerError") && s.steps.iter().any(|step| step.arguments.to_string().contains("cargo add serde_json"))));
+        assert!(skills
+            .iter()
+            .any(|s| s.name.contains("Recover_CompilerError")
+                && s.steps
+                    .iter()
+                    .any(|step| step.arguments.to_string().contains("cargo add serde_json"))));
     }
 
     #[tokio::test]
@@ -662,7 +672,9 @@ pub fn process_data(msg: &str) {
             EventPayload::ObservationReceived(ObservationReceived {
                 session_id: session_id.to_string(),
                 source: "system".to_string(),
-                content: serde_json::json!("Protocol decision: All inter-agent comms use Stigmergic leases"),
+                content: serde_json::json!(
+                    "Protocol decision: All inter-agent comms use Stigmergic leases"
+                ),
                 observation_type: "architecture".to_string(),
                 timestamp: Utc::now(),
             }),
@@ -683,7 +695,10 @@ pub fn process_data(msg: &str) {
             )
             .await;
 
-        assert!(tool_res.is_error != Some(true), "MCP memory_consolidate must succeed");
+        assert!(
+            tool_res.is_error != Some(true),
+            "MCP memory_consolidate must succeed"
+        );
         let text = &tool_res.content[0].text;
         assert!(text.contains("Consolidation complete"));
         assert!(text.contains("(0 tokens)"));
@@ -724,7 +739,12 @@ pub fn process_data(msg: &str) {
         // Wait briefly for background tokio task
         tokio::time::sleep(tokio::time::Duration::from_millis(100)).await;
 
-        let facts = store.get_all_semantic_facts(None, Some(FactStatus::Active), 10).unwrap();
-        assert!(!facts.is_empty(), "Automatic consolidation must persist semantic fact");
+        let facts = store
+            .get_all_semantic_facts(None, Some(FactStatus::Active), 10)
+            .unwrap();
+        assert!(
+            !facts.is_empty(),
+            "Automatic consolidation must persist semantic fact"
+        );
     }
 }

@@ -268,7 +268,9 @@ pub async fn handle_hook(command: HookCommand, engine: Arc<SqliteMemoryEngine>) 
                         );
                     }
                     Err(e) => {
-                        error!("Async neuro-symbolic consolidation failed for session '{sid}': {e}");
+                        error!(
+                            "Async neuro-symbolic consolidation failed for session '{sid}': {e}"
+                        );
                     }
                 }
 
