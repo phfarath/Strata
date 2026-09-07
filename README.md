@@ -5,7 +5,7 @@
 ### The Local-First Persistent Memory Engine & Cognitive Runtime for AI Coding Agents
 
 [![Rust 2021](https://img.shields.io/badge/rust-2021_edition-DEA584.svg?style=flat-square&logo=rust)](https://www.rust-lang.org/)
-[![Tests](https://img.shields.io/badge/tests-118%2F118%20passing%20(100%25)-34D399.svg?style=flat-square)]()
+[![Tests](https://img.shields.io/badge/tests-120%2B%20passing%20(100%25)-34D399.svg?style=flat-square)]()
 [![MCP Universal](https://img.shields.io/badge/MCP-2024--11--05%20%7C%202025--11--25%20%7C%202026--07--28-60A5FA.svg?style=flat-square&logo=anthropic)](https://modelcontextprotocol.io/)
 [![Storage](https://img.shields.io/badge/storage-SQLite%20Offline--First%20%2B%20FTS5-A78BFA.svg?style=flat-square&logo=sqlite)](https://www.sqlite.org/)
 [![License](https://img.shields.io/badge/license-MIT%20%2F%20Apache--2.0-FBBF24.svg?style=flat-square)]()
@@ -84,6 +84,7 @@ flowchart TD
             ACT["ACT-R Base-Level Activation"]
             EBB["Ebbinghaus Retention Curves"]
             JTMS["JTMS v2 Deterministic Truth Maintenance"]
+            KG["Spreading Activation Knowledge Graph\n(HippoRAG Multi-Hop Diffusion)"]
         end
 
         subgraph Grounding ["Code Grounding & AST"]
@@ -93,11 +94,18 @@ flowchart TD
         end
     end
 
-    subgraph StorageLayer ["Local-First Persistence"]
-        SQL["SQLite Store (~/.strata/strata.db)"]
-        FTS["FTS5 BM25 Full-Text Index"]
-        EMB["On-Device FastEmbed (ONNX)"]
-        DPO["Autonomous Preference Miner (DPO / KTO / SFT)"]
+    subgraph StorageLayer ["Two-Tier Local-First Persistence"]
+        direction LR
+        subgraph LocalStore ["Workspace Store (<workspace>/.strata/strata.db)"]
+            SQL["SQLite + FTS5 BM25"]
+            EMB["On-Device FastEmbed (ONNX)"]
+            AST_IDX["AST Anchors & Ephemeral Leases"]
+        end
+        subgraph GlobalStore ["Developer-Global Store (~/.strata/global.db)"]
+            G_SQL["SQLite Global Store"]
+            G_RULES["Universal Anti-Patterns & Core Tier"]
+            G_SKILLS["Shared Procedural Skills"]
+        end
     end
 
     Agents -->|JSON-RPC Stdio| MCP
@@ -111,8 +119,8 @@ flowchart TD
     classDef storage fill:#7C3AED,stroke:#6D28D9,color:#FFFFFF;
     
     class MCP,GW,MONO primary;
-    class C_TIER,W_TIER,P_TIER,ACT,EBB,JTMS,TS,CG,MK secondary;
-    class SQL,FTS,EMB,DPO storage;
+    class C_TIER,W_TIER,P_TIER,ACT,EBB,JTMS,KG,TS,CG,MK secondary;
+    class SQL,EMB,AST_IDX,G_SQL,G_RULES,G_SKILLS storage;
 ```
 
 ---
@@ -234,6 +242,22 @@ Strata turns everyday developer-agent iterations into fine-tuning datasets:
   strata export --format sft --out sft_skills.jsonl
   ```
 
+### 6. Spreading Activation Knowledge Graph (HippoRAG / ACT-R)
+Deterministic multi-hop associative memory recall without LLM tokens:
+- Construct a fast in-memory adjacency graph linking memories, semantic facts, symbols, files, and concepts.
+- Diffuses energy across edges ($\Delta A_t(v) = \sum A_{t-1}(u) \cdot w \cdot \lambda$) with self-retention and hop attenuation.
+- Tri-Modal Reciprocal Rank Fusion (RRF) fuses BM25 lexical precision, vector semantic similarity, and knowledge graph activation to discover associative context with 0 keyword overlap.
+
+### 7. Two-Tier Storage & Cross-Project Federation
+Clean segregation of concerns across developer environments:
+- **Workspace Store** (`<workspace>/.strata/strata.db`): Ephemeral agent leases, raw episodic logs, AST anchors, and commit hashes.
+- **Developer-Global Store** (`~/.strata/global.db`): Reusable compiler anti-patterns, procedural skills, and Core Tier axioms shared across all projects on your machine.
+- Seamless dual-store querying with Reciprocal Rank Fusion and selective transfer:
+  ```bash
+  strata promote --id <UUID> --to-global
+  strata transfer --from /path/to/other-project --tier core
+  ```
+
 ---
 
 ## 💻 CLI Command Matrix
@@ -244,7 +268,11 @@ Strata turns everyday developer-agent iterations into fine-tuning datasets:
 | `strata mcp` | Launch the universal JSON-RPC Stdio MCP Server | `strata mcp` |
 | `strata mcp install` | Auto-configure MCP in Cursor, Claude Desktop, and Windsurf | `strata mcp install` |
 | `strata mcp uninstall` | Safely remove Strata from host editor configs | `strata mcp uninstall` |
-| `strata search` | Hybrid Reciprocal Rank Fusion (FTS5 BM25 + FastEmbed) | `strata search "auth middleware"` |
+| `strata search` | Hybrid Reciprocal Rank Fusion (FTS5 BM25 + FastEmbed + Graph) | `strata search "auth middleware" --graph` |
+| `strata get` | Retrieve full memory record by UUID | `strata get --id <UUID>` |
+| `strata write` | Write a memory record directly from the command line | `strata write --content "Rule..."` |
+| `strata promote` | Human-in-the-loop approval & promotion to Core Tier / Global | `strata promote --id <UUID> --to-global` |
+| `strata transfer` | Cross-project knowledge transfer from another repository | `strata transfer --from ../other-repo` |
 | `strata config` | Manage runtime configuration and reasoning providers | `strata config set provider ollama` |
 | `strata consolidate` | Distill episodic traces with pluggable reasoning engine | `strata consolidate --provider ollama` |
 | `strata a2a` | Multi-agent stigmergic presence and atomic temporal leases | `strata a2a status` |
@@ -253,6 +281,13 @@ Strata turns everyday developer-agent iterations into fine-tuning datasets:
 | `strata digest` | Generate high-level architectural overview and community clusters | `strata digest` |
 | `strata prune` | Apply ACT-R decay curves to purge expired peripheral memories | `strata prune --threshold 0.2` |
 | `strata export` | Export trajectory pairs for LLM fine-tuning (DPO, KTO, SFT) | `strata export --format dpo` |
+| `strata blast-radius` | Causal blast radius analysis and ripple effect assessment | `strata blast-radius --file src/auth.rs` |
+| `strata plan` | Hierarchical goal DAG decomposition and wave execution | `strata plan "Implement oauth"` |
+| `strata train` | One-click local LoRA fine-tuning via Unsloth and Ollama | `strata train --dataset dpo.jsonl` |
+| `strata callgraph` | Native deterministic call graph & import dependency analyzer | `strata callgraph --path crates/` |
+| `strata workspace` | Multi-package monorepo workspace boundary isolator | `strata workspace detect` |
+| `strata architecture` | Graph community detection & architectural clustering | `strata architecture` |
+| `strata ui` | Interactive terminal dashboard (TUI) with real-time metrics | `strata ui` |
 | `strata doctor` | Verify integrity of SQLite database, FTS5 indexes, and MCP config | `strata doctor` |
 
 ---
@@ -269,15 +304,17 @@ Strata turns everyday developer-agent iterations into fine-tuning datasets:
 │ Phase 1 — Grounding   │ ✅ Complete (v0.1.0-b2)   │ Tree-Sitter AST, Merkle Tree  │
 │ Phase 2 — Truth Maint │ ✅ Complete (v0.1.0-rc1)  │ JTMS v2, Call Graph, Monorepo │
 │ Phase 3 — Open Core   │ ✅ Complete (v0.1.0)      │ Pure Open-Core, 105 tests     │
-│ Phase 4 — A2A Memory  │ 🔄 In Progress (Q4 2026) │ Cross-Agent Realtime Local IPC│
-│ Phase 5 — Auto-Skills │ ⏳ Scheduled             │ Trajectory-to-Skill Compiler  │
-│ Phase 6 — Terminal TUI│ ⏳ Scheduled             │ Ratatui Visual Cognitive Map  │
+│ Phase 4 — A2A Leases  │ ✅ Complete (v0.1.1)      │ Stigmergic Leases, Discovery  │
+│ Phase 5 — Auto-Consol │ ✅ Complete (v0.1.1)      │ Neuro-Symbolic Consolidator   │
+│ Phase 6 — Graph Recall│ ✅ Complete (v0.1.1)      │ Spreading Activation HippoRAG │
+│ Phase 7 — Federation  │ ✅ Complete (v0.1.1)      │ Dual-Tier Global & Transfer   │
+│ Phase 8 — Local IPC   │ 🔄 In Progress (Q4 2026) │ Realtime UDS / Named Pipe Bus │
 └───────────────────────┴──────────────────────────┴───────────────────────────────┘
 ```
 
-- **Phase 4: Agent-to-Agent (A2A) Realtime Memory Bus**: Sub-millisecond local Unix Domain Socket / Named Pipe IPC allowing Cursor and Claude Code to share newly discovered anti-patterns concurrently on the same machine.
-- **Phase 5: Autonomous Procedural Skill Distillation**: Automatically generate executable `.cursor/rules/*.mdc` and `.claude/skills` from verified Git commit histories.
-- **Phase 6: Cognitive Terminal Observability (TUI)**: Interactive terminal dashboard powered by `ratatui` to visualize belief revision graphs, Ebbinghaus decay curves, and workspace blast radius in real time.
+- **Phase 6: Spreading Activation Knowledge Graph (HippoRAG / ACT-R)**: Associative multi-hop recall diffusing energy across semantic facts, AST anchors, and call graph edges with zero token cost.
+- **Phase 7: Two-Tier Memory Federation & Global Knowledge Transfer**: Local workspace isolation (`<workspace>/.strata/strata.db`) federated with developer-global rules and anti-patterns (`~/.strata/global.db`).
+- **Phase 8: Realtime Local IPC & Stigmergic Event Bus**: Sub-millisecond local Unix Domain Socket / Named Pipe IPC allowing Cursor, Claude Code, OpenCode, and Antigravity to coordinate leases and anti-patterns in real time on the same machine.
 
 ---
 
