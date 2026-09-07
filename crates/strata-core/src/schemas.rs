@@ -4,7 +4,7 @@ use std::fmt;
 use std::str::FromStr;
 use uuid::Uuid;
 
-use crate::state::{MemoryTier, Scope};
+use crate::state::{MemoryTier, MemoryType, Scope};
 
 fn default_importance() -> f32 {
     0.5
@@ -1564,4 +1564,38 @@ impl FactDependency {
             created_at: Utc::now(),
         }
     }
+}
+
+/// Filter options for cross-project knowledge transfer.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct TransferFilter {
+    pub memory_type: Option<MemoryType>,
+    pub tier: Option<MemoryTier>,
+    pub query: Option<String>,
+    pub include_failure_patterns: bool,
+    pub include_procedural_skills: bool,
+    pub limit: usize,
+}
+
+impl Default for TransferFilter {
+    fn default() -> Self {
+        Self {
+            memory_type: None,
+            tier: None,
+            query: None,
+            include_failure_patterns: true,
+            include_procedural_skills: true,
+            limit: 100,
+        }
+    }
+}
+
+/// Execution report summarizing cross-project transferred knowledge.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Default)]
+pub struct TransferReport {
+    pub source_path: String,
+    pub transferred_memories: usize,
+    pub transferred_failure_patterns: usize,
+    pub transferred_procedural_skills: usize,
+    pub skipped_duplicates: usize,
 }

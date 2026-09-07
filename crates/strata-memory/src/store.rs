@@ -1489,6 +1489,33 @@ impl SqliteStore {
         Ok(res)
     }
 
+    pub fn get_failure_pattern(
+        &self,
+        id: &Uuid,
+    ) -> Result<Option<FailurePattern>, StrataError> {
+        let conn = self
+            .conn
+            .lock()
+            .map_err(|_| StrataError::Database("Lock poisoned on SQLite connection".to_string()))?;
+
+        let mut stmt = conn
+            .prepare(
+                "SELECT id, signature, pattern_name, description, trigger_condition,
+                        error_type, mitigation, occurrences, first_seen, last_seen,
+                        severity, scope, metadata_json
+                 FROM failure_patterns
+                 WHERE id = ?1",
+            )
+            .map_err(|e| StrataError::Database(e.to_string()))?;
+
+        let res = stmt
+            .query_row(params![id.to_string()], |row| Self::row_to_failure(row))
+            .optional()
+            .map_err(|e| StrataError::Database(e.to_string()))?;
+
+        Ok(res)
+    }
+
     pub fn search_failures(
         &self,
         query_text: Option<&str>,

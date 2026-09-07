@@ -23,6 +23,7 @@ pub mod search;
 pub mod sync;
 pub mod sync_hosts;
 pub mod train;
+pub mod transfer;
 pub mod workspace;
 
 pub use a2a::*;
@@ -50,4 +51,5 @@ pub use search::*;
 pub use sync::*;
 pub use sync_hosts::*;
 pub use train::*;
+pub use transfer::*;
 pub use workspace::*;

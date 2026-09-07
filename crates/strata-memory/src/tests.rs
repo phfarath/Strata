@@ -2996,3 +2996,208 @@ async fn test_sqlite_memory_engine_search_graph_associative() {
         "Associative search must retrieve mem_b via shared symbol and tag activation!"
     );
 }
+
+#[tokio::test]
+async fn test_federated_memory_engine_dual_search() {
+    use crate::{SqliteMemoryEngine, SqliteStore};
+    use strata_core::state::{MemoryRecord, MemoryType, Scope};
+    use strata_core::traits::MemoryEngine;
+    use std::sync::Arc;
+
+    let local_store = Arc::new(SqliteStore::open_in_memory().unwrap());
+    let global_store = Arc::new(SqliteStore::open_in_memory().unwrap());
+
+    // Insert local record
+    let local_mem = MemoryRecord::new(
+        MemoryType::Semantic,
+        "Local project architecture uses Axum routing and SQLx migrations",
+        Scope::Project("ready-ai".to_string()),
+    );
+    local_store.insert_or_update_memory(&local_mem).unwrap();
+
+    // Insert global record
+    let global_mem = MemoryRecord::new(
+        MemoryType::Semantic,
+        "Global guideline: always use tokio Mutex across await points to prevent deadlock",
+        Scope::Global,
+    );
+    global_store.insert_or_update_memory(&global_mem).unwrap();
+
+    let engine = SqliteMemoryEngine::open_in_memory(None)
+        .unwrap()
+        .with_global_store(global_store);
+    // Replace primary store
+    let engine = SqliteMemoryEngine {
+        store: local_store,
+        global_store: engine.global_store_arc(),
+        embedding_provider: engine.embedding_provider(),
+        ranker: crate::retrieval::HybridRanker::with_default_config(),
+        consolidator: crate::consolidation::Consolidator::new(),
+    };
+
+    // 1. Search local specific
+    let res_local = engine.search("Axum routing", None, 5).await.unwrap();
+    assert!(!res_local.is_empty());
+    assert_eq!(res_local[0].id, local_mem.id);
+
+    // 2. Search global specific
+    let res_global = engine.search("tokio Mutex deadlock", None, 5).await.unwrap();
+    assert!(!res_global.is_empty());
+    assert_eq!(res_global[0].id, global_mem.id);
+
+    // 3. Search common query: both should be blended via federated RRF
+    let res_both = engine.search("architecture guideline", None, 5).await.unwrap();
+    assert_eq!(res_both.len(), 2);
+}
+
+#[tokio::test]
+async fn test_federated_memory_engine_promote_to_global() {
+    use crate::{SqliteMemoryEngine, SqliteStore};
+    use strata_core::state::{MemoryRecord, MemoryTier, MemoryType, Scope};
+    use strata_core::traits::MemoryEngine;
+    use std::sync::Arc;
+
+    let local_store_a = Arc::new(SqliteStore::open_in_memory().unwrap());
+    let shared_global_store = Arc::new(SqliteStore::open_in_memory().unwrap());
+
+    let mut local_pattern = MemoryRecord::new(
+        MemoryType::NegativePattern,
+        "Never use unbuffered channel with sync sender across worker threads",
+        Scope::Project("project-a".to_string()),
+    );
+    local_pattern.tier = MemoryTier::Working;
+    local_store_a.insert_or_update_memory(&local_pattern).unwrap();
+
+    let engine_a = SqliteMemoryEngine {
+        store: local_store_a,
+        global_store: Some(Arc::clone(&shared_global_store)),
+        embedding_provider: Arc::new(crate::embedding::MockEmbeddingProvider::default()),
+        ranker: crate::retrieval::HybridRanker::with_default_config(),
+        consolidator: crate::consolidation::Consolidator::new(),
+    };
+
+    // Promote from project A to Global
+    let promoted = engine_a
+        .promote_to_global(&local_pattern.id, true, Some("Universal concurrency anti-pattern"))
+        .await
+        .expect("promote to global");
+
+    assert_eq!(promoted.scope, Scope::Global);
+    assert_eq!(promoted.tier, MemoryTier::Core);
+    assert!(promoted.approved_by_human);
+
+    // Project B has an empty local store, but connects to the same global store
+    let local_store_b = Arc::new(SqliteStore::open_in_memory().unwrap());
+    let engine_b = SqliteMemoryEngine {
+        store: local_store_b,
+        global_store: Some(shared_global_store),
+        embedding_provider: Arc::new(crate::embedding::MockEmbeddingProvider::default()),
+        ranker: crate::retrieval::HybridRanker::with_default_config(),
+        consolidator: crate::consolidation::Consolidator::new(),
+    };
+
+    // Project B immediately benefits from the promoted global memory!
+    let res_b = engine_b.search("unbuffered channel", None, 5).await.unwrap();
+    assert_eq!(res_b.len(), 1);
+    assert_eq!(res_b[0].id, local_pattern.id);
+    assert_eq!(res_b[0].scope, Scope::Global);
+}
+
+#[tokio::test]
+async fn test_federated_known_failures_merge() {
+    use crate::{SqliteMemoryEngine, SqliteStore};
+    use strata_core::state::{FailurePattern, FailureSeverity, Scope};
+    use strata_core::traits::MemoryEngine;
+    use std::sync::Arc;
+
+    let local_store = Arc::new(SqliteStore::open_in_memory().unwrap());
+    let global_store = Arc::new(SqliteStore::open_in_memory().unwrap());
+
+    let mut fail_local = FailurePattern::new(
+        "E0382_local",
+        "cargo_build",
+        "Use of moved value in local project closure",
+        "Clone the value or use an Arc/Mutex wrapper",
+    );
+    fail_local.scope = Scope::Project("repo-1".to_string());
+    fail_local.severity = FailureSeverity::High;
+    local_store.upsert_failure_pattern(&fail_local).unwrap();
+
+    let mut fail_global = FailurePattern::new(
+        "socket_permission_global",
+        "docker_compose",
+        "Cannot connect to Docker daemon socket on Linux host",
+        "Add current user to docker group or check socket permissions",
+    );
+    fail_global.scope = Scope::Global;
+    fail_global.severity = FailureSeverity::Medium;
+    global_store.upsert_failure_pattern(&fail_global).unwrap();
+
+    let engine = SqliteMemoryEngine {
+        store: local_store,
+        global_store: Some(global_store),
+        embedding_provider: Arc::new(crate::embedding::MockEmbeddingProvider::default()),
+        ranker: crate::retrieval::HybridRanker::with_default_config(),
+        consolidator: crate::consolidation::Consolidator::new(),
+    };
+
+    let failures = engine.get_known_failures(None, None, 10).await.unwrap();
+    assert_eq!(failures.len(), 2);
+    assert!(failures.iter().any(|f| f.signature == "E0382_local"));
+    assert!(failures.iter().any(|f| f.signature == "socket_permission_global"));
+}
+
+#[tokio::test]
+async fn test_cross_project_transfer() {
+    use crate::{SqliteMemoryEngine, SqliteStore};
+    use strata_core::schemas::{ProceduralSkill, TransferFilter};
+    use strata_core::state::{FailurePattern, MemoryRecord, MemoryType, Scope};
+    use std::sync::Arc;
+
+    let source_store = SqliteStore::open_in_memory().unwrap();
+    let target_store = Arc::new(SqliteStore::open_in_memory().unwrap());
+
+    // 1. Populate source store
+    let mem1 = MemoryRecord::new(MemoryType::Semantic, "Next.js 15 cookies() is an async function", Scope::Global);
+    let mem2 = MemoryRecord::new(MemoryType::Procedural, "Deploying container to Fly.io via GitHub Actions", Scope::Global);
+    source_store.insert_or_update_memory(&mem1).unwrap();
+    source_store.insert_or_update_memory(&mem2).unwrap();
+
+    let fail = FailurePattern::new(
+        "git_push",
+        "rejected_non_fast_forward",
+        "Remote rejected push because branch head is behind",
+        "Fetch and rebase or pull before pushing",
+    );
+    source_store.upsert_failure_pattern(&fail).unwrap();
+
+    let mut skill = ProceduralSkill::new("fly_deploy", "Deploy app to Fly.io with zero downtime");
+    source_store.insert_or_update_procedural_skill(&mut skill).unwrap();
+
+    // 2. Target engine
+    let target_engine = SqliteMemoryEngine {
+        store: target_store,
+        global_store: None,
+        embedding_provider: Arc::new(crate::embedding::MockEmbeddingProvider::default()),
+        ranker: crate::retrieval::HybridRanker::with_default_config(),
+        consolidator: crate::consolidation::Consolidator::new(),
+    };
+
+    // 3. Execute transfer
+    let filter = TransferFilter::default();
+    let report = target_engine
+        .transfer_from(&source_store, &filter, "source-repo")
+        .expect("transfer from source");
+
+    assert_eq!(report.transferred_memories, 2);
+    assert_eq!(report.transferred_failure_patterns, 1);
+    assert_eq!(report.transferred_procedural_skills, 1);
+    assert_eq!(report.skipped_duplicates, 0);
+
+    // 4. Running transfer again should detect duplicates
+    let report2 = target_engine
+        .transfer_from(&source_store, &filter, "source-repo")
+        .expect("second transfer");
+    assert_eq!(report2.transferred_memories, 0);
+    assert!(report2.skipped_duplicates >= 2);
+}

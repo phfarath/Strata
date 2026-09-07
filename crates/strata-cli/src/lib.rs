@@ -178,6 +178,7 @@ pub fn process_data(msg: &str) {
             entity_type: "memory".to_string(),
             reason: Some("ADR-099 Security audit approval".to_string()),
             yes: true,
+            to_global: false,
             json: true,
         };
 

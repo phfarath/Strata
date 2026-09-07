@@ -25,6 +25,8 @@ pub struct HybridRankerConfig {
     pub enable_spreading_activation: bool,
     /// Spreading activation engine configuration
     pub activation_config: SpreadingActivationConfig,
+    /// Priority weighting for federated global store matches (default: 0.8)
+    pub global_federation_weight: f32,
 }
 
 impl Default for HybridRankerConfig {
@@ -37,6 +39,7 @@ impl Default for HybridRankerConfig {
             min_similarity: 0.0,
             enable_spreading_activation: true,
             activation_config: SpreadingActivationConfig::default(),
+            global_federation_weight: 0.8,
         }
     }
 }
@@ -152,9 +155,13 @@ impl HybridRanker {
             }
         }
 
-        // If all candidate streams are empty, fall back to recent memories
+        // If all candidate streams are empty, fall back to recent memories only if query is blank
         if fts_results.is_empty() && vector_results.is_empty() && graph_results.is_empty() {
-            return store.get_all_memories(scope, memory_types, limit);
+            if query.trim().is_empty() {
+                return store.get_all_memories(scope, memory_types, limit);
+            } else {
+                return Ok(Vec::new());
+            }
         }
 
         // 4. Compute Tri-Modal Reciprocal Rank Fusion (RRF)
@@ -213,6 +220,116 @@ impl HybridRanker {
             record_map
                 .entry(record.id)
                 .or_insert_with(|| record.clone());
+        }
+
+        // Apply quality weighting: importance & confidence
+        for (id, score) in score_map.iter_mut() {
+            if let Some(rec) = record_map.get(id) {
+                let importance_factor = 0.8 + 0.4 * rec.importance;
+                let confidence_factor = 0.5 + 0.5 * rec.confidence;
+                *score *= importance_factor * confidence_factor;
+            }
+        }
+
+        let mut ranked_ids: Vec<(Uuid, f32)> = score_map.into_iter().collect();
+        ranked_ids.sort_by(|a, b| b.1.partial_cmp(&a.1).unwrap_or(std::cmp::Ordering::Equal));
+
+        ranked_ids
+            .into_iter()
+            .take(limit)
+            .filter_map(|(id, _)| record_map.remove(&id))
+            .collect()
+    }
+
+    /// Perform federated hybrid retrieval across a local workspace store and an optional global store.
+    /// Results are ranked using Tri-Modal RRF with priority weighting (local 1.0 vs global_federation_weight).
+    pub async fn retrieve_federated(
+        &self,
+        local_store: &SqliteStore,
+        global_store: Option<&SqliteStore>,
+        embedding_provider: Option<&dyn EmbeddingProvider>,
+        query: &str,
+        scope: Option<&Scope>,
+        memory_types: Option<&[MemoryType]>,
+        limit: usize,
+    ) -> Result<Vec<MemoryRecord>, StrataError> {
+        let global = match global_store {
+            Some(g) => g,
+            None => {
+                return self
+                    .retrieve(local_store, embedding_provider, query, scope, memory_types, limit)
+                    .await;
+            }
+        };
+
+        // Fetch local candidates
+        let candidate_limit = (limit * 2).max(10);
+        let local_results = self
+            .retrieve(
+                local_store,
+                embedding_provider,
+                query,
+                scope,
+                memory_types,
+                candidate_limit,
+            )
+            .await?;
+
+        // Fetch global candidates (scoped to Global)
+        let global_results = self
+            .retrieve(
+                global,
+                embedding_provider,
+                query,
+                Some(&Scope::Global),
+                memory_types,
+                candidate_limit,
+            )
+            .await?;
+
+        if global_results.is_empty() {
+            let mut res = local_results;
+            res.truncate(limit);
+            return Ok(res);
+        }
+
+        if local_results.is_empty() {
+            let mut res = global_results;
+            res.truncate(limit);
+            return Ok(res);
+        }
+
+        // Blend local and global candidate ranks via weighted RRF
+        let fused = self.fuse_federated_candidates(&local_results, &global_results, limit);
+        Ok(fused)
+    }
+
+    /// Blend local and global candidate lists using RRF with scope-based weighting.
+    pub fn fuse_federated_candidates(
+        &self,
+        local_ranked: &[MemoryRecord],
+        global_ranked: &[MemoryRecord],
+        limit: usize,
+    ) -> Vec<MemoryRecord> {
+        let mut score_map: HashMap<Uuid, f32> = HashMap::new();
+        let mut record_map: HashMap<Uuid, MemoryRecord> = HashMap::new();
+
+        let k = self.config.rrf_k;
+        let w_local = 1.0;
+        let w_global = self.config.global_federation_weight;
+
+        // Local candidates
+        for (rank_idx, record) in local_ranked.iter().enumerate() {
+            let rrf_score = w_local * (1.0 / (k + (rank_idx as f32) + 1.0));
+            *score_map.entry(record.id).or_insert(0.0) += rrf_score;
+            record_map.entry(record.id).or_insert_with(|| record.clone());
+        }
+
+        // Global candidates
+        for (rank_idx, record) in global_ranked.iter().enumerate() {
+            let rrf_score = w_global * (1.0 / (k + (rank_idx as f32) + 1.0));
+            *score_map.entry(record.id).or_insert(0.0) += rrf_score;
+            record_map.entry(record.id).or_insert_with(|| record.clone());
         }
 
         // Apply quality weighting: importance & confidence
