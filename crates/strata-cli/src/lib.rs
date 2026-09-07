@@ -474,7 +474,28 @@ pub fn process_data(msg: &str) {
         use strata_memory::SqliteMemoryEngine;
 
         let engine = Arc::new(SqliteMemoryEngine::open_in_memory(None).unwrap());
-        let server = McpServer::new_with_engine(Arc::clone(&engine));
+
+        let test_id = uuid::Uuid::new_v4();
+        #[cfg(windows)]
+        let endpoint = format!(r"\\.\pipe\strata-mcp-test-{}", test_id);
+        #[cfg(unix)]
+        let endpoint = format!("/tmp/strata-mcp-test-{}.sock", &test_id.to_string()[..8]);
+
+        let ipc_server = Arc::new(
+            strata_memory::IpcServer::bind(&endpoint)
+                .await
+                .expect("bind server"),
+        );
+        let ipc_client = Arc::new(
+            strata_memory::IpcClient::connect(&endpoint)
+                .await
+                .expect("connect client"),
+        );
+        let mut ipc_sub = ipc_client.subscribe();
+        tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+
+        let server = McpServer::new_with_engine(Arc::clone(&engine))
+            .with_ipc(Some(Arc::clone(&ipc_client)), Some(ipc_server));
 
         // 1. Verify tool definitions
         let defs = McpServer::tool_definitions();
@@ -497,7 +518,7 @@ pub fn process_data(msg: &str) {
             .await;
         assert!(hb_res.is_error != Some(true));
 
-        // 3. Lease acquire tool
+        // 3. Lease acquire tool (should broadcast LeaseAcquired over IPC)
         let acq_res = server
             .execute_tool(
                 "lease_acquire",
@@ -510,6 +531,23 @@ pub fn process_data(msg: &str) {
             )
             .await;
         assert!(acq_res.is_error != Some(true));
+
+        // Verify real-time IPC broadcast received
+        let ipc_event = tokio::time::timeout(std::time::Duration::from_secs(3), ipc_sub.recv())
+            .await
+            .expect("timeout waiting for LeaseAcquired event")
+            .expect("receive LeaseAcquired event");
+        match ipc_event {
+            strata_core::a2a::IpcEvent::LeaseAcquired {
+                resource_id,
+                agent_id,
+                ..
+            } => {
+                assert_eq!(resource_id, "file:crates/strata-cli/src/main.rs");
+                assert_eq!(agent_id, "cursor-01");
+            }
+            other => panic!("Expected LeaseAcquired, got {other:?}"),
+        }
 
         // 4. Agent who tool
         let who_res = server
@@ -533,7 +571,7 @@ pub fn process_data(msg: &str) {
         assert!(conflict_text.contains("\"status\": \"conflict\""));
         assert!(conflict_text.contains("\"held_by\": \"cursor-01\""));
 
-        // 6. Release tool
+        // 6. Release tool (should broadcast LeaseReleased over IPC)
         let rel_res = server
             .execute_tool(
                 "lease_release",
@@ -544,6 +582,23 @@ pub fn process_data(msg: &str) {
             )
             .await;
         assert!(rel_res.is_error != Some(true));
+
+        // Verify real-time IPC broadcast received for release
+        let rel_event = tokio::time::timeout(std::time::Duration::from_secs(3), ipc_sub.recv())
+            .await
+            .expect("timeout waiting for LeaseReleased event")
+            .expect("receive LeaseReleased event");
+        match rel_event {
+            strata_core::a2a::IpcEvent::LeaseReleased {
+                resource_id,
+                agent_id,
+                ..
+            } => {
+                assert_eq!(resource_id, "file:crates/strata-cli/src/main.rs");
+                assert_eq!(agent_id, "cursor-01");
+            }
+            other => panic!("Expected LeaseReleased, got {other:?}"),
+        }
     }
 
     #[tokio::test]

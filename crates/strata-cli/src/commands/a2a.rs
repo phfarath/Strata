@@ -79,6 +79,12 @@ pub enum A2aAction {
         #[arg(long)]
         json: bool,
     },
+
+    /// Listen to real-time events on the local A2A IPC event bus
+    Listen {
+        #[arg(long, help = "Output raw JSON lines")]
+        json: bool,
+    },
 }
 
 #[derive(serde::Serialize)]
@@ -186,6 +192,28 @@ pub async fn run_a2a(args: A2aArgs, coordinator: StigmergyCoordinator) -> Result
             json,
         }) => {
             let res = coordinator.acquire_lease(&resource, &agent, ttl, metadata.as_deref())?;
+
+            // Broadcast over IPC if broker is active
+            if let LeaseAcquireResult::Acquired {
+                ref resource_id,
+                expires_at,
+            } = res
+            {
+                let cwd = std::env::current_dir().unwrap_or_else(|_| std::path::PathBuf::from("."));
+                let (endpoint, _) = strata_memory::endpoint_for_workspace(&cwd);
+                if let Ok(ipc) = strata_memory::IpcClient::connect(&endpoint).await {
+                    let _ = ipc
+                        .publish(strata_core::a2a::IpcEvent::LeaseAcquired {
+                            resource_id: resource_id.clone(),
+                            agent_id: agent.clone(),
+                            expires_at,
+                            metadata: metadata.clone(),
+                            timestamp_us: chrono::Utc::now().timestamp_micros(),
+                        })
+                        .await;
+                }
+            }
+
             if json {
                 println!("{}", serde_json::to_string_pretty(&res)?);
             } else {
@@ -219,6 +247,22 @@ pub async fn run_a2a(args: A2aArgs, coordinator: StigmergyCoordinator) -> Result
             json,
         }) => {
             let released = coordinator.release_lease(&resource, &agent)?;
+
+            // Broadcast over IPC if broker is active
+            if released {
+                let cwd = std::env::current_dir().unwrap_or_else(|_| std::path::PathBuf::from("."));
+                let (endpoint, _) = strata_memory::endpoint_for_workspace(&cwd);
+                if let Ok(ipc) = strata_memory::IpcClient::connect(&endpoint).await {
+                    let _ = ipc
+                        .publish(strata_core::a2a::IpcEvent::LeaseReleased {
+                            resource_id: resource.clone(),
+                            agent_id: agent.clone(),
+                            timestamp_us: chrono::Utc::now().timestamp_micros(),
+                        })
+                        .await;
+                }
+            }
+
             if json {
                 println!(
                     "{}",
@@ -244,6 +288,69 @@ pub async fn run_a2a(args: A2aArgs, coordinator: StigmergyCoordinator) -> Result
                 println!("{}", serde_json::json!({ "pruned_count": pruned }));
             } else {
                 println!("✓ Pruned {} expired lease(s).", pruned);
+            }
+        }
+
+        Some(A2aAction::Listen { json }) => {
+            let cwd = std::env::current_dir().unwrap_or_else(|_| std::path::PathBuf::from("."));
+            let (endpoint, _) = strata_memory::endpoint_for_workspace(&cwd);
+            println!("📡 Connecting to A2A IPC event bus at {endpoint}...");
+
+            let client = match strata_memory::IpcClient::connect(&endpoint).await {
+                Ok(c) => c,
+                Err(e) => {
+                    eprintln!("✗ Could not connect to A2A IPC bus ({e}). Ensure `strata daemon` or `strata mcp` is running.");
+                    return Ok(());
+                }
+            };
+
+            println!("✓ Connected! Listening for real-time stigmergic events (Press Ctrl+C to exit)...\n");
+            let mut sub = client.subscribe();
+
+            loop {
+                tokio::select! {
+                    _ = tokio::signal::ctrl_c() => {
+                        println!("\nDisconnected from A2A IPC event bus.");
+                        break;
+                    }
+                    recv_res = sub.recv() => {
+                        match recv_res {
+                            Ok(event) => {
+                                if json {
+                                    if let Ok(line) = serde_json::to_string(&event) {
+                                        println!("{line}");
+                                    }
+                                } else {
+                                    match &event {
+                                        strata_core::a2a::IpcEvent::LeaseAcquired { resource_id, agent_id, expires_at, metadata, .. } => {
+                                            let meta = metadata.as_deref().unwrap_or("-");
+                                            println!("🔒 [LEASE ACQUIRED] resource='{}' agent='{}' expires={} meta='{}'", resource_id, agent_id, expires_at, meta);
+                                        }
+                                        strata_core::a2a::IpcEvent::LeaseReleased { resource_id, agent_id, .. } => {
+                                            println!("🔓 [LEASE RELEASED] resource='{}' agent='{}'", resource_id, agent_id);
+                                        }
+                                        strata_core::a2a::IpcEvent::AntiPatternDiscovered { category, pattern, remedy, .. } => {
+                                            println!("⚡ [ANTI-PATTERN ALERT] category='{}' pattern='{}' remedy='{}'", category, pattern, remedy);
+                                        }
+                                        strata_core::a2a::IpcEvent::AgentPresenceChanged { agent_id, host, status, .. } => {
+                                            println!("👥 [AGENT PRESENCE] agent='{}' host='{}' status='{}'", agent_id, host, status);
+                                        }
+                                        strata_core::a2a::IpcEvent::MemoryPromoted { memory_id, tier, to_global, .. } => {
+                                            println!("⭐ [MEMORY PROMOTED] id='{}' tier='{}' global={}", memory_id, tier, to_global);
+                                        }
+                                    }
+                                }
+                            }
+                            Err(tokio::sync::broadcast::error::RecvError::Lagged(count)) => {
+                                eprintln!("⚠️ [IPC Alert] Lagged behind by {count} messages");
+                            }
+                            Err(tokio::sync::broadcast::error::RecvError::Closed) => {
+                                println!("\nA2A IPC server closed connection.");
+                                break;
+                            }
+                        }
+                    }
+                }
             }
         }
     }

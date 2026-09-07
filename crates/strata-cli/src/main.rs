@@ -50,7 +50,11 @@ struct Cli {
     #[arg(long, global = true, help = "Path to SQLite database file")]
     db_path: Option<PathBuf>,
 
-    #[arg(long, global = true, help = "Disable federated Developer-Global store (~/.strata/global.db)")]
+    #[arg(
+        long,
+        global = true,
+        help = "Disable federated Developer-Global store (~/.strata/global.db)"
+    )]
     no_global: bool,
 
     #[arg(short, long, global = true, help = "Enable verbose debug logging")]
@@ -493,7 +497,9 @@ async fn main() -> Result<()> {
         | Commands::Architecture(_) => unreachable!(),
 
         Commands::Mcp { action: None } => {
-            let server = McpServer::new_with_engine(Arc::clone(&engine));
+            let mut server = McpServer::new_with_engine(Arc::clone(&engine));
+            let cwd = std::env::current_dir().unwrap_or_else(|_| std::path::PathBuf::from("."));
+            server.init_workspace_ipc(&cwd).await;
             server.run_stdio().await?;
         }
         Commands::Mcp { action: Some(_) } => unreachable!(),

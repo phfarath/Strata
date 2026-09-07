@@ -8,6 +8,7 @@ pub mod consolidation;
 pub mod decay;
 pub mod embedding;
 pub mod enricher;
+pub mod ipc;
 pub mod jtms;
 pub mod leases;
 pub mod pipeline;
@@ -55,6 +56,10 @@ pub use embedding::{
     FastEmbedProvider, MockEmbeddingProvider,
 };
 pub use enricher::{AsyncLlmEnricher, CanonicalTemplateEnricher, MemoryEnricher};
+pub use ipc::{
+    endpoint_for_workspace, read_bounded_line, IpcBrokerManager, IpcClient, IpcServer,
+    MAX_FRAME_LENGTH,
+};
 pub use jtms::{ConflictMatch, ConflictResolution, TruthMaintenanceSystem};
 pub use leases::StigmergyCoordinator;
 pub use pipeline::{ConsolidationPipeline, ConsolidationResult, PipelineConfig};
@@ -320,8 +325,7 @@ impl SqliteMemoryEngine {
         if let Some(r) = reason {
             meta["promotion_reason"] = serde_json::Value::String(r.to_string());
         }
-        meta["promoted_to_global_at"] =
-            serde_json::Value::String(chrono::Utc::now().to_rfc3339());
+        meta["promoted_to_global_at"] = serde_json::Value::String(chrono::Utc::now().to_rfc3339());
         record.metadata = meta;
 
         if record.embedding.is_none() && !record.content.trim().is_empty() {
@@ -367,11 +371,8 @@ impl SqliteMemoryEngine {
 
         // 1. Transfer memories
         let types_slice = filter.memory_type.clone().map(|t| vec![t]);
-        let candidates = source_store.get_all_memories(
-            None,
-            types_slice.as_deref(),
-            filter.limit,
-        )?;
+        let candidates =
+            source_store.get_all_memories(None, types_slice.as_deref(), filter.limit)?;
 
         for mut memory in candidates {
             if let Some(tier) = filter.tier {
@@ -398,8 +399,7 @@ impl SqliteMemoryEngine {
 
             let mut meta = memory.metadata.clone();
             meta["transferred_from"] = serde_json::Value::String(source_label.to_string());
-            meta["transferred_at"] =
-                serde_json::Value::String(chrono::Utc::now().to_rfc3339());
+            meta["transferred_at"] = serde_json::Value::String(chrono::Utc::now().to_rfc3339());
             memory.metadata = meta;
 
             self.store.insert_or_update_memory(&memory)?;
@@ -408,7 +408,8 @@ impl SqliteMemoryEngine {
 
         // 2. Transfer failure patterns
         if filter.include_failure_patterns {
-            let failures = source_store.search_failures(filter.query.as_deref(), None, filter.limit)?;
+            let failures =
+                source_store.search_failures(filter.query.as_deref(), None, filter.limit)?;
             for mut failure in failures {
                 let mut meta = failure.metadata.clone();
                 meta["transferred_from"] = serde_json::Value::String(source_label.to_string());
@@ -555,14 +556,14 @@ impl MemoryEngine for SqliteMemoryEngine {
         scope: Option<&Scope>,
         limit: usize,
     ) -> Result<Vec<FailurePattern>, StrataError> {
-        let mut local_failures = self
-            .consolidator
-            .get_known_failures(&self.store, query, scope, limit)?;
+        let mut local_failures =
+            self.consolidator
+                .get_known_failures(&self.store, query, scope, limit)?;
 
         if let Some(ref global) = self.global_store {
-            let global_failures = self
-                .consolidator
-                .get_known_failures(global, query, Some(&Scope::Global), limit)?;
+            let global_failures =
+                self.consolidator
+                    .get_known_failures(global, query, Some(&Scope::Global), limit)?;
 
             let mut seen_signatures = std::collections::HashSet::new();
             for f in &local_failures {

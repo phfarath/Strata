@@ -79,7 +79,9 @@ pub async fn run_transfer(args: TransferArgs, engine: Arc<SqliteMemoryEngine>) -
             "peripheral" => Some(MemoryTier::Peripheral),
             "working" => Some(MemoryTier::Working),
             "core" => Some(MemoryTier::Core),
-            other => anyhow::bail!("Invalid tier: '{other}'. Expected peripheral, working, or core"),
+            other => {
+                anyhow::bail!("Invalid tier: '{other}'. Expected peripheral, working, or core")
+            }
         },
         None => None,
     };
@@ -128,16 +130,39 @@ fn resolve_source_db_path(input: &Path) -> Result<PathBuf> {
 
 fn print_transfer_report(report: &TransferReport, source_path: &Path) {
     println!("\n╔══════════════════════════════════════════════════════════════════════════════════════╗");
-    println!("║                 📦 STRATA CROSS-PROJECT KNOWLEDGE TRANSFER                           ║");
-    println!("╚══════════════════════════════════════════════════════════════════════════════════════╝");
-    println!("  Source:                         {}", source_path.display());
-    println!("────────────────────────────────────────────────────────────────────────────────────────");
-    println!("  ✓ Transferred Memories:         {}", report.transferred_memories);
-    println!("  ✓ Transferred Failure Patterns: {}", report.transferred_failure_patterns);
-    println!("  ✓ Transferred Procedural Skills:{}", report.transferred_procedural_skills);
+    println!(
+        "║                 📦 STRATA CROSS-PROJECT KNOWLEDGE TRANSFER                           ║"
+    );
+    println!(
+        "╚══════════════════════════════════════════════════════════════════════════════════════╝"
+    );
+    println!(
+        "  Source:                         {}",
+        source_path.display()
+    );
+    println!(
+        "────────────────────────────────────────────────────────────────────────────────────────"
+    );
+    println!(
+        "  ✓ Transferred Memories:         {}",
+        report.transferred_memories
+    );
+    println!(
+        "  ✓ Transferred Failure Patterns: {}",
+        report.transferred_failure_patterns
+    );
+    println!(
+        "  ✓ Transferred Procedural Skills:{}",
+        report.transferred_procedural_skills
+    );
     if report.skipped_duplicates > 0 {
-        println!("  ⏭️  Skipped Existing Duplicates: {}", report.skipped_duplicates);
+        println!(
+            "  ⏭️  Skipped Existing Duplicates: {}",
+            report.skipped_duplicates
+        );
     }
-    println!("────────────────────────────────────────────────────────────────────────────────────────");
+    println!(
+        "────────────────────────────────────────────────────────────────────────────────────────"
+    );
     println!("✨ Transfer complete. Imported knowledge is active in local workspace search.\n");
 }

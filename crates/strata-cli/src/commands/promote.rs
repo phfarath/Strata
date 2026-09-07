@@ -170,10 +170,12 @@ async fn promote_to_global_store(
         );
     }
 
-    let mem = engine
-        .store()
-        .get_memory(id)?
-        .with_context(|| format!("Memory record with ID '{}' not found in local workspace store", id))?;
+    let mem = engine.store().get_memory(id)?.with_context(|| {
+        format!(
+            "Memory record with ID '{}' not found in local workspace store",
+            id
+        )
+    })?;
 
     if !args.yes {
         render_memory_modal(&mem, args.reason.as_deref());
@@ -195,9 +197,7 @@ async fn promote_to_global_store(
                 });
                 println!("{}", serde_json::to_string_pretty(&res)?);
             } else {
-                println!(
-                    "\n❌ [ABORTED] Global promotion cancelled by user.\n"
-                );
+                println!("\n❌ [ABORTED] Global promotion cancelled by user.\n");
             }
             return Ok(());
         }
