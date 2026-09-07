@@ -13,6 +13,7 @@ pub mod leases;
 pub mod pipeline;
 pub mod procedural_mining;
 pub mod retrieval;
+pub mod spreading_activation;
 pub mod store;
 pub mod subconscious;
 pub mod sync;
@@ -59,6 +60,10 @@ pub use leases::StigmergyCoordinator;
 pub use pipeline::{ConsolidationPipeline, ConsolidationResult, PipelineConfig};
 pub use procedural_mining::TrajectoryMiner;
 pub use retrieval::{HybridRanker, HybridRankerConfig};
+pub use spreading_activation::{
+    EdgeKind, GraphEdge, GraphNode, KnowledgeGraph, SpreadingActivationConfig,
+    SpreadingActivationEngine,
+};
 pub use store::SqliteStore;
 pub use strata_core::schemas::{
     CodeAnchor, ContextBudgetConfig, ExportFormat, FeedbackEvent, FeedbackRating, HostTargetConfig,
@@ -208,6 +213,38 @@ impl SqliteMemoryEngine {
     ) -> Result<SemanticFact, StrataError> {
         self.store
             .promote_semantic_fact_to_core(id, approved_by_human, reason)
+    }
+
+    /// Performs associative Knowledge Graph retrieval via Spreading Activation (HippoRAG / ACT-R style).
+    /// Discovers multi-hop connected memories, files, and root causes with zero LLM tokens.
+    pub fn search_graph_associative(
+        &self,
+        query: &str,
+        scope: Option<&Scope>,
+        limit: usize,
+    ) -> Result<Vec<(MemoryRecord, f32)>, StrataError> {
+        let spreading_engine = self.ranker.spreading_engine();
+        let graph = spreading_engine.build_graph_from_store(&self.store, scope)?;
+        let seeds = spreading_engine.seed_from_query(&graph, query);
+        if seeds.is_empty() {
+            return Ok(Vec::new());
+        }
+
+        let activations = spreading_engine.propagate(&graph, &seeds);
+        let top_memories = spreading_engine.extract_top_memories(&activations, limit);
+
+        let mut results = Vec::new();
+        for (id, score) in top_memories {
+            if let Some(mem) = self.store.get_memory(&id)? {
+                results.push((mem, score));
+            }
+        }
+        Ok(results)
+    }
+
+    /// Access the underlying HybridRanker.
+    pub fn ranker(&self) -> &HybridRanker {
+        &self.ranker
     }
 }
 

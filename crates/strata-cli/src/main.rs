@@ -106,6 +106,12 @@ enum Commands {
 
         #[arg(long, help = "Output as raw JSON")]
         json: bool,
+
+        #[arg(
+            long,
+            help = "Enable associative Knowledge Graph spreading activation search"
+        )]
+        graph: bool,
     },
 
     /// Run diagnostic health check on SQLite database and host integrations
@@ -490,6 +496,7 @@ async fn main() -> Result<()> {
             scope,
             memory_type,
             json,
+            graph,
         } => {
             run_search(
                 SearchOptions {
@@ -498,6 +505,7 @@ async fn main() -> Result<()> {
                     scope,
                     memory_type,
                     json,
+                    graph,
                 },
                 engine,
             )

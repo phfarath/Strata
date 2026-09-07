@@ -2757,3 +2757,242 @@ async fn test_neuro_symbolic_consolidator_full_offline_cycle() {
         "Recovery skill for BuildError must be mined"
     );
 }
+
+#[tokio::test]
+async fn test_spreading_activation_graph_construction() {
+    use crate::spreading_activation::{EdgeKind, GraphNode, KnowledgeGraph};
+
+    let mut graph = KnowledgeGraph::new();
+    let mem1 = GraphNode::memory(Uuid::new_v4());
+    let sym1 = GraphNode::symbol("authenticate_user");
+    let file1 = GraphNode::file("src/auth/jwt.rs");
+    let tag1 = GraphNode::concept("security");
+
+    graph.add_bidirectional_edge(mem1.clone(), sym1.clone(), 0.85, EdgeKind::ReferencesSymbol);
+    graph.add_bidirectional_edge(sym1.clone(), file1.clone(), 0.80, EdgeKind::MentionsFile);
+    graph.add_bidirectional_edge(mem1.clone(), tag1.clone(), 0.50, EdgeKind::SharedTag);
+
+    assert_eq!(graph.node_count(), 4);
+    assert!(graph.has_node(&mem1));
+    assert!(graph.has_node(&sym1));
+    assert!(graph.has_node(&file1));
+    assert!(graph.has_node(&tag1));
+
+    let neighbors_mem1 = graph.neighbors(&mem1);
+    assert_eq!(neighbors_mem1.len(), 2);
+
+    let matching = graph.find_matching_nodes("jwt.rs");
+    assert_eq!(matching.len(), 1);
+    assert_eq!(matching[0], file1);
+}
+
+#[tokio::test]
+async fn test_spreading_activation_multi_hop_diffusion() {
+    use crate::spreading_activation::{
+        EdgeKind, GraphNode, KnowledgeGraph, SpreadingActivationConfig, SpreadingActivationEngine,
+    };
+
+    let mut graph = KnowledgeGraph::new();
+    let node_a = GraphNode::symbol("entrypoint");
+    let node_b = GraphNode::symbol("middleware");
+    let node_c = GraphNode::memory(Uuid::new_v4());
+
+    // A -> B (Calls, 0.8)
+    graph.add_directed_edge(node_a.clone(), node_b.clone(), 0.8, EdgeKind::Calls);
+    // B -> C (ReferencesSymbol, 0.9)
+    graph.add_directed_edge(
+        node_b.clone(),
+        node_c.clone(),
+        0.9,
+        EdgeKind::ReferencesSymbol,
+    );
+
+    let config = SpreadingActivationConfig {
+        max_hops: 2,
+        decay_factor: 0.7,
+        activation_threshold: 0.01,
+        retention_rate: 0.2,
+        max_active_nodes: 100,
+    };
+    let engine = SpreadingActivationEngine::new(config);
+
+    // Seed ONLY node_a
+    let seeds = vec![(node_a.clone(), 1.0)];
+    let activations = engine.propagate(&graph, &seeds);
+
+    assert!(activations.contains_key(&node_a), "Seed A must be active");
+    assert!(
+        activations.contains_key(&node_b),
+        "1-hop B must receive activation"
+    );
+    assert!(
+        activations.contains_key(&node_c),
+        "2-hop C must receive multi-hop activation!"
+    );
+
+    let act_a = activations[&node_a];
+    let act_b = activations[&node_b];
+    let act_c = activations[&node_c];
+
+    // Energy should naturally decay over hops: A > B > C
+    assert!(act_a >= act_b, "A ({act_a}) >= B ({act_b})");
+    assert!(act_b >= act_c, "B ({act_b}) >= C ({act_c})");
+    assert!(
+        act_c > 0.1,
+        "C must have meaningful non-zero activation: {act_c}"
+    );
+
+    // Test extraction
+    let top_memories = engine.extract_top_memories(&activations, 5);
+    assert_eq!(top_memories.len(), 1);
+    assert_eq!(top_memories[0].0, node_c.as_memory_id().unwrap());
+}
+
+#[tokio::test]
+async fn test_spreading_activation_path_finding() {
+    use crate::spreading_activation::{
+        EdgeKind, GraphNode, KnowledgeGraph, SpreadingActivationEngine,
+    };
+
+    let mut graph = KnowledgeGraph::new();
+    let seed = GraphNode::symbol("frontend_component");
+    let intermediate = GraphNode::file("src/api/client.ts");
+    let target = GraphNode::memory(Uuid::new_v4());
+
+    graph.add_directed_edge(
+        seed.clone(),
+        intermediate.clone(),
+        0.8,
+        EdgeKind::MentionsFile,
+    );
+    graph.add_directed_edge(
+        intermediate.clone(),
+        target.clone(),
+        0.9,
+        EdgeKind::Supports,
+    );
+
+    let engine = SpreadingActivationEngine::with_default_config();
+    let path = engine.find_activation_path(&graph, &seed, &target, 4);
+
+    assert!(path.is_some(), "Activation path must be found");
+    let steps = path.unwrap();
+    assert_eq!(steps.len(), 2);
+    assert_eq!(steps[0].0, intermediate);
+    assert_eq!(steps[0].1, EdgeKind::MentionsFile);
+    assert_eq!(steps[1].0, target);
+    assert_eq!(steps[1].1, EdgeKind::Supports);
+}
+
+#[tokio::test]
+async fn test_hybrid_retrieval_tri_modal_associative_recall() {
+    use crate::retrieval::{HybridRanker, HybridRankerConfig};
+    use crate::store::SqliteStore;
+    use std::sync::Arc;
+    use strata_core::state::{MemoryRecord, MemoryType, Scope};
+
+    let store = Arc::new(SqliteStore::open_in_memory().expect("sqlite open"));
+
+    // Memory 1: Direct match for "desktop window setup"
+    let mut mem1 = MemoryRecord::new(
+        MemoryType::Semantic,
+        "Desktop window configuration initialized in src-tauri/src/main.rs",
+        Scope::Project("my-app".to_string()),
+    );
+    mem1.metadata = serde_json::json!({
+        "file_paths": ["src-tauri/capabilities/default.json"]
+    });
+    mem1.tags = vec!["tauri".to_string(), "desktop".to_string()];
+    store.insert_or_update_memory(&mem1).unwrap();
+
+    // Memory 2: Root cause / fix: Security permission denial.
+    // Notice: ZERO words in common with "desktop window configuration"!
+    // But shares the file path "src-tauri/capabilities/default.json"
+    let mut mem2 = MemoryRecord::new(
+        MemoryType::NegativePattern,
+        "IPC capability denied: permissions core:default and core:event must be declared",
+        Scope::Project("my-app".to_string()),
+    );
+    mem2.metadata = serde_json::json!({
+        "file_paths": ["src-tauri/capabilities/default.json"]
+    });
+    mem2.tags = vec!["tauri".to_string(), "ipc-security".to_string()];
+    mem2.importance = 0.95;
+    store.insert_or_update_memory(&mem2).unwrap();
+
+    // Configure HybridRanker with Spreading Activation enabled
+    let config = HybridRankerConfig {
+        enable_spreading_activation: true,
+        ..Default::default()
+    };
+    let ranker = HybridRanker::new(config);
+
+    // Query specifically mentions "desktop window configuration"
+    let results = ranker
+        .retrieve(&store, None, "desktop window configuration", None, None, 5)
+        .await
+        .expect("retrieve");
+
+    assert!(
+        !results.is_empty(),
+        "Results must contain recalled memories"
+    );
+
+    // Mem1 must be present (FTS5 match)
+    assert!(
+        results.iter().any(|r| r.id == mem1.id),
+        "Mem1 must be recalled via direct lexical search"
+    );
+
+    // Mem2 MUST also be discovered associatively via the shared file anchor through Spreading Activation!
+    assert!(
+        results.iter().any(|r| r.id == mem2.id),
+        "Mem2 MUST be discovered associatively via Spreading Activation over shared file anchor!"
+    );
+}
+
+#[tokio::test]
+async fn test_sqlite_memory_engine_search_graph_associative() {
+    use crate::SqliteMemoryEngine;
+    use strata_core::state::{MemoryRecord, MemoryType, Scope};
+    use strata_core::traits::MemoryEngine;
+
+    let engine = SqliteMemoryEngine::open_in_memory(None).expect("init engine");
+
+    let mut mem_a = MemoryRecord::new(
+        MemoryType::Semantic,
+        "PostgreSQL connection pooling configured with deadpool_postgres",
+        Scope::Project("backend".to_string()),
+    );
+    mem_a.tags = vec!["database".to_string(), "postgres".to_string()];
+    mem_a.metadata = serde_json::json!({
+        "symbols": ["create_pool", "PoolConfig"]
+    });
+    engine.write(&mem_a).await.unwrap();
+
+    let mut mem_b = MemoryRecord::new(
+        MemoryType::NegativePattern,
+        "Connection timeout under high concurrency when max_size exceeds PG max_connections",
+        Scope::Project("backend".to_string()),
+    );
+    mem_b.tags = vec!["database".to_string(), "timeout".to_string()];
+    mem_b.metadata = serde_json::json!({
+        "symbols": ["create_pool"]
+    });
+    mem_b.importance = 0.9;
+    engine.write(&mem_b).await.unwrap();
+
+    // Query for "PoolConfig" (which only mem_a explicitly has)
+    // Spreading Activation should propagate through shared symbol "create_pool" and shared tag "database" to mem_b
+    let graph_results = engine
+        .search_graph_associative("PoolConfig", None, 5)
+        .expect("search graph");
+
+    assert!(!graph_results.is_empty());
+    assert!(
+        graph_results
+            .iter()
+            .any(|(rec, score)| rec.id == mem_b.id && *score > 0.0),
+        "Associative search must retrieve mem_b via shared symbol and tag activation!"
+    );
+}

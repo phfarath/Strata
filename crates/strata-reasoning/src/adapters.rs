@@ -830,7 +830,7 @@ impl ReasoningEngine for GeminiAdapter {
         if let Some(max_t) = context.max_tokens {
             gen_config["maxOutputTokens"] = json!(max_t);
         }
-        if gen_config.as_object().map_or(false, |o| !o.is_empty()) {
+        if gen_config.as_object().is_some_and(|o| !o.is_empty()) {
             body["generationConfig"] = gen_config;
         }
 
