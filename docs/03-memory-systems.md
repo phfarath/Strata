@@ -38,6 +38,78 @@ Where:
 - $\lambda \cdot (1.0 - c_m)$ penalizes speculative or unverified assertions.
 - **Diversity Re-Ranking**: Maximal Marginal Relevance (MMR) is applied to diversify returned candidates, preventing context saturation by redundant episodic variations.
 
+## Knowledge Graph & Spreading Activation (HippoRAG / ACT-R)
+
+To capture non-obvious multi-hop associations without incurring LLM token costs or latency, Strata implements a deterministic in-memory Spreading Activation Knowledge Graph:
+
+### Graph Topology & Edge Weights
+The graph models five heterogeneous node variants connected by strongly typed edges:
+- **Nodes**: `Memory(Uuid)`, `Fact(Uuid)`, `Symbol(String)`, `File(String)`, `Concept(String)`.
+- **Edges & Weights**:
+  - `Supports` ($w = 0.95$): Direct epistemic justification links.
+  - `ReferencesSymbol` ($w = 0.85$): AST-grounded identifier mentions.
+  - `MentionsFile` ($w = 0.80$): Workspace file path references.
+  - `Calls` ($w = 0.75$): Native deterministic call graph invocations.
+  - `CoOccurred` ($w = 0.60$): Co-occurrence in the same execution episode.
+  - `SharedTag` ($w = 0.50$): Overlapping semantic categories.
+
+### Activation Propagation Dynamics
+Activation spreads across discrete steps ($T = 3$) following the ACT-R diffusion equation:
+
+$$\Delta A_t(v) = \sum_{u \in \text{In}(v)} A_{t-1}(u) \cdot w(u, v) \cdot \lambda$$
+
+$$A_t(v) = \min\left(1.0, \, \mu \cdot A_{t-1}(v) + \Delta A_t(v)\right)$$
+
+Where:
+- $\lambda = 0.8$ represents the per-hop transmission decay.
+- $\mu = 0.6$ is the self-activation retention factor.
+- Energy saturation is capped at $1.0$, and nodes below $\theta = 0.05$ are pruned.
+
+### Tri-Modal Reciprocal Rank Fusion (RRF)
+The retrieval ranker fuses three orthogonal signals:
+1. **BM25 Lexical Score** (FTS5): Exact matches on symbols, function names, and error strings.
+2. **Dense Vector Cosine Similarity** (FastEmbed ONNX): Semantic concept similarity.
+3. **Graph Spreading Activation** (HippoRAG): Multi-hop associative discovery linking memories that share no common keywords with the query but are connected through code anchors.
+
+The final rank score is fused via weighted RRF:
+
+$$\text{RRF}(d) = w_{\text{bm25}} \cdot \frac{1}{k + r_{\text{bm25}}(d)} + w_{\text{vec}} \cdot \frac{1}{k + r_{\text{vec}}(d)} + w_{\text{graph}} \cdot \frac{1}{k + r_{\text{graph}}(d)}$$
+
+---
+
+## Two-Tier Memory Federation & Cross-Project Knowledge Transfer
+
+To enable multi-agent and cross-project collaboration without polluting repository-specific boundaries, Strata employs a two-tier storage hierarchy:
+
+### Storage Segregation
+1. **Workspace Store** (`<workspace>/.strata/strata.db`):
+   - Scope: Local to the repository.
+   - Content: Tree-Sitter AST symbol hashes, Git Merkle commit diffs, raw episodic action logs, and ephemeral stigmergic leases.
+2. **Developer-Global Store** (`~/.strata/global.db`):
+   - Scope: Developer machine-wide.
+   - Content: Universal compiler anti-patterns (e.g., recurring borrow-checker or bundler errors), reusable procedural skills, and human-promoted Core Tier axioms.
+
+### Federated Retrieval & Blending
+- Queries automatically search both stores in parallel.
+- The ranker applies a **Federation Priority Multiplier**:
+  - Local candidates receive weight $1.0$.
+  - Global candidates receive weight $0.8$ (ensuring repository-specific context takes precedence while surfacing cross-project insights).
+- Each returned memory record is tagged with `store_origin: "local" | "global"`.
+
+### Selective Promotion & Transfer
+- **Promotion to Global**:
+  ```bash
+  strata promote --id <UUID> --to-global --reason "Approved cross-project architectural pattern"
+  ```
+  Or via the MCP tool `memory_promote_global`.
+- **Cross-Project Knowledge Transfer**:
+  ```bash
+  strata transfer --from /path/to/source-repo --tier core --limit 50
+  ```
+  Supports filtering by tier, memory type, search query, and selective exclusion (`--no-failures`, `--no-skills`).
+
+---
+
 ## Consolidation and Principled Forgetting
 
 - **Immutability of Episodic Reality**: Raw observation traces and trajectory logs are strictly immutable write-ahead records.
