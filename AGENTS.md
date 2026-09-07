@@ -3,6 +3,7 @@
 - Consult Strata memory tools (`memory_search`, `memory_get`) before planning non-trivial tasks.
 - Check known failure anti-patterns before running destructive or complex operations.
 - Concurrency & Leases: Acquire exclusive leases via `lease_acquire(resource_id, ttl_seconds)` before modifying files or crates to prevent concurrent collisions with other agents (Cursor, Claude Code, Gemini). Release via `lease_release(resource_id)` when finished.
+- Realtime Event Stream: Monitor concurrent peer agent leases and anti-patterns with `strata a2a listen --json`.
 - Wrap test/build commands with `strata hook wrap -- <cmd>` to capture compiler failures out-of-band.
 - Record durable takeaways via `memory_write`.
 <!-- STRATA_MEMORY_END -->
@@ -13,6 +14,7 @@ Strata Open Core runs 100% local-first on the developer's machine:
 
 - **Check compilation across workspace**: `cargo check --workspace`
 - **Run all unit & integration tests**: `cargo test --workspace`
+- **Listen to real-time A2A IPC event bus**: `cargo run -p strata-cli --bin strata -- a2a listen`
 - **Run the local MCP Server via Stdio**: `cargo run -p strata-cli --bin strata -- mcp`
 - **Run with MCP Inspector**: `npx @modelcontextprotocol/inspector cargo run -p strata-cli --bin strata -- mcp`
 - **Launch the interactive Terminal TUI**: `cargo run -p strata-cli --bin strata -- ui`

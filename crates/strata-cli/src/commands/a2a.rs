@@ -296,10 +296,12 @@ pub async fn run_a2a(args: A2aArgs, coordinator: StigmergyCoordinator) -> Result
             let (endpoint, _) = strata_memory::endpoint_for_workspace(&cwd);
             println!("📡 Connecting to A2A IPC event bus at {endpoint}...");
 
-            let client = match strata_memory::IpcClient::connect(&endpoint).await {
-                Ok(c) => c,
-                Err(e) => {
-                    eprintln!("✗ Could not connect to A2A IPC bus ({e}). Ensure `strata daemon` or `strata mcp` is running.");
+            let (client_opt, _server) =
+                strata_memory::IpcBrokerManager::start_or_connect(&cwd).await;
+            let client = match client_opt {
+                Some(c) => c,
+                None => {
+                    eprintln!("✗ Could not initialize A2A IPC bus. Ensure permissions are valid.");
                     return Ok(());
                 }
             };
