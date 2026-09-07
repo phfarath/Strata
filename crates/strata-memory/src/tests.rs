@@ -3000,9 +3000,9 @@ async fn test_sqlite_memory_engine_search_graph_associative() {
 #[tokio::test]
 async fn test_federated_memory_engine_dual_search() {
     use crate::{SqliteMemoryEngine, SqliteStore};
+    use std::sync::Arc;
     use strata_core::state::{MemoryRecord, MemoryType, Scope};
     use strata_core::traits::MemoryEngine;
-    use std::sync::Arc;
 
     let local_store = Arc::new(SqliteStore::open_in_memory().unwrap());
     let global_store = Arc::new(SqliteStore::open_in_memory().unwrap());
@@ -3041,21 +3041,27 @@ async fn test_federated_memory_engine_dual_search() {
     assert_eq!(res_local[0].id, local_mem.id);
 
     // 2. Search global specific
-    let res_global = engine.search("tokio Mutex deadlock", None, 5).await.unwrap();
+    let res_global = engine
+        .search("tokio Mutex deadlock", None, 5)
+        .await
+        .unwrap();
     assert!(!res_global.is_empty());
     assert_eq!(res_global[0].id, global_mem.id);
 
     // 3. Search common query: both should be blended via federated RRF
-    let res_both = engine.search("architecture guideline", None, 5).await.unwrap();
+    let res_both = engine
+        .search("architecture guideline", None, 5)
+        .await
+        .unwrap();
     assert_eq!(res_both.len(), 2);
 }
 
 #[tokio::test]
 async fn test_federated_memory_engine_promote_to_global() {
     use crate::{SqliteMemoryEngine, SqliteStore};
+    use std::sync::Arc;
     use strata_core::state::{MemoryRecord, MemoryTier, MemoryType, Scope};
     use strata_core::traits::MemoryEngine;
-    use std::sync::Arc;
 
     let local_store_a = Arc::new(SqliteStore::open_in_memory().unwrap());
     let shared_global_store = Arc::new(SqliteStore::open_in_memory().unwrap());
@@ -3066,7 +3072,9 @@ async fn test_federated_memory_engine_promote_to_global() {
         Scope::Project("project-a".to_string()),
     );
     local_pattern.tier = MemoryTier::Working;
-    local_store_a.insert_or_update_memory(&local_pattern).unwrap();
+    local_store_a
+        .insert_or_update_memory(&local_pattern)
+        .unwrap();
 
     let engine_a = SqliteMemoryEngine {
         store: local_store_a,
@@ -3078,7 +3086,11 @@ async fn test_federated_memory_engine_promote_to_global() {
 
     // Promote from project A to Global
     let promoted = engine_a
-        .promote_to_global(&local_pattern.id, true, Some("Universal concurrency anti-pattern"))
+        .promote_to_global(
+            &local_pattern.id,
+            true,
+            Some("Universal concurrency anti-pattern"),
+        )
         .await
         .expect("promote to global");
 
@@ -3097,7 +3109,10 @@ async fn test_federated_memory_engine_promote_to_global() {
     };
 
     // Project B immediately benefits from the promoted global memory!
-    let res_b = engine_b.search("unbuffered channel", None, 5).await.unwrap();
+    let res_b = engine_b
+        .search("unbuffered channel", None, 5)
+        .await
+        .unwrap();
     assert_eq!(res_b.len(), 1);
     assert_eq!(res_b[0].id, local_pattern.id);
     assert_eq!(res_b[0].scope, Scope::Global);
@@ -3106,9 +3121,9 @@ async fn test_federated_memory_engine_promote_to_global() {
 #[tokio::test]
 async fn test_federated_known_failures_merge() {
     use crate::{SqliteMemoryEngine, SqliteStore};
+    use std::sync::Arc;
     use strata_core::state::{FailurePattern, FailureSeverity, Scope};
     use strata_core::traits::MemoryEngine;
-    use std::sync::Arc;
 
     let local_store = Arc::new(SqliteStore::open_in_memory().unwrap());
     let global_store = Arc::new(SqliteStore::open_in_memory().unwrap());
@@ -3144,22 +3159,32 @@ async fn test_federated_known_failures_merge() {
     let failures = engine.get_known_failures(None, None, 10).await.unwrap();
     assert_eq!(failures.len(), 2);
     assert!(failures.iter().any(|f| f.signature == "E0382_local"));
-    assert!(failures.iter().any(|f| f.signature == "socket_permission_global"));
+    assert!(failures
+        .iter()
+        .any(|f| f.signature == "socket_permission_global"));
 }
 
 #[tokio::test]
 async fn test_cross_project_transfer() {
     use crate::{SqliteMemoryEngine, SqliteStore};
+    use std::sync::Arc;
     use strata_core::schemas::{ProceduralSkill, TransferFilter};
     use strata_core::state::{FailurePattern, MemoryRecord, MemoryType, Scope};
-    use std::sync::Arc;
 
     let source_store = SqliteStore::open_in_memory().unwrap();
     let target_store = Arc::new(SqliteStore::open_in_memory().unwrap());
 
     // 1. Populate source store
-    let mem1 = MemoryRecord::new(MemoryType::Semantic, "Next.js 15 cookies() is an async function", Scope::Global);
-    let mem2 = MemoryRecord::new(MemoryType::Procedural, "Deploying container to Fly.io via GitHub Actions", Scope::Global);
+    let mem1 = MemoryRecord::new(
+        MemoryType::Semantic,
+        "Next.js 15 cookies() is an async function",
+        Scope::Global,
+    );
+    let mem2 = MemoryRecord::new(
+        MemoryType::Procedural,
+        "Deploying container to Fly.io via GitHub Actions",
+        Scope::Global,
+    );
     source_store.insert_or_update_memory(&mem1).unwrap();
     source_store.insert_or_update_memory(&mem2).unwrap();
 
@@ -3172,7 +3197,9 @@ async fn test_cross_project_transfer() {
     source_store.upsert_failure_pattern(&fail).unwrap();
 
     let mut skill = ProceduralSkill::new("fly_deploy", "Deploy app to Fly.io with zero downtime");
-    source_store.insert_or_update_procedural_skill(&mut skill).unwrap();
+    source_store
+        .insert_or_update_procedural_skill(&mut skill)
+        .unwrap();
 
     // 2. Target engine
     let target_engine = SqliteMemoryEngine {

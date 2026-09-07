@@ -89,6 +89,65 @@ pub enum LeaseAcquireResult {
     },
 }
 
+/// Real-time event transmitted across the local A2A IPC bus.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(tag = "type", content = "payload", rename_all = "snake_case")]
+pub enum IpcEvent {
+    LeaseAcquired {
+        resource_id: String,
+        agent_id: String,
+        expires_at: i64,
+        metadata: Option<String>,
+        timestamp_us: i64,
+    },
+    LeaseReleased {
+        resource_id: String,
+        agent_id: String,
+        timestamp_us: i64,
+    },
+    AntiPatternDiscovered {
+        pattern_id: String,
+        category: String,
+        pattern: String,
+        remedy: String,
+        timestamp_us: i64,
+    },
+    AgentPresenceChanged {
+        agent_id: String,
+        host: String,
+        pid: u32,
+        status: String, // "active", "idle", "disconnected"
+        timestamp_us: i64,
+    },
+    MemoryPromoted {
+        memory_id: String,
+        tier: String,
+        to_global: bool,
+        timestamp_us: i64,
+    },
+}
+
+impl IpcEvent {
+    pub fn timestamp_us(&self) -> i64 {
+        match self {
+            Self::LeaseAcquired { timestamp_us, .. } => *timestamp_us,
+            Self::LeaseReleased { timestamp_us, .. } => *timestamp_us,
+            Self::AntiPatternDiscovered { timestamp_us, .. } => *timestamp_us,
+            Self::AgentPresenceChanged { timestamp_us, .. } => *timestamp_us,
+            Self::MemoryPromoted { timestamp_us, .. } => *timestamp_us,
+        }
+    }
+}
+
+/// Top-level framed message on the local IPC transport.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+pub enum IpcMessage {
+    Event { event: IpcEvent },
+    Ping { timestamp: i64 },
+    Pong { timestamp: i64 },
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -138,5 +197,34 @@ mod tests {
         assert!(json_acq.contains("\"status\":\"acquired\""));
         let json_conf = serde_json::to_string(&conflict).unwrap();
         assert!(json_conf.contains("\"status\":\"conflict\""));
+    }
+
+    #[test]
+    fn test_ipc_message_roundtrip() {
+        let event = IpcEvent::AntiPatternDiscovered {
+            pattern_id: "pat-123".to_string(),
+            category: "compiler".to_string(),
+            pattern: "borrow checker error on mutex guard".to_string(),
+            remedy: "drop guard before await".to_string(),
+            timestamp_us: 1700000000123456,
+        };
+        assert_eq!(event.timestamp_us(), 1700000000123456);
+
+        let msg = IpcMessage::Event {
+            event: event.clone(),
+        };
+
+        let json = serde_json::to_string(&msg).expect("serialize IPC message");
+        assert!(json.contains("\"kind\":\"event\""));
+        assert!(json.contains("\"type\":\"anti_pattern_discovered\""));
+        assert!(json.contains("\"pattern_id\":\"pat-123\""));
+
+        let de: IpcMessage = serde_json::from_str(&json).expect("deserialize IPC message");
+        assert_eq!(msg, de);
+
+        let ping = IpcMessage::Ping { timestamp: 123456 };
+        let ping_json = serde_json::to_string(&ping).unwrap();
+        let ping_de: IpcMessage = serde_json::from_str(&ping_json).unwrap();
+        assert_eq!(ping, ping_de);
     }
 }

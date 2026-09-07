@@ -257,7 +257,14 @@ impl HybridRanker {
             Some(g) => g,
             None => {
                 return self
-                    .retrieve(local_store, embedding_provider, query, scope, memory_types, limit)
+                    .retrieve(
+                        local_store,
+                        embedding_provider,
+                        query,
+                        scope,
+                        memory_types,
+                        limit,
+                    )
                     .await;
             }
         };
@@ -322,14 +329,18 @@ impl HybridRanker {
         for (rank_idx, record) in local_ranked.iter().enumerate() {
             let rrf_score = w_local * (1.0 / (k + (rank_idx as f32) + 1.0));
             *score_map.entry(record.id).or_insert(0.0) += rrf_score;
-            record_map.entry(record.id).or_insert_with(|| record.clone());
+            record_map
+                .entry(record.id)
+                .or_insert_with(|| record.clone());
         }
 
         // Global candidates
         for (rank_idx, record) in global_ranked.iter().enumerate() {
             let rrf_score = w_global * (1.0 / (k + (rank_idx as f32) + 1.0));
             *score_map.entry(record.id).or_insert(0.0) += rrf_score;
-            record_map.entry(record.id).or_insert_with(|| record.clone());
+            record_map
+                .entry(record.id)
+                .or_insert_with(|| record.clone());
         }
 
         // Apply quality weighting: importance & confidence

@@ -16,6 +16,8 @@ pub struct McpServer {
     memory_engine: Arc<dyn MemoryEngine>,
     sqlite_engine: Option<Arc<SqliteMemoryEngine>>,
     stigmergy: Option<StigmergyCoordinator>,
+    ipc_client: Option<Arc<strata_memory::IpcClient>>,
+    _ipc_server: Option<Arc<strata_memory::IpcServer>>,
     server_name: String,
     server_version: String,
 }
@@ -26,6 +28,8 @@ impl McpServer {
             memory_engine,
             sqlite_engine: None,
             stigmergy: None,
+            ipc_client: None,
+            _ipc_server: None,
             server_name: "strata-mcp".to_string(),
             server_version: env!("CARGO_PKG_VERSION").to_string(),
         }
@@ -37,6 +41,8 @@ impl McpServer {
             memory_engine: Arc::clone(&engine) as Arc<dyn MemoryEngine>,
             sqlite_engine: Some(Arc::clone(&engine)),
             stigmergy: Some(coordinator),
+            ipc_client: None,
+            _ipc_server: None,
             server_name: "strata-mcp".to_string(),
             server_version: env!("CARGO_PKG_VERSION").to_string(),
         }
@@ -50,6 +56,23 @@ impl McpServer {
     pub fn with_stigmergy(mut self, coordinator: StigmergyCoordinator) -> Self {
         self.stigmergy = Some(coordinator);
         self
+    }
+
+    pub fn with_ipc(
+        mut self,
+        client: Option<Arc<strata_memory::IpcClient>>,
+        server: Option<Arc<strata_memory::IpcServer>>,
+    ) -> Self {
+        self.ipc_client = client;
+        self._ipc_server = server;
+        self
+    }
+
+    pub async fn init_workspace_ipc(&mut self, workspace_root: &std::path::Path) {
+        let (client, server) =
+            strata_memory::IpcBrokerManager::start_or_connect(workspace_root).await;
+        self.ipc_client = client;
+        self._ipc_server = server;
     }
 
     pub fn tool_definitions() -> Vec<ToolDefinition> {
@@ -527,6 +550,40 @@ impl McpServer {
     pub async fn run_stdio(self) -> anyhow::Result<()> {
         info!("Starting Strata MCP server on stdio transport");
 
+        if let Some(ref client) = self.ipc_client {
+            let mut sub = client.subscribe();
+            tokio::spawn(async move {
+                while let Ok(event) = sub.recv().await {
+                    match event {
+                        strata_core::a2a::IpcEvent::AntiPatternDiscovered {
+                            category,
+                            pattern,
+                            remedy,
+                            ..
+                        } => {
+                            tracing::warn!("⚡ [A2A Instant Alert] Peer agent discovered anti-pattern ({category}): {pattern} -> Remedy: {remedy}");
+                        }
+                        strata_core::a2a::IpcEvent::LeaseAcquired {
+                            resource_id,
+                            agent_id,
+                            expires_at,
+                            ..
+                        } => {
+                            tracing::info!("🔒 [A2A Stigmergy] Resource '{resource_id}' leased by '{agent_id}' until {expires_at}");
+                        }
+                        strata_core::a2a::IpcEvent::LeaseReleased {
+                            resource_id,
+                            agent_id,
+                            ..
+                        } => {
+                            tracing::info!("🔓 [A2A Stigmergy] Resource '{resource_id}' released by '{agent_id}'");
+                        }
+                        _ => {}
+                    }
+                }
+            });
+        }
+
         let stdin = tokio::io::stdin();
         let mut stdout = tokio::io::stdout();
         let mut reader = BufReader::new(stdin).lines();
@@ -718,14 +775,24 @@ impl McpServer {
                                     let mut val = serde_json::to_value(r.to_handle(None))
                                         .unwrap_or(serde_json::json!({}));
                                     if let Some(obj) = val.as_object_mut() {
-                                        let is_global = if let Some(ref engine) = self.sqlite_engine {
-                                            engine.store().get_memory(&r.id).ok().flatten().is_none()
+                                        let is_global = if let Some(ref engine) = self.sqlite_engine
+                                        {
+                                            engine
+                                                .store()
+                                                .get_memory(&r.id)
+                                                .ok()
+                                                .flatten()
+                                                .is_none()
                                         } else {
                                             false
                                         };
                                         obj.insert(
                                             "store_origin".to_string(),
-                                            serde_json::json!(if is_global { "global" } else { "local" }),
+                                            serde_json::json!(if is_global {
+                                                "global"
+                                            } else {
+                                                "local"
+                                            }),
                                         );
                                     }
                                     val
@@ -1283,10 +1350,28 @@ impl McpServer {
                 let metadata = args.get("metadata").and_then(|v| v.as_str());
 
                 match coordinator.acquire_lease(resource_id, agent_id, ttl_seconds, metadata) {
-                    Ok(result) => match serde_json::to_string_pretty(&result) {
-                        Ok(json) => CallToolResult::text(json),
-                        Err(e) => CallToolResult::error(format!("Serialization error: {e}")),
-                    },
+                    Ok(result) => {
+                        if let strata_core::a2a::LeaseAcquireResult::Acquired {
+                            expires_at, ..
+                        } = &result
+                        {
+                            if let Some(ref client) = self.ipc_client {
+                                let _ = client
+                                    .publish(strata_core::a2a::IpcEvent::LeaseAcquired {
+                                        resource_id: resource_id.to_string(),
+                                        agent_id: agent_id.to_string(),
+                                        expires_at: *expires_at,
+                                        metadata: metadata.map(|s| s.to_string()),
+                                        timestamp_us: chrono::Utc::now().timestamp_micros(),
+                                    })
+                                    .await;
+                            }
+                        }
+                        match serde_json::to_string_pretty(&result) {
+                            Ok(json) => CallToolResult::text(json),
+                            Err(e) => CallToolResult::error(format!("Serialization error: {e}")),
+                        }
+                    }
                     Err(e) => CallToolResult::error(format!("Failed to acquire lease: {e}")),
                 }
             }
@@ -1312,14 +1397,27 @@ impl McpServer {
                 };
 
                 match coordinator.release_lease(resource_id, agent_id) {
-                    Ok(released) => CallToolResult::text(
-                        serde_json::json!({
-                            "resource_id": resource_id,
-                            "agent_id": agent_id,
-                            "released": released
-                        })
-                        .to_string(),
-                    ),
+                    Ok(released) => {
+                        if released {
+                            if let Some(ref client) = self.ipc_client {
+                                let _ = client
+                                    .publish(strata_core::a2a::IpcEvent::LeaseReleased {
+                                        resource_id: resource_id.to_string(),
+                                        agent_id: agent_id.to_string(),
+                                        timestamp_us: chrono::Utc::now().timestamp_micros(),
+                                    })
+                                    .await;
+                            }
+                        }
+                        CallToolResult::text(
+                            serde_json::json!({
+                                "resource_id": resource_id,
+                                "agent_id": agent_id,
+                                "released": released
+                            })
+                            .to_string(),
+                        )
+                    }
                     Err(e) => CallToolResult::error(format!("Failed to release lease: {e}")),
                 }
             }

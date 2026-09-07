@@ -1489,10 +1489,7 @@ impl SqliteStore {
         Ok(res)
     }
 
-    pub fn get_failure_pattern(
-        &self,
-        id: &Uuid,
-    ) -> Result<Option<FailurePattern>, StrataError> {
+    pub fn get_failure_pattern(&self, id: &Uuid) -> Result<Option<FailurePattern>, StrataError> {
         let conn = self
             .conn
             .lock()
