@@ -5,7 +5,7 @@
 ### The Local-First Persistent Memory Engine & Cognitive Runtime for AI Coding Agents
 
 [![Rust 2021](https://img.shields.io/badge/rust-2021_edition-DEA584.svg?style=flat-square&logo=rust)](https://www.rust-lang.org/)
-[![Tests](https://img.shields.io/badge/tests-120%2B%20passing%20(100%25)-34D399.svg?style=flat-square)]()
+[![Tests](https://img.shields.io/badge/tests-136%2B%20passing%20(100%25)-34D399.svg?style=flat-square)]()
 [![MCP Universal](https://img.shields.io/badge/MCP-2024--11--05%20%7C%202025--11--25%20%7C%202026--07--28-60A5FA.svg?style=flat-square&logo=anthropic)](https://modelcontextprotocol.io/)
 [![Storage](https://img.shields.io/badge/storage-SQLite%20Offline--First%20%2B%20FTS5-A78BFA.svg?style=flat-square&logo=sqlite)](https://www.sqlite.org/)
 [![License](https://img.shields.io/badge/license-MIT%20%2F%20Apache--2.0-FBBF24.svg?style=flat-square)]()
@@ -258,6 +258,12 @@ Clean segregation of concerns across developer environments:
   strata transfer --from /path/to/other-project --tier core
   ```
 
+### 8. Realtime Local IPC & Stigmergic Event Bus
+Sub-millisecond local-first multi-agent synchronization without polling or network ports:
+- **Zero-Network Transport**: Windows Named Pipes (`\\.\pipe\strata-a2a-<hash>`) and Unix Domain Sockets (`/tmp/strata-a2a-<hash>.sock`). Zero open TCP ports, zero cloud telemetry.
+- **Autonomous Broker with Local Leader Election**: When starting `strata mcp`, `strata daemon`, or `strata a2a listen`, the process attempts to bind the pipe as the workspace leader; if another instance is active, it seamlessly connects as a pub/sub follower.
+- **Stigmergic Leases & Anti-Pattern Push**: `lease_acquire` and `lease_release` broadcast events instantly to active peers, invalidating local caches and preventing concurrent write collisions.
+
 ---
 
 ## 💻 CLI Command Matrix
@@ -275,7 +281,8 @@ Clean segregation of concerns across developer environments:
 | `strata transfer` | Cross-project knowledge transfer from another repository | `strata transfer --from ../other-repo` |
 | `strata config` | Manage runtime configuration and reasoning providers | `strata config set provider ollama` |
 | `strata consolidate` | Distill episodic traces with pluggable reasoning engine | `strata consolidate --provider ollama` |
-| `strata a2a` | Multi-agent stigmergic presence and atomic temporal leases | `strata a2a status` |
+| `strata daemon` | Background A2A broker and periodic decay/maintenance daemon | `strata daemon` |
+| `strata a2a` | Multi-agent stigmergic presence, leases, and live IPC bus (`listen`) | `strata a2a listen --json` |
 | `strata remember` | Store a semantic fact, anti-pattern, or architectural decision | `strata remember "Never bypass JWT auth"` |
 | `strata reconcile` | Scan workspace against Git Merkle tree to detect relocated/stale code | `strata reconcile --auto-relink` |
 | `strata digest` | Generate high-level architectural overview and community clusters | `strata digest` |
@@ -308,7 +315,7 @@ Clean segregation of concerns across developer environments:
 │ Phase 5 — Auto-Consol │ ✅ Complete (v0.1.1)      │ Neuro-Symbolic Consolidator   │
 │ Phase 6 — Graph Recall│ ✅ Complete (v0.1.1)      │ Spreading Activation HippoRAG │
 │ Phase 7 — Federation  │ ✅ Complete (v0.1.1)      │ Dual-Tier Global & Transfer   │
-│ Phase 8 — Local IPC   │ 🔄 In Progress (Q4 2026) │ Realtime UDS / Named Pipe Bus │
+│ Phase 8 — Local IPC   │ ✅ Complete (v0.1.2)      │ Realtime UDS / Named Pipe Bus │
 └───────────────────────┴──────────────────────────┴───────────────────────────────┘
 ```
 

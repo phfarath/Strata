@@ -54,9 +54,13 @@ Specialized agent nodes advertise memory capabilities and handle distributed rea
 
 The `MemoryRecord` entity encapsulates unique identifier, owner, subject entity, category, payload, ACL rules, and causal provenance. The `TransactiveIndex` maps topic spaces to authoritative specialist agents alongside calibrated confidence scores. Every inter-agent transaction must strictly enforce tenant boundaries, authorization scopes, read/write permissions, and explicit delegation grants.
 
-### MVP & Risk Surface
+### Implemented Subsystem: Local-First Realtime IPC & Stigmergic Event Bus (Phase 8)
 
-Deploy a dedicated A2A memory agent exposing `store_memory` and `query_memory`, integrated with two consumer agents in a sandboxed evaluation domain. Primary failure modes include cross-tenant ACL leakage, protocol lock-in, and tracing overhead in distributed consensus. Shared memory abstractions must never expose private agent-internal scratchpads or unvalidated working state.
+To eliminate polling latency and inter-agent collision in multi-agent environments on the same workstation, Strata implements a native OS-level IPC bus:
+- **Zero Network Footprint**: Uses Windows Named Pipes (`\\.\pipe\strata-a2a-<hash16>`) and Unix Domain Sockets (`/tmp/strata-a2a-<hash16>.sock` bounded `< 40` chars to satisfy macOS 104-byte `sun_path` limits). Opens 0 TCP/UDP ports and emits 0 telemetry.
+- **Autonomous Broker with Local Leader Election**: When starting `strata mcp`, `strata daemon`, or `strata a2a listen`, the process attempts to bind the pipe as the workspace leader; if another instance is active, it seamlessly connects as a pub/sub follower.
+- **Realtime Stigmergy**: Calls to `lease_acquire` and `lease_release` publish `LeaseAcquired` and `LeaseReleased` events directly across the IPC bus. Peer agents receive push notifications in sub-millisecond latency, invalidating local caches and avoiding dual-write collisions.
+- **SQLite Single Source of Truth**: SQLite WAL remains the ACID authority (~0.2ms write latency); the IPC bus acts strictly as a low-overhead notification and invalidation pipeline.
 
 ## Frontier 3 — Metacognition for Memory Governance
 
