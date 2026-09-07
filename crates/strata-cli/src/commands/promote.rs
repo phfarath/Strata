@@ -39,6 +39,14 @@ pub struct PromoteArgs {
     )]
     pub yes: bool,
 
+    /// Promote to Developer-Global store (~/.strata/global.db) with Scope::Global
+    #[arg(
+        long = "to-global",
+        alias = "global",
+        help = "Promote to Developer-Global store (~/.strata/global.db) with Scope::Global"
+    )]
+    pub to_global: bool,
+
     /// Output result as raw JSON
     #[arg(long, help = "Output as raw JSON")]
     pub json: bool,
@@ -47,6 +55,10 @@ pub struct PromoteArgs {
 pub async fn run_promote(args: PromoteArgs, engine: Arc<SqliteMemoryEngine>) -> Result<()> {
     let id = Uuid::parse_str(&args.id)
         .with_context(|| format!("Invalid UUID format for id: '{}'", args.id))?;
+
+    if args.to_global {
+        return promote_to_global_store(&id, &args, engine).await;
+    }
 
     let is_fact =
         args.entity_type.to_lowercase() == "fact" || args.entity_type.to_lowercase() == "semantic";
@@ -138,6 +150,83 @@ async fn promote_memory_record(
         println!("  Tier:               Core (Permanent / Frozen)");
         println!("  Human Approval:     true (Explicitly Approved)");
         println!("  Retention (R):      1.0 (Exempt from ACT-R decay / never pruned)");
+        if let Some(r) = &args.reason {
+            println!("  Rationale:          {}", r);
+        }
+        println!("────────────────────────────────────────────────────────────────────────────────────────\n");
+    }
+
+    Ok(())
+}
+
+async fn promote_to_global_store(
+    id: &Uuid,
+    args: &PromoteArgs,
+    engine: Arc<SqliteMemoryEngine>,
+) -> Result<()> {
+    if engine.global_store().is_none() {
+        anyhow::bail!(
+            "Developer-Global store is not available or configured. Cannot promote to global."
+        );
+    }
+
+    let mem = engine
+        .store()
+        .get_memory(id)?
+        .with_context(|| format!("Memory record with ID '{}' not found in local workspace store", id))?;
+
+    if !args.yes {
+        render_memory_modal(&mem, args.reason.as_deref());
+        print!(
+            "\n  [?] Promote this memory to Developer-Global Store (~/.strata/global.db) with Scope::Global? [y/N]: "
+        );
+        io::stdout().flush()?;
+
+        let mut input = String::new();
+        io::stdin().read_line(&mut input)?;
+        let trimmed = input.trim().to_lowercase();
+
+        if trimmed != "y" && trimmed != "yes" {
+            if args.json {
+                let res = serde_json::json!({
+                    "status": "aborted",
+                    "id": id.to_string(),
+                    "reason": "Promotion cancelled by user",
+                });
+                println!("{}", serde_json::to_string_pretty(&res)?);
+            } else {
+                println!(
+                    "\n❌ [ABORTED] Global promotion cancelled by user.\n"
+                );
+            }
+            return Ok(());
+        }
+    }
+
+    let promoted = engine
+        .promote_to_global(id, true, args.reason.as_deref())
+        .await
+        .with_context(|| format!("Failed to promote memory '{}' to Global Store", id))?;
+
+    if args.json {
+        let res = serde_json::json!({
+            "status": "success",
+            "id": promoted.id.to_string(),
+            "scope": "global",
+            "tier": "core",
+            "approved_by_human": promoted.approved_by_human,
+            "promotion_reason": args.reason,
+            "destination": "~/.strata/global.db",
+        });
+        println!("{}", serde_json::to_string_pretty(&res)?);
+    } else {
+        println!("\n╔══════════════════════════════════════════════════════════════════════════════════════╗");
+        println!("║                 ✓ DEVELOPER-GLOBAL KNOWLEDGE PROMOTION SUCCESSFUL                    ║");
+        println!("╚══════════════════════════════════════════════════════════════════════════════════════╝");
+        println!("  ID:                 {}", promoted.id);
+        println!("  Scope:              Global (Accessible across all repositories)");
+        println!("  Tier:               Core (Permanent / Frozen retention)");
+        println!("  Destination:        ~/.strata/global.db");
         if let Some(r) = &args.reason {
             println!("  Rationale:          {}", r);
         }

@@ -499,6 +499,28 @@ impl McpServer {
                     }
                 }),
             },
+            ToolDefinition {
+                name: "memory_promote_global".to_string(),
+                description: "Promote a validated memory record or negative pattern to the Developer-Global store (~/.strata/global.db) with Scope::Global. Makes the learning immediately accessible to all workspaces and agents on this machine with 0 token overhead.".to_string(),
+                input_schema: serde_json::json!({
+                    "type": "object",
+                    "properties": {
+                        "id": {
+                            "type": "string",
+                            "description": "The UUID of the memory record to promote to Global Store"
+                        },
+                        "approved_by_human": {
+                            "type": "boolean",
+                            "description": "Explicit developer confirmation flag (must be true)"
+                        },
+                        "reason": {
+                            "type": "string",
+                            "description": "Optional policy rationale or context for global cross-project promotion"
+                        }
+                    },
+                    "required": ["id", "approved_by_human"]
+                }),
+            },
         ]
     }
 
@@ -690,8 +712,25 @@ impl McpServer {
                                 "No memories found matching query: \"{query}\""
                             ))
                         } else {
-                            let handles: Vec<_> =
-                                filtered_records.iter().map(|r| r.to_handle(None)).collect();
+                            let handles: Vec<_> = filtered_records
+                                .iter()
+                                .map(|r| {
+                                    let mut val = serde_json::to_value(r.to_handle(None))
+                                        .unwrap_or(serde_json::json!({}));
+                                    if let Some(obj) = val.as_object_mut() {
+                                        let is_global = if let Some(ref engine) = self.sqlite_engine {
+                                            engine.store().get_memory(&r.id).ok().flatten().is_none()
+                                        } else {
+                                            false
+                                        };
+                                        obj.insert(
+                                            "store_origin".to_string(),
+                                            serde_json::json!(if is_global { "global" } else { "local" }),
+                                        );
+                                    }
+                                    val
+                                })
+                                .collect();
                             match serde_json::to_string_pretty(&handles) {
                                 Ok(json) => CallToolResult::text(json),
                                 Err(e) => CallToolResult::error(format!(
@@ -1166,6 +1205,55 @@ impl McpServer {
                         CallToolResult::error(format!("Memory record with ID '{id}' not found"))
                     }
                     Err(e) => CallToolResult::error(format!("Failed to fetch memory: {e}")),
+                }
+            }
+            "memory_promote_global" => {
+                let id_str = match args.get("id").and_then(|v| v.as_str()) {
+                    Some(id) => id,
+                    None => return CallToolResult::error("Missing required parameter: id"),
+                };
+
+                let id = match Uuid::parse_str(id_str) {
+                    Ok(u) => u,
+                    Err(e) => return CallToolResult::error(format!("Invalid UUID format: {e}")),
+                };
+
+                let approved = args
+                    .get("approved_by_human")
+                    .and_then(|v| v.as_bool())
+                    .unwrap_or(false);
+
+                if !approved {
+                    return CallToolResult::error(
+                        "Global Promotion rejected: 'approved_by_human' must be explicitly true. Developer confirmation required."
+                    );
+                }
+
+                let reason = args.get("reason").and_then(|v| v.as_str());
+
+                if let Some(engine) = &self.sqlite_engine {
+                    match engine.promote_to_global(&id, true, reason).await {
+                        Ok(promoted) => {
+                            let structured = serde_json::json!({
+                                "status": "success",
+                                "id": promoted.id.to_string(),
+                                "scope": "global",
+                                "tier": "core",
+                                "destination": "~/.strata/global.db",
+                                "reason": reason,
+                            });
+                            CallToolResult::structured(
+                                format!(
+                                    "Memory '{}' successfully promoted to Developer-Global store (~/.strata/global.db). Accessible across all projects.",
+                                    promoted.id
+                                ),
+                                structured,
+                            )
+                        }
+                        Err(e) => CallToolResult::error(format!("Global promotion failed: {e}")),
+                    }
+                } else {
+                    CallToolResult::error("Global promotion requires SQLite storage engine")
                 }
             }
             "lease_acquire" => {

@@ -38,6 +38,7 @@ use strata_cli::{
         sync::{run_sync, SyncArgs},
         sync_hosts::{run_sync_hosts, SyncHostsArgs},
         train::{run_train, TrainArgs},
+        transfer::{run_transfer, TransferArgs},
         workspace::{run_workspace, WorkspaceArgs},
     },
     mcp::server::McpServer,
@@ -48,6 +49,9 @@ use strata_cli::{
 struct Cli {
     #[arg(long, global = true, help = "Path to SQLite database file")]
     db_path: Option<PathBuf>,
+
+    #[arg(long, global = true, help = "Disable federated Developer-Global store (~/.strata/global.db)")]
+    no_global: bool,
 
     #[arg(short, long, global = true, help = "Enable verbose debug logging")]
     verbose: bool,
@@ -317,6 +321,10 @@ enum Commands {
     #[command(name = "a2a", alias = "stigmergy", alias = "leases")]
     A2a(A2aArgs),
 
+    /// Cross-project knowledge transfer: import memories, failure patterns, and procedural skills from another repository
+    #[command(name = "transfer", alias = "import-from", alias = "cross-project")]
+    Transfer(TransferArgs),
+
     /// View or modify Strata runtime configuration and local/cloud reasoning providers
     #[command(name = "config", alias = "cfg", alias = "settings")]
     Config(ConfigArgs),
@@ -460,14 +468,18 @@ async fn main() -> Result<()> {
         std::env::set_var("STRATA_WORKSPACE_ID", &resolved_ws);
     }
 
-    let db_path = resolve_db_path(cli.db_path);
+    let stores = resolve_stores(cli.db_path, cli.no_global);
+    let db_path = stores.local_path.clone();
 
-    let engine = Arc::new(SqliteMemoryEngine::open(&db_path, None).with_context(|| {
-        format!(
-            "Failed to open Strata SQLite database at: {}",
-            db_path.display()
-        )
-    })?);
+    let engine = Arc::new(
+        SqliteMemoryEngine::open_federated(&stores.local_path, stores.global_path.as_deref(), None)
+            .with_context(|| {
+                format!(
+                    "Failed to open Strata SQLite database at: {}",
+                    stores.local_path.display()
+                )
+            })?,
+    );
 
     match cli.command {
         Commands::Init { .. }
@@ -716,6 +728,10 @@ async fn main() -> Result<()> {
             run_promote(args, engine).await?;
         }
 
+        Commands::Transfer(args) => {
+            run_transfer(args, engine).await?;
+        }
+
         Commands::Reconcile(args) => {
             let store = engine.store_arc();
             run_reconcile(args, store).await?;
@@ -734,19 +750,71 @@ async fn main() -> Result<()> {
     Ok(())
 }
 
-fn resolve_db_path(explicit: Option<PathBuf>) -> PathBuf {
-    if let Some(p) = explicit {
-        return p;
+#[derive(Debug, Clone)]
+pub struct ResolvedStores {
+    pub local_path: PathBuf,
+    pub global_path: Option<PathBuf>,
+}
+
+pub fn resolve_stores(explicit_local: Option<PathBuf>, no_global: bool) -> ResolvedStores {
+    // 1. Local workspace database resolution
+    let local_path = if let Some(p) = explicit_local {
+        p
+    } else if let Ok(env_path) = std::env::var("STRATA_DB_PATH") {
+        PathBuf::from(env_path)
+    } else {
+        detect_workspace_db_path()
+    };
+
+    // 2. Global developer database resolution (~/.strata/global.db)
+    let global_path = if no_global || std::env::var("STRATA_NO_GLOBAL").is_ok() {
+        None
+    } else if let Some(home) = dirs::home_dir() {
+        let global_dir = home.join(".strata");
+        let _ = std::fs::create_dir_all(&global_dir);
+        let global = global_dir.join("global.db");
+        // Don't federate with self if local_path points to the exact same file
+        if local_path == global {
+            None
+        } else {
+            Some(global)
+        }
+    } else {
+        None
+    };
+
+    ResolvedStores {
+        local_path,
+        global_path,
     }
-    if let Ok(env_path) = std::env::var("STRATA_DB_PATH") {
-        return PathBuf::from(env_path);
+}
+
+fn detect_workspace_db_path() -> PathBuf {
+    let current_dir = std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
+    let mut curr = current_dir.as_path();
+    loop {
+        if curr.join(".strata").exists() || curr.join(".git").exists() {
+            let strata_dir = curr.join(".strata");
+            let _ = std::fs::create_dir_all(&strata_dir);
+            return strata_dir.join("strata.db");
+        }
+        match curr.parent() {
+            Some(p) => curr = p,
+            None => break,
+        }
     }
+
     if let Some(home) = dirs::home_dir() {
         let dir = home.join(".strata");
         let _ = std::fs::create_dir_all(&dir);
         return dir.join("strata.db");
     }
+
     let local = PathBuf::from(".strata");
     let _ = std::fs::create_dir_all(&local);
     local.join("strata.db")
+}
+
+pub fn resolve_db_path(explicit: Option<PathBuf>) -> PathBuf {
+    resolve_stores(explicit, false).local_path
 }
