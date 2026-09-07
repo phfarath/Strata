@@ -1,16 +1,20 @@
 pub mod alignment;
 pub mod ast;
 pub mod call_graph;
+pub mod clustering;
 pub mod community;
 pub mod compiler;
 pub mod consolidation;
 pub mod decay;
 pub mod embedding;
+pub mod enricher;
 pub mod jtms;
 pub mod leases;
 pub mod pipeline;
+pub mod procedural_mining;
 pub mod retrieval;
 pub mod store;
+pub mod subconscious;
 pub mod sync;
 pub mod workspace;
 
@@ -34,6 +38,7 @@ pub use ast::{
     AstDiffResult, AstParser, CodeAnchorEngine, ExtractedSymbol, LanguageKind, ReconciliationReport,
 };
 pub use call_graph::{CallEdge, CallGraph, CallGraphAnalyzer, CallType};
+pub use clustering::{SpatialCluster, SpatialClusterer, VectorPoint};
 pub use community::{
     ArchitectureCluster, ArchitectureGraphSummary, ClusterDependency, ClusterMember,
     ClusteringConfig, CommunityDetector, MemberType,
@@ -42,15 +47,17 @@ pub use compiler::{
     estimate_tokens, HostCompileResult, MultiHostCompileReport, MultiHostCompiler,
     STRATA_MARKER_END, STRATA_MARKER_START,
 };
-pub use consolidation::Consolidator;
+pub use consolidation::{Consolidator, NeuroSymbolicConsolidator};
 pub use decay::{DecayCalculator, PruneReport};
 pub use embedding::{
     bytes_to_embedding, cosine_similarity, embedding_to_bytes, EmbeddingProvider,
     FastEmbedProvider, MockEmbeddingProvider,
 };
+pub use enricher::{AsyncLlmEnricher, CanonicalTemplateEnricher, MemoryEnricher};
 pub use jtms::{ConflictMatch, ConflictResolution, TruthMaintenanceSystem};
 pub use leases::StigmergyCoordinator;
 pub use pipeline::{ConsolidationPipeline, ConsolidationResult, PipelineConfig};
+pub use procedural_mining::TrajectoryMiner;
 pub use retrieval::{HybridRanker, HybridRankerConfig};
 pub use store::SqliteStore;
 pub use strata_core::schemas::{
@@ -58,6 +65,7 @@ pub use strata_core::schemas::{
     ImplicitSignal, KtoSample, MemoryFeedback, PreferencePair, SemanticFact, SftSample, SignalKind,
     SymbolType,
 };
+pub use subconscious::{GatingDecision, SubconsciousBuffer, SubconsciousConfig};
 pub use sync::{calculate_exponential_backoff, compute_version_hash, SyncEngine};
 pub use workspace::{MonorepoPackage, PackageType, WorkspaceBoundary, WorkspaceBoundaryDetector};
 pub type DpoPair = PreferencePair;

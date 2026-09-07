@@ -2485,3 +2485,275 @@ async fn test_jtms_v2_orthogonal_coexistence_no_false_conflicts() {
     assert_eq!(res_fe.status, FactStatus::Active);
     assert_eq!(res_be.status, FactStatus::Active);
 }
+
+#[tokio::test]
+async fn test_subconscious_recurrence_and_bypass() {
+    let mut buffer = crate::subconscious::SubconsciousBuffer::with_default_config();
+    let embedder = MockEmbeddingProvider::default();
+
+    let ev_bypass = Event::new(
+        "sess-1",
+        "agent-1",
+        EventPayload::ObservationReceived(strata_core::events::ObservationReceived {
+            session_id: "sess-1".to_string(),
+            source: "user".to_string(),
+            content: serde_json::json!("Critical architectural directive: must use PostgreSQL"),
+            observation_type: "directive".to_string(),
+            timestamp: Utc::now(),
+        }),
+    );
+    let emb_bypass = embedder
+        .embed_text("Critical architectural directive: must use PostgreSQL")
+        .await
+        .unwrap();
+
+    // 1. Test bypass for high importance (0.95 >= 0.90)
+    let decision = buffer.ingest(ev_bypass, emb_bypass, 0.95);
+    assert!(matches!(
+        decision,
+        crate::subconscious::GatingDecision::BypassImmediate { .. }
+    ));
+    assert_eq!(buffer.drain_bypass().len(), 1);
+
+    // 2. Test recurrence holding and consolidation
+    let ev1 = Event::new(
+        "sess-1",
+        "agent-1",
+        EventPayload::ToolInvoked(strata_core::events::ToolInvoked {
+            invocation_id: uuid::Uuid::new_v4(),
+            tool_name: "cargo_check".to_string(),
+            input: serde_json::json!({}),
+            session_id: "sess-1".to_string(),
+            timestamp: Utc::now(),
+        }),
+    );
+    let emb1 = embedder
+        .embed_text("cargo check failure in auth module")
+        .await
+        .unwrap();
+
+    let d1 = buffer.ingest(ev1.clone(), emb1.clone(), 0.6);
+    assert!(matches!(
+        d1,
+        crate::subconscious::GatingDecision::HoldInBuffer { .. }
+    ));
+
+    // Second occurrence with high similarity should trigger consolidation
+    let d2 = buffer.ingest(ev1, emb1, 0.6);
+    assert!(matches!(
+        d2,
+        crate::subconscious::GatingDecision::Consolidate { .. }
+    ));
+}
+
+#[test]
+fn test_spatial_clustering_and_medoid_election() {
+    use crate::clustering::{SpatialClusterer, VectorPoint};
+
+    let clusterer = SpatialClusterer::new(0.25, 2);
+
+    // Three close points and one distant point
+    let p1 = VectorPoint {
+        id: "p1".to_string(),
+        embedding: vec![1.0, 0.0, 0.0],
+        payload: "alpha",
+    };
+    let p2 = VectorPoint {
+        id: "p2".to_string(),
+        embedding: vec![0.98, 0.05, 0.0],
+        payload: "alpha variant",
+    };
+    let p3 = VectorPoint {
+        id: "p3".to_string(),
+        embedding: vec![0.99, 0.02, 0.0],
+        payload: "alpha medoid candidate",
+    };
+    let p4 = VectorPoint {
+        id: "p4".to_string(),
+        embedding: vec![0.0, 1.0, 0.0],
+        payload: "orthogonal point",
+    };
+
+    let clusters = clusterer.cluster(vec![p1, p2, p3, p4]);
+    assert_eq!(
+        clusters.len(),
+        2,
+        "Should create 2 clusters: alpha group and orthogonal point"
+    );
+
+    let alpha_cluster = clusters.iter().find(|c| c.points.len() == 3).unwrap();
+    assert!(!alpha_cluster.medoid_id.is_empty());
+}
+
+#[test]
+fn test_trajectory_mining_recovery_workflow() {
+    use crate::procedural_mining::TrajectoryMiner;
+
+    let miner = TrajectoryMiner::new();
+    let mut events = Vec::new();
+
+    // Error event
+    events.push(Event::new(
+        "sess-rec",
+        "agent",
+        EventPayload::ErrorObserved(strata_core::events::ErrorObserved {
+            error_type: "CompilerError".to_string(),
+            message: "cannot find crate serde".to_string(),
+            severity: "high".to_string(),
+            context: None,
+            stack_trace: None,
+            timestamp: Utc::now(),
+        }),
+    ));
+
+    // Corrective tool invocation
+    events.push(Event::new(
+        "sess-rec",
+        "agent",
+        EventPayload::ToolInvoked(strata_core::events::ToolInvoked {
+            invocation_id: uuid::Uuid::new_v4(),
+            tool_name: "run_command".to_string(),
+            input: serde_json::json!({ "command": "cargo add serde" }),
+            session_id: "sess-rec".to_string(),
+            timestamp: Utc::now(),
+        }),
+    ));
+
+    // Successful tool result
+    events.push(Event::new(
+        "sess-rec",
+        "agent",
+        EventPayload::ToolResultReceived(strata_core::events::ToolResultReceived {
+            invocation_id: uuid::Uuid::new_v4(),
+            tool_name: "run_command".to_string(),
+            result: serde_json::json!({ "stdout": "Added serde v1.0" }),
+            is_error: false,
+            duration_ms: Some(500),
+            timestamp: Utc::now(),
+        }),
+    ));
+
+    let skills = miner.mine_recovery_trajectories(&events);
+    assert_eq!(skills.len(), 1);
+    assert_eq!(skills[0].name, "Recover_CompilerError");
+    assert_eq!(skills[0].steps.len(), 1);
+    assert_eq!(skills[0].steps[0].tool, "run_command");
+}
+
+#[tokio::test]
+async fn test_neuro_symbolic_consolidator_full_offline_cycle() {
+    use crate::NeuroSymbolicConsolidator;
+
+    let store = Arc::new(SqliteStore::open_in_memory().unwrap());
+    let embedder: Arc<dyn EmbeddingProvider> = Arc::new(MockEmbeddingProvider::default());
+    let session_id = "sess-neuro-test";
+
+    // 1. Seed events in store: an initial architecture fact
+    let init_event = Event::new(
+        session_id,
+        "agent",
+        EventPayload::ObservationReceived(strata_core::events::ObservationReceived {
+            session_id: session_id.to_string(),
+            source: "user".to_string(),
+            content: serde_json::json!("The primary database server is SQLite"),
+            observation_type: "architecture".to_string(),
+            timestamp: Utc::now(),
+        }),
+    );
+    store.insert_event(&init_event).unwrap();
+
+    let mut consolidator = NeuroSymbolicConsolidator::new(store.clone(), embedder.clone());
+    let res1 = consolidator.consolidate_session(session_id).await.unwrap();
+    assert_eq!(res1.semantic_facts.len(), 1);
+    assert_eq!(
+        res1.semantic_facts[0].statement,
+        "The primary database server is SQLite"
+    );
+
+    // 2. Add an update migrating to PostgreSQL + an error and repair
+    let update_event = Event::new(
+        session_id,
+        "agent",
+        EventPayload::ObservationReceived(strata_core::events::ObservationReceived {
+            session_id: session_id.to_string(),
+            source: "user".to_string(),
+            content: serde_json::json!(
+                "We migrated to PostgreSQL instead of SQLite as the primary database"
+            ),
+            observation_type: "architecture".to_string(),
+            timestamp: Utc::now(),
+        }),
+    );
+    store.insert_event(&update_event).unwrap();
+
+    // Error + repair sequence
+    let err_ev = Event::new(
+        session_id,
+        "agent",
+        EventPayload::ErrorObserved(strata_core::events::ErrorObserved {
+            error_type: "BuildError".to_string(),
+            message: "unresolved import pgvector".to_string(),
+            severity: "high".to_string(),
+            context: None,
+            stack_trace: None,
+            timestamp: Utc::now(),
+        }),
+    );
+    let tool_inv = Event::new(
+        session_id,
+        "agent",
+        EventPayload::ToolInvoked(strata_core::events::ToolInvoked {
+            invocation_id: uuid::Uuid::new_v4(),
+            tool_name: "cargo_add".to_string(),
+            input: serde_json::json!({ "pkg": "pgvector" }),
+            session_id: session_id.to_string(),
+            timestamp: Utc::now(),
+        }),
+    );
+    let tool_res = Event::new(
+        session_id,
+        "agent",
+        EventPayload::ToolResultReceived(strata_core::events::ToolResultReceived {
+            invocation_id: uuid::Uuid::new_v4(),
+            tool_name: "cargo_add".to_string(),
+            result: serde_json::json!({ "status": "ok" }),
+            is_error: false,
+            duration_ms: Some(300),
+            timestamp: Utc::now(),
+        }),
+    );
+
+    store.insert_event(&err_ev).unwrap();
+    store.insert_event(&tool_inv).unwrap();
+    store.insert_event(&tool_res).unwrap();
+
+    let res2 = consolidator.consolidate_session(session_id).await.unwrap();
+
+    // Verify:
+    // a) JTMS resolved the contradiction and superseded SQLite
+    assert!(
+        res2.conflicts_resolved >= 1,
+        "Conflict between SQLite and Postgres must be resolved"
+    );
+    let active_facts = store
+        .get_all_semantic_facts(None, Some(FactStatus::Active), 10)
+        .unwrap();
+    assert!(
+        active_facts
+            .iter()
+            .any(|f| f.statement.contains("PostgreSQL")),
+        "Postgres must be active"
+    );
+    assert!(
+        !active_facts
+            .iter()
+            .any(|f| f.statement.contains("SQLite") && !f.statement.contains("migrated")),
+        "Old SQLite fact must be deprecated / not active"
+    );
+
+    // b) Procedural recovery skill was mined
+    assert!(
+        !res2.procedural_skills.is_empty(),
+        "Recovery skill for BuildError must be mined"
+    );
+}

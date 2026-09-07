@@ -544,4 +544,207 @@ pub fn process_data(msg: &str) {
             .await;
         assert!(rel_res.is_error != Some(true));
     }
+
+    #[tokio::test]
+    async fn test_cli_consolidate_neuro_symbolic_offline() {
+        use crate::commands::consolidate::{run_consolidate, ConsolidateOptions};
+        use chrono::Utc;
+        use strata_core::events::{
+            ErrorObserved, Event, EventPayload, ObservationReceived, TaskCompleted, ToolInvoked,
+            ToolResultReceived,
+        };
+        use strata_core::schemas::FactStatus;
+        use uuid::Uuid;
+
+        let store = Arc::new(SqliteStore::open_in_memory().unwrap());
+        let session_id = "test-cli-consolidate";
+
+        // Record a sequence of lifecycle events
+        let ev1 = Event::new(
+            session_id,
+            "cursor",
+            EventPayload::ObservationReceived(ObservationReceived {
+                session_id: session_id.to_string(),
+                source: "user".to_string(),
+                content: serde_json::json!("Architecture decision: Migrated primary database from SQLite to PostgreSQL for concurrency"),
+                observation_type: "architecture".to_string(),
+                timestamp: Utc::now(),
+            }),
+        );
+        let ev2 = Event::new(
+            session_id,
+            "cursor",
+            EventPayload::ErrorObserved(ErrorObserved {
+                error_type: "CompilerError".to_string(),
+                message: "E0432: unresolved import serde_json".to_string(),
+                severity: "warning".to_string(),
+                context: None,
+                stack_trace: None,
+                timestamp: Utc::now(),
+            }),
+        );
+        let ev3 = Event::new(
+            session_id,
+            "cursor",
+            EventPayload::ToolInvoked(ToolInvoked {
+                invocation_id: Uuid::new_v4(),
+                tool_name: "bash".to_string(),
+                input: serde_json::json!({ "command": "cargo add serde_json" }),
+                session_id: session_id.to_string(),
+                timestamp: Utc::now(),
+            }),
+        );
+        let ev4 = Event::new(
+            session_id,
+            "cursor",
+            EventPayload::ToolResultReceived(ToolResultReceived {
+                invocation_id: Uuid::new_v4(),
+                tool_name: "bash".to_string(),
+                result: serde_json::json!("    Adding serde_json v1.0 to dependencies"),
+                is_error: false,
+                duration_ms: Some(120),
+                timestamp: Utc::now(),
+            }),
+        );
+        let ev5 = Event::new(
+            session_id,
+            "cursor",
+            EventPayload::TaskCompleted(TaskCompleted {
+                task_id: "fix-import".to_string(),
+                success: true,
+                outcome_summary: "Resolved missing serde_json import".to_string(),
+                evaluation: None,
+                timestamp: Utc::now(),
+            }),
+        );
+
+        store.insert_event(&ev1).unwrap();
+        store.insert_event(&ev2).unwrap();
+        store.insert_event(&ev3).unwrap();
+        store.insert_event(&ev4).unwrap();
+        store.insert_event(&ev5).unwrap();
+
+        // Run CLI consolidate command offline
+        let opts = ConsolidateOptions {
+            session: Some(session_id.to_string()),
+            all: false,
+            model: None,
+            provider: None,
+            json: true,
+        };
+
+        let res = run_consolidate(opts, Arc::clone(&store)).await;
+        assert!(res.is_ok(), "CLI run_consolidate must succeed");
+
+        // Verify that semantic facts and procedural skills were mined
+        let facts = store
+            .get_all_semantic_facts(None, Some(FactStatus::Active), 10)
+            .unwrap();
+        assert!(
+            !facts.is_empty(),
+            "Must consolidate architectural decision into semantic fact"
+        );
+
+        let skills = store.get_all_procedural_skills(None, 10).unwrap();
+        assert!(!skills.is_empty(), "Must mine procedural recovery skill");
+        assert!(skills
+            .iter()
+            .any(|s| s.name.contains("Recover_CompilerError")
+                && s.steps
+                    .iter()
+                    .any(|step| step.arguments.to_string().contains("cargo add serde_json"))));
+    }
+
+    #[tokio::test]
+    async fn test_mcp_memory_consolidate_tool() {
+        use crate::mcp::server::McpServer;
+        use chrono::Utc;
+        use strata_core::events::{Event, EventPayload, ObservationReceived};
+        use strata_memory::SqliteMemoryEngine;
+
+        let engine = Arc::new(SqliteMemoryEngine::open_in_memory(None).unwrap());
+        let store = engine.store_arc();
+        let session_id = "test-mcp-consolidate";
+
+        let ev = Event::new(
+            session_id,
+            "claude-code",
+            EventPayload::ObservationReceived(ObservationReceived {
+                session_id: session_id.to_string(),
+                source: "system".to_string(),
+                content: serde_json::json!(
+                    "Protocol decision: All inter-agent comms use Stigmergic leases"
+                ),
+                observation_type: "architecture".to_string(),
+                timestamp: Utc::now(),
+            }),
+        );
+        store.insert_event(&ev).unwrap();
+
+        let server = McpServer::new_with_engine(Arc::clone(&engine));
+
+        // Call memory_consolidate tool
+        let tool_res = server
+            .execute_tool(
+                "memory_consolidate",
+                serde_json::json!({
+                    "session_id": session_id,
+                    "all_sessions": false,
+                    "enrich_with_llm": false
+                }),
+            )
+            .await;
+
+        assert!(
+            tool_res.is_error != Some(true),
+            "MCP memory_consolidate must succeed"
+        );
+        let text = &tool_res.content[0].text;
+        assert!(text.contains("Consolidation complete"));
+        assert!(text.contains("(0 tokens)"));
+    }
+
+    #[tokio::test]
+    async fn test_cli_hook_session_end_automatic_consolidation() {
+        use crate::commands::hook::{handle_hook, HookCommand};
+        use chrono::Utc;
+        use strata_core::events::{Event, EventPayload, ObservationReceived};
+        use strata_core::schemas::FactStatus;
+        use strata_memory::SqliteMemoryEngine;
+
+        let engine = Arc::new(SqliteMemoryEngine::open_in_memory(None).unwrap());
+        let store = engine.store_arc();
+        let session_id = "test-hook-session-end";
+
+        let ev = Event::new(
+            session_id,
+            "cursor",
+            EventPayload::ObservationReceived(ObservationReceived {
+                session_id: session_id.to_string(),
+                source: "user".to_string(),
+                content: serde_json::json!("Decision: Set maximum retry count to 3"),
+                observation_type: "architecture".to_string(),
+                timestamp: Utc::now(),
+            }),
+        );
+        store.insert_event(&ev).unwrap();
+
+        // Run automatic SessionEnd hook
+        let hook_cmd = HookCommand::SessionEnd {
+            session_id: session_id.to_string(),
+        };
+        let hook_res = handle_hook(hook_cmd, Arc::clone(&engine)).await;
+        assert!(hook_res.is_ok(), "Hook execution must succeed");
+
+        // Wait briefly for background tokio task
+        tokio::time::sleep(tokio::time::Duration::from_millis(100)).await;
+
+        let facts = store
+            .get_all_semantic_facts(None, Some(FactStatus::Active), 10)
+            .unwrap();
+        assert!(
+            !facts.is_empty(),
+            "Automatic consolidation must persist semantic fact"
+        );
+    }
 }
