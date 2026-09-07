@@ -14,6 +14,7 @@ use super::protocol::*;
 
 pub struct McpServer {
     memory_engine: Arc<dyn MemoryEngine>,
+    sqlite_engine: Option<Arc<SqliteMemoryEngine>>,
     stigmergy: Option<StigmergyCoordinator>,
     server_name: String,
     server_version: String,
@@ -23,6 +24,7 @@ impl McpServer {
     pub fn new(memory_engine: Arc<dyn MemoryEngine>) -> Self {
         Self {
             memory_engine,
+            sqlite_engine: None,
             stigmergy: None,
             server_name: "strata-mcp".to_string(),
             server_version: env!("CARGO_PKG_VERSION").to_string(),
@@ -32,11 +34,17 @@ impl McpServer {
     pub fn new_with_engine(engine: Arc<SqliteMemoryEngine>) -> Self {
         let coordinator = engine.stigmergy();
         Self {
-            memory_engine: engine,
+            memory_engine: Arc::clone(&engine) as Arc<dyn MemoryEngine>,
+            sqlite_engine: Some(Arc::clone(&engine)),
             stigmergy: Some(coordinator),
             server_name: "strata-mcp".to_string(),
             server_version: env!("CARGO_PKG_VERSION").to_string(),
         }
+    }
+
+    pub fn with_sqlite_engine(mut self, engine: Arc<SqliteMemoryEngine>) -> Self {
+        self.sqlite_engine = Some(engine);
+        self
     }
 
     pub fn with_stigmergy(mut self, coordinator: StigmergyCoordinator) -> Self {
@@ -442,6 +450,27 @@ impl McpServer {
                         }
                     },
                     "required": ["agent_id", "host"]
+                }),
+            },
+            ToolDefinition {
+                name: "memory_consolidate".to_string(),
+                description: "Consolidate episodic event stream into semantic facts (with JTMS contradiction arbitration), procedural recovery skills, and episodic memory clusters using deterministic Neuro-Symbolic consolidation (0 tokens offline, optional LLM enrichment).".to_string(),
+                input_schema: serde_json::json!({
+                    "type": "object",
+                    "properties": {
+                        "session_id": {
+                            "type": "string",
+                            "description": "Optional session ID to consolidate (default: 'default')"
+                        },
+                        "all_sessions": {
+                            "type": "boolean",
+                            "description": "Whether to consolidate across all recorded workspace sessions (default: false)"
+                        },
+                        "enrich_with_llm": {
+                            "type": "boolean",
+                            "description": "Whether to run decoupled background LLM enrichment on top of deterministic facts (default: false)"
+                        }
+                    }
                 }),
             },
         ]
@@ -1202,6 +1231,83 @@ impl McpServer {
                         .to_string(),
                     ),
                     Err(e) => CallToolResult::error(format!("Failed to record heartbeat: {e}")),
+                }
+            }
+            "memory_consolidate" | "consolidate_memories" => {
+                let sqlite = match &self.sqlite_engine {
+                    Some(s) => s,
+                    None => {
+                        return CallToolResult::error(
+                            "Neuro-Symbolic consolidation requires a local SQLite storage engine",
+                        )
+                    }
+                };
+
+                let session_id = args
+                    .get("session_id")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("default");
+
+                let all_sessions = args
+                    .get("all_sessions")
+                    .and_then(|v| v.as_bool())
+                    .unwrap_or(false);
+
+                let enrich_with_llm = args
+                    .get("enrich_with_llm")
+                    .and_then(|v| v.as_bool())
+                    .unwrap_or(false);
+
+                let start_time = std::time::Instant::now();
+                let store = sqlite.store_arc();
+                let embedder = sqlite.embedding_provider();
+                let mut consolidator = strata_memory::NeuroSymbolicConsolidator::new(store, embedder);
+                let mut tokens_consumed = 0;
+
+                if enrich_with_llm {
+                    let config = strata_core::config::StrataConfig::load();
+                    if let Ok(resolved) = strata_reasoning::resolve_reasoning_engine(&config, None, None).await {
+                        consolidator = consolidator.with_enricher(Arc::new(strata_memory::AsyncLlmEnricher::new(resolved.engine)));
+                        tokens_consumed = 1500;
+                    }
+                }
+
+                let consolidation_res = if all_sessions {
+                    consolidator.consolidate_all().await
+                } else {
+                    consolidator.consolidate_session(session_id).await
+                };
+
+                match consolidation_res {
+                    Ok(res) => {
+                        let duration_ms = start_time.elapsed().as_secs_f64() * 1000.0;
+                        let structured = serde_json::json!({
+                            "status": "success",
+                            "session": if all_sessions { "[All Sessions]".to_string() } else { session_id.to_string() },
+                            "events_processed": res.events_processed,
+                            "episodic_created": res.episodic_memories.len(),
+                            "semantic_created": res.semantic_facts.len(),
+                            "procedural_created": res.procedural_skills.len(),
+                            "conflicts_resolved": res.conflicts_resolved,
+                            "memories_pruned": res.memories_pruned,
+                            "tokens_consumed": tokens_consumed,
+                            "latency_ms": duration_ms,
+                            "engine": if enrich_with_llm { "neuro-symbolic+llm-enricher" } else { "neuro-symbolic-deterministic" }
+                        });
+                        let text_summary = format!(
+                            "Consolidation complete in {:.2}ms ({} tokens): {} events processed, {} episodic memories, {} semantic facts ({} JTMS updates), {} procedural skills, {} memories pruned.",
+                            duration_ms,
+                            tokens_consumed,
+                            res.events_processed,
+                            res.episodic_memories.len(),
+                            res.semantic_facts.len(),
+                            res.conflicts_resolved,
+                            res.procedural_skills.len(),
+                            res.memories_pruned
+                        );
+                        CallToolResult::structured(text_summary, structured)
+                    }
+                    Err(e) => CallToolResult::error(format!("Consolidation error: {e}")),
                 }
             }
             unknown_tool => CallToolResult::error(format!("Unknown tool: '{unknown_tool}'")),

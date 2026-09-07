@@ -1,13 +1,24 @@
 use std::collections::hash_map::DefaultHasher;
 use std::hash::{Hash, Hasher};
+use std::sync::Arc;
+use chrono::Utc;
 
 use strata_core::errors::StrataError;
 use strata_core::events::{Event, EventPayload};
+use strata_core::schemas::{EpisodicMemory, SemanticFact, SignalScores};
 use strata_core::state::{
     DigestOutput, FailurePattern, FailureSeverity, MemoryHandle, MemoryRecord, MemoryType, Scope,
 };
 
+use crate::clustering::{SpatialClusterer, VectorPoint};
+use crate::decay::DecayCalculator;
+use crate::embedding::EmbeddingProvider;
+use crate::enricher::{CanonicalTemplateEnricher, MemoryEnricher};
+use crate::jtms::TruthMaintenanceSystem;
+use crate::pipeline::ConsolidationResult;
+use crate::procedural_mining::TrajectoryMiner;
 use crate::store::SqliteStore;
+use crate::subconscious::SubconsciousBuffer;
 
 pub struct Consolidator;
 
@@ -803,4 +814,217 @@ fn fallback_extract_distillation(
     }
 
     out
+}
+
+// ============================================================================
+// Neuro-Symbolic & Deterministic Memory Consolidator
+// ============================================================================
+
+/// Neuro-Symbolic memory consolidation engine that operates 100% deterministically and offline in Rust.
+/// Combines SubconsciousBuffer (RecMem), NREM Pruning & Invalidation (SleepGate/ACT-R/JTMS),
+/// REM Spatial Clustering (Louvain/Medoids), and Trajectory Folding (PrefixSpan).
+pub struct NeuroSymbolicConsolidator {
+    pub store: Arc<SqliteStore>,
+    pub embedder: Arc<dyn EmbeddingProvider>,
+    pub jtms: TruthMaintenanceSystem,
+    pub decay: DecayCalculator,
+    pub subconscious: SubconsciousBuffer,
+    pub clusterer: SpatialClusterer,
+    pub trajectory_miner: TrajectoryMiner,
+    pub enricher: Arc<dyn MemoryEnricher>,
+}
+
+impl NeuroSymbolicConsolidator {
+    pub fn new(store: Arc<SqliteStore>, embedder: Arc<dyn EmbeddingProvider>) -> Self {
+        Self {
+            store,
+            embedder,
+            jtms: TruthMaintenanceSystem::with_default_threshold(),
+            decay: DecayCalculator::with_default_config(),
+            subconscious: SubconsciousBuffer::with_default_config(),
+            clusterer: SpatialClusterer::default(),
+            trajectory_miner: TrajectoryMiner::new(),
+            enricher: Arc::new(CanonicalTemplateEnricher::new()),
+        }
+    }
+
+    pub fn with_enricher(mut self, enricher: Arc<dyn MemoryEnricher>) -> Self {
+        self.enricher = enricher;
+        self
+    }
+
+    /// Consolidate a session completely offline without calling an LLM for structured knowledge formation.
+    pub async fn consolidate_session(
+        &mut self,
+        session_id: &str,
+    ) -> Result<ConsolidationResult, StrataError> {
+        let events = self.store.get_events(session_id, None, None)?;
+        let mut result = ConsolidationResult::default();
+        result.events_processed = events.len();
+        result.session_id = Some(session_id.to_string());
+
+        if events.is_empty() {
+            return Ok(result);
+        }
+
+        // 1. Subconscious Ingestion & Recurrence Gating
+        let mut points_to_cluster = Vec::new();
+        let mut candidate_facts = Vec::new();
+
+        for event in &events {
+            let text = match &event.payload {
+                EventPayload::TaskStarted(t) => format!("TaskStarted: {} - {:?}", t.title, t.description),
+                EventPayload::TaskCompleted(t) => format!("TaskCompleted: {} - {}", t.task_id, t.outcome_summary),
+                EventPayload::ErrorObserved(e) => format!("ErrorObserved {}: {}", e.error_type, e.message),
+                EventPayload::ToolInvoked(inv) => format!("ToolInvoked: {} with input {:?}", inv.tool_name, inv.input),
+                EventPayload::ToolResultReceived(res) => format!("ToolResult: {} (error: {}) {:?}", res.tool_name, res.is_error, res.result),
+                EventPayload::ObservationReceived(obs) => format!("Observation: {} - {}", obs.source, obs.content),
+                EventPayload::SessionEnded(se) => format!("SessionEnded: {:?}", se.final_state),
+                _ => format!("Event: {:?}", event.id),
+            };
+
+            let emb = self.embedder.embed_text(&text).await?;
+            let importance = match &event.payload {
+                EventPayload::ErrorObserved(_) => 0.85,
+                EventPayload::TaskCompleted(t) => if t.success { 0.80 } else { 0.70 },
+                EventPayload::ObservationReceived(obs) => {
+                    let c = obs.content.to_string().to_lowercase();
+                    if c.contains("architecture") || c.contains("database") || c.contains("migrated") || c.contains("protocol") || c.contains("decision") {
+                        0.95 // High-importance bypass
+                    } else {
+                        0.60
+                    }
+                }
+                _ => 0.50,
+            };
+
+            let _gating = self.subconscious.ingest(event.clone(), emb.clone(), importance);
+
+            if let EventPayload::ObservationReceived(obs) = &event.payload {
+                let content_str = obs.content.as_str().unwrap_or_default().trim();
+                if !content_str.is_empty() {
+                    let fact = SemanticFact::new(
+                        content_str,
+                        "architectural_decision",
+                        Scope::Session(session_id.to_string()),
+                    )
+                    .with_importance(importance);
+                    candidate_facts.push((fact, emb.clone()));
+                }
+            }
+
+            points_to_cluster.push(VectorPoint {
+                id: format!("ev-{}", event.id),
+                embedding: emb,
+                payload: text,
+            });
+        }
+
+        // 2. NREM Phase (Poda, Error Deduplication, and JTMS Arbitration)
+        let consolidator = Consolidator::new();
+        for event in &events {
+            match &event.payload {
+                EventPayload::ErrorObserved(err) => {
+                    let _ = consolidator.record_tool_failure(
+                        &self.store,
+                        &err.error_type,
+                        &err.message,
+                        "",
+                        Some(&Scope::Session(session_id.to_string())),
+                    );
+                }
+                EventPayload::ToolResultReceived(res) if res.is_error => {
+                    let _ = consolidator.record_tool_failure(
+                        &self.store,
+                        &res.tool_name,
+                        &format!("{:?}", res.result),
+                        "",
+                        Some(&Scope::Session(session_id.to_string())),
+                    );
+                }
+                _ => {}
+            }
+        }
+
+        for (mut fact, emb) in candidate_facts {
+            let conflicts = self.jtms.resolve_and_upsert(&self.store, &mut fact, &emb)?;
+            result.conflicts_resolved += conflicts.len();
+            self.store.update_semantic_fact_embedding(&fact.id, &emb)?;
+            result.semantic_facts.push(fact);
+        }
+
+        let prune_rep = self.decay.prune_expired(&self.store, None, None)?;
+        result.memories_pruned = prune_rep.memories_pruned + prune_rep.facts_pruned + prune_rep.skills_pruned;
+
+        // 3. REM Phase (Trajectory Folding & Spatial Clustering with Medoids)
+        let recovery_skills = self.trajectory_miner.mine_recovery_trajectories(&events);
+        let task_skills = self.trajectory_miner.mine_successful_task_patterns(&events);
+
+        for skill in recovery_skills.into_iter().chain(task_skills.into_iter()) {
+            let skill_text = format!("{} {}", skill.name, skill.description);
+            if let Ok(skill_emb) = self.embedder.embed_text(&skill_text).await {
+                self.store.insert_or_update_procedural_skill(&skill)?;
+                let _ = self.store.update_procedural_skill_embedding(&skill.id, &skill_emb);
+            } else {
+                self.store.insert_or_update_procedural_skill(&skill)?;
+            }
+            result.procedural_skills.push(skill);
+        }
+
+        if !points_to_cluster.is_empty() {
+            let clusters = self.clusterer.cluster(points_to_cluster);
+            for cluster in clusters {
+                let medoid_point = &cluster.points[cluster.medoid_index];
+                let raw_summary = &medoid_point.payload;
+                let title = format!("Session {} Cluster {}", session_id, cluster.cluster_id);
+                let enriched_summary = self
+                    .enricher
+                    .enrich_summary(
+                        &title,
+                        raw_summary,
+                        &serde_json::json!({
+                            "cluster_size": cluster.points.len(),
+                            "medoid_id": cluster.medoid_id,
+                        }),
+                    )
+                    .await;
+
+                let time_start = events.first().map(|e| e.timestamp).unwrap_or_else(Utc::now);
+                let time_end = events.last().map(|e| e.timestamp).unwrap_or_else(Utc::now);
+                let actor = events
+                    .first()
+                    .map(|e| e.agent_id.clone())
+                    .unwrap_or_else(|| "agent".to_string());
+
+                let ep = EpisodicMemory::new(session_id, &actor, &enriched_summary, time_start, time_end)
+                    .with_signals(SignalScores {
+                        success: 1.0,
+                        frustration: 0.0,
+                        novelty: 0.70,
+                        importance: 0.75,
+                    });
+                self.store.insert_episodic_memory(&ep)?;
+                result.episodic_memories.push(ep);
+            }
+        }
+
+        Ok(result)
+    }
+
+    pub async fn consolidate_all(&mut self) -> Result<ConsolidationResult, StrataError> {
+        let session_ids = self.store.get_session_ids()?;
+        let mut total = ConsolidationResult::default();
+
+        for sid in session_ids {
+            let res = self.consolidate_session(&sid).await?;
+            total.episodic_memories.extend(res.episodic_memories);
+            total.semantic_facts.extend(res.semantic_facts);
+            total.procedural_skills.extend(res.procedural_skills);
+            total.conflicts_resolved += res.conflicts_resolved;
+            total.memories_pruned += res.memories_pruned;
+            total.events_processed += res.events_processed;
+        }
+
+        Ok(total)
+    }
 }

@@ -5,7 +5,7 @@ use strata_core::{
     state::{FailurePattern, FailureSeverity, Scope},
     traits::MemoryEngine,
 };
-use strata_memory::{ConsolidationPipeline, SqliteMemoryEngine};
+use strata_memory::{NeuroSymbolicConsolidator, SqliteMemoryEngine};
 use strata_tools::{AntiPatternParser, CommandInterceptor};
 use tracing::{debug, error, info};
 
@@ -249,30 +249,26 @@ pub async fn handle_hook(command: HookCommand, engine: Arc<SqliteMemoryEngine>) 
 
         HookCommand::SessionEnd { session_id } => {
             info!(
-                "Running session-end background consolidation and sync for session '{session_id}'"
+                "Running session-end background neuro-symbolic consolidation and sync for session '{session_id}'"
             );
             let store = engine.store_arc();
             let embedder = engine.embedding_provider();
-            let pipeline = ConsolidationPipeline::with_default_config();
             let sid = session_id.clone();
 
             tokio::spawn(async move {
-                let config = strata_core::config::StrataConfig::load();
-                let reasoning = strata_reasoning::resolve_reasoning_engine(&config, None, None)
-                    .await
-                    .map(|r| r.engine)
-                    .unwrap_or_else(|_| {
-                        std::sync::Arc::new(strata_reasoning::MockReasoningEngine::new())
-                    });
-
-                if let Ok(events) = store.get_events(&sid, None, None) {
-                    if let Err(e) = pipeline
-                        .run_pipeline(&store, embedder.as_ref(), &events, Some(reasoning.as_ref()))
-                        .await
-                    {
-                        error!("Async consolidation failed for session '{sid}': {e}");
-                    } else {
-                        info!("Async consolidation completed successfully for session '{sid}'");
+                let mut consolidator = NeuroSymbolicConsolidator::new(store.clone(), embedder);
+                match consolidator.consolidate_session(&sid).await {
+                    Ok(res) => {
+                        info!(
+                            "Async neuro-symbolic consolidation completed for '{sid}': {} events, {} facts, {} skills, {} episodes",
+                            res.events_processed,
+                            res.semantic_facts.len(),
+                            res.procedural_skills.len(),
+                            res.episodic_memories.len()
+                        );
+                    }
+                    Err(e) => {
+                        error!("Async neuro-symbolic consolidation failed for session '{sid}': {e}");
                     }
                 }
 
