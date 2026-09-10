@@ -348,4 +348,22 @@ mod tests {
 
         let _ = std::fs::remove_dir_all(&temp_dir);
     }
+
+    #[test]
+    fn test_dag_to_task_records_conversion() {
+        let decomposer = GoalDecomposer::new();
+        let dag = decomposer.decompose("Implement Auth System and Integration Tests").unwrap();
+
+        let tasks = dag.to_task_records("plan-auth-1");
+        assert!(!tasks.is_empty());
+
+        // Root or wave 0 tasks should be pending, subsequent tasks should be blocked
+        let root_tasks: Vec<_> = tasks.iter().filter(|t| t.dependencies.is_empty()).collect();
+        assert!(!root_tasks.is_empty());
+        assert_eq!(root_tasks[0].status, strata_core::blackboard::TaskStatus::Pending);
+
+        let dep_tasks: Vec<_> = tasks.iter().filter(|t| !t.dependencies.is_empty()).collect();
+        assert!(!dep_tasks.is_empty());
+        assert_eq!(dep_tasks[0].status, strata_core::blackboard::TaskStatus::Blocked);
+    }
 }

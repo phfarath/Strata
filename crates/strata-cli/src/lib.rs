@@ -1,8 +1,10 @@
+pub mod agent_env;
 pub mod commands;
 pub mod config;
 pub mod mcp;
 pub mod tui;
 
+pub use agent_env::*;
 pub use commands::*;
 pub use config::*;
 pub use mcp::*;
@@ -872,5 +874,141 @@ pub fn process_data(msg: &str) {
             !facts.is_empty(),
             "Automatic consolidation must persist semantic fact"
         );
+    }
+
+    #[tokio::test]
+    async fn test_multi_agent_blackboard_cli_workflow() {
+        use crate::commands::task::{run_task, TaskAction, TaskArgs};
+        use crate::commands::a2a::{run_a2a, A2aAction, A2aArgs};
+        use crate::commands::plan::{run_plan, PlanArgs};
+        use strata_memory::SqliteMemoryEngine;
+
+        let engine = Arc::new(SqliteMemoryEngine::open_in_memory(None).unwrap());
+        let coordinator = engine.stigmergy();
+
+        // 1. Create a persistent plan with --persist
+        let plan_args = PlanArgs {
+            goal: Some("Build user authentication and write tests".to_string()),
+            execute: false,
+            concurrency: 2,
+            no_recover: false,
+            persist: true,
+            json: true,
+        };
+        let plan_res = run_plan(plan_args, Some(coordinator.clone())).await;
+        assert!(plan_res.is_ok());
+
+        // 2. List tasks
+        let list_args = TaskArgs {
+            action: TaskAction::List {
+                plan: None,
+                status: None,
+                agent: None,
+                limit: 20,
+                json: true,
+            },
+        };
+        assert!(run_task(list_args, coordinator.clone()).await.is_ok());
+
+        // 3. Agent 1 (claude) claims next task
+        let claim_args1 = TaskArgs {
+            action: TaskAction::Claim {
+                task: None,
+                next: true,
+                agent: Some("agent-claude".to_string()),
+                ttl: 60,
+                json: true,
+            },
+        };
+        assert!(run_task(claim_args1, coordinator.clone()).await.is_ok());
+
+        // Verify task is claimed by claude
+        let filter_claude = strata_core::blackboard::TaskFilter {
+            assigned_agent: Some("agent-claude".to_string()),
+            ..Default::default()
+        };
+        let claude_tasks = coordinator.list_tasks(&filter_claude).unwrap();
+        assert_eq!(claude_tasks.len(), 1);
+        let claimed_id = claude_tasks[0].task_id.clone();
+
+        // 4. Claude updates progress
+        let prog_args = TaskArgs {
+            action: TaskAction::Progress {
+                task: Some(claimed_id.clone()),
+                message: "Writing authentication models".to_string(),
+                agent: Some("agent-claude".to_string()),
+                json: true,
+            },
+        };
+        assert!(run_task(prog_args, coordinator.clone()).await.is_ok());
+
+        // 5. Claude sends A2A message to agent-cursor
+        let send_args = A2aArgs {
+            action: Some(A2aAction::Send {
+                to: "agent-cursor".to_string(),
+                content: "Auth model finished, please review when ready".to_string(),
+                task: Some(claimed_id.clone()),
+                agent: Some("agent-claude".to_string()),
+                kind: "handoff".to_string(),
+                json: true,
+            }),
+            ttl: 60,
+            json: true,
+        };
+        assert!(run_a2a(send_args, coordinator.clone()).await.is_ok());
+
+        // 6. Cursor inspects inbox
+        let inbox_args = A2aArgs {
+            action: Some(A2aAction::Inbox {
+                agent: Some("agent-cursor".to_string()),
+                unread: true,
+                mark_read: true,
+                json: true,
+            }),
+            ttl: 60,
+            json: true,
+        };
+        assert!(run_a2a(inbox_args, coordinator.clone()).await.is_ok());
+
+        // 7. Claude completes task with artifact
+        let comp_args = TaskArgs {
+            action: TaskAction::Complete {
+                task: Some(claimed_id.clone()),
+                summary: Some("Auth models and middleware implemented".to_string()),
+                artifact: None,
+                artifact_content: Some("User struct, JwtValidator, TokenPair".to_string()),
+                agent: Some("agent-claude".to_string()),
+                json: true,
+            },
+        };
+        assert!(run_task(comp_args, coordinator.clone()).await.is_ok());
+
+        // 8. Inspect task
+        let inspect_args = TaskArgs {
+            action: TaskAction::Inspect {
+                task: claimed_id.clone(),
+                json: true,
+            },
+        };
+        assert!(run_task(inspect_args, coordinator.clone()).await.is_ok());
+
+        // 9. Agent Cursor now claims next unblocked task
+        let claim_args2 = TaskArgs {
+            action: TaskAction::Claim {
+                task: None,
+                next: true,
+                agent: Some("agent-cursor".to_string()),
+                ttl: 60,
+                json: true,
+            },
+        };
+        assert!(run_task(claim_args2, coordinator.clone()).await.is_ok());
+
+        let filter_cursor = strata_core::blackboard::TaskFilter {
+            assigned_agent: Some("agent-cursor".to_string()),
+            ..Default::default()
+        };
+        let cursor_tasks = coordinator.list_tasks(&filter_cursor).unwrap();
+        assert!(!cursor_tasks.is_empty(), "Cursor must successfully claim next unblocked task");
     }
 }

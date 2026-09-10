@@ -15,7 +15,8 @@ use strata_core::schemas::{
     SyncDelta,
 };
 
-use strata_core::a2a::{AgentPresence, LeaseAcquireResult, ResourceLease};
+use strata_core::a2a::{A2aMessage, AgentPresence, LeaseAcquireResult, ResourceLease};
+use strata_core::blackboard::{TaskArtifact, TaskFilter, TaskRecord, TaskStatus};
 use strata_core::state::{
     FailurePattern, FailureSeverity, MemoryRecord, MemoryTier, MemoryType, Scope,
 };
@@ -583,6 +584,54 @@ impl SqliteStore {
 
             CREATE INDEX IF NOT EXISTS idx_resource_leases_expires ON resource_leases(lease_expires_at);
             CREATE INDEX IF NOT EXISTS idx_resource_leases_agent ON resource_leases(agent_id);
+
+            -- Multi-Agent Blackboard Tasks Table
+            CREATE TABLE IF NOT EXISTS tasks (
+                task_id TEXT PRIMARY KEY,
+                plan_id TEXT,
+                parent_id TEXT,
+                title TEXT NOT NULL,
+                description TEXT,
+                status TEXT NOT NULL,
+                assigned_agent TEXT,
+                required_resources_json TEXT NOT NULL DEFAULT '[]',
+                dependencies_json TEXT NOT NULL DEFAULT '[]',
+                outputs_json TEXT,
+                created_at INTEGER NOT NULL,
+                updated_at INTEGER NOT NULL
+            );
+
+            CREATE INDEX IF NOT EXISTS idx_tasks_plan ON tasks(plan_id);
+            CREATE INDEX IF NOT EXISTS idx_tasks_status ON tasks(status);
+            CREATE INDEX IF NOT EXISTS idx_tasks_agent ON tasks(assigned_agent);
+
+            -- Task Artifacts Table for Cross-Agent Handoff
+            CREATE TABLE IF NOT EXISTS task_artifacts (
+                artifact_id TEXT PRIMARY KEY,
+                task_id TEXT NOT NULL,
+                agent_id TEXT NOT NULL,
+                kind TEXT NOT NULL,
+                payload TEXT NOT NULL,
+                created_at INTEGER NOT NULL
+            );
+
+            CREATE INDEX IF NOT EXISTS idx_task_artifacts_task ON task_artifacts(task_id);
+
+            -- A2A Local Mailbox Messages Table
+            CREATE TABLE IF NOT EXISTS a2a_messages (
+                message_id TEXT PRIMARY KEY,
+                from_agent TEXT NOT NULL,
+                to_agent TEXT,
+                task_id TEXT,
+                kind TEXT NOT NULL DEFAULT 'direct',
+                content TEXT NOT NULL,
+                read_at INTEGER,
+                created_at INTEGER NOT NULL
+            );
+
+            CREATE INDEX IF NOT EXISTS idx_a2a_messages_to ON a2a_messages(to_agent);
+            CREATE INDEX IF NOT EXISTS idx_a2a_messages_task ON a2a_messages(task_id);
+            CREATE INDEX IF NOT EXISTS idx_a2a_messages_read ON a2a_messages(read_at);
             ",
         )
         .map_err(|e| StrataError::Database(format!("Failed to execute schema migration: {e}")))?;
@@ -4373,6 +4422,671 @@ impl SqliteStore {
 
         Ok(rows)
     }
+
+    // =========================================================================
+    // Multi-Agent Blackboard & Task Coordination
+    // =========================================================================
+
+    /// Inserts a new task into the blackboard.
+    pub fn create_task(&self, task: &TaskRecord) -> Result<(), StrataError> {
+        let conn = self
+            .conn
+            .lock()
+            .map_err(|_| StrataError::Database("Lock poisoned on SQLite connection".to_string()))?;
+
+        let req_res = serde_json::to_string(&task.required_resources).unwrap_or_else(|_| "[]".to_string());
+        let deps = serde_json::to_string(&task.dependencies).unwrap_or_else(|_| "[]".to_string());
+        let outputs = task.outputs.as_ref().map(|o| serde_json::to_string(o).unwrap_or_default());
+
+        conn.execute(
+            "INSERT INTO tasks (
+                task_id, plan_id, parent_id, title, description, status,
+                assigned_agent, required_resources_json, dependencies_json,
+                outputs_json, created_at, updated_at
+            ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12)
+            ON CONFLICT(task_id) DO UPDATE SET
+                plan_id = excluded.plan_id,
+                parent_id = excluded.parent_id,
+                title = excluded.title,
+                description = excluded.description,
+                status = excluded.status,
+                assigned_agent = excluded.assigned_agent,
+                required_resources_json = excluded.required_resources_json,
+                dependencies_json = excluded.dependencies_json,
+                outputs_json = excluded.outputs_json,
+                updated_at = excluded.updated_at",
+            params![
+                task.task_id,
+                task.plan_id,
+                task.parent_id,
+                task.title,
+                task.description,
+                task.status.as_str(),
+                task.assigned_agent,
+                req_res,
+                deps,
+                outputs,
+                task.created_at,
+                task.updated_at,
+            ],
+        )
+        .map_err(|e| StrataError::Database(format!("Failed to create task: {e}")))?;
+
+        Ok(())
+    }
+
+    /// Inserts a batch of tasks into the blackboard in a single transaction.
+    pub fn create_tasks_batch(&self, tasks: &[TaskRecord]) -> Result<(), StrataError> {
+        let mut conn = self
+            .conn
+            .lock()
+            .map_err(|_| StrataError::Database("Lock poisoned on SQLite connection".to_string()))?;
+
+        let tx = conn
+            .transaction()
+            .map_err(|e| StrataError::Database(format!("Failed to start transaction: {e}")))?;
+
+        for task in tasks {
+            let req_res = serde_json::to_string(&task.required_resources).unwrap_or_else(|_| "[]".to_string());
+            let deps = serde_json::to_string(&task.dependencies).unwrap_or_else(|_| "[]".to_string());
+            let outputs = task.outputs.as_ref().map(|o| serde_json::to_string(o).unwrap_or_default());
+
+            tx.execute(
+                "INSERT INTO tasks (
+                    task_id, plan_id, parent_id, title, description, status,
+                    assigned_agent, required_resources_json, dependencies_json,
+                    outputs_json, created_at, updated_at
+                ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12)
+                ON CONFLICT(task_id) DO UPDATE SET
+                    plan_id = excluded.plan_id,
+                    parent_id = excluded.parent_id,
+                    title = excluded.title,
+                    description = excluded.description,
+                    status = excluded.status,
+                    assigned_agent = excluded.assigned_agent,
+                    required_resources_json = excluded.required_resources_json,
+                    dependencies_json = excluded.dependencies_json,
+                    outputs_json = excluded.outputs_json,
+                    updated_at = excluded.updated_at",
+                params![
+                    task.task_id,
+                    task.plan_id,
+                    task.parent_id,
+                    task.title,
+                    task.description,
+                    task.status.as_str(),
+                    task.assigned_agent,
+                    req_res,
+                    deps,
+                    outputs,
+                    task.created_at,
+                    task.updated_at,
+                ],
+            )
+            .map_err(|e| StrataError::Database(format!("Failed to insert batch task: {e}")))?;
+        }
+
+        tx.commit()
+            .map_err(|e| StrataError::Database(format!("Failed to commit batch tasks: {e}")))?;
+
+        Ok(())
+    }
+
+    /// Fetches a task by its unique ID.
+    pub fn get_task(&self, task_id: &str) -> Result<Option<TaskRecord>, StrataError> {
+        let conn = self
+            .conn
+            .lock()
+            .map_err(|_| StrataError::Database("Lock poisoned on SQLite connection".to_string()))?;
+
+        let mut stmt = conn
+            .prepare(
+                "SELECT task_id, plan_id, parent_id, title, description, status,
+                        assigned_agent, required_resources_json, dependencies_json,
+                        outputs_json, created_at, updated_at
+                 FROM tasks WHERE task_id = ?1",
+            )
+            .map_err(|e| StrataError::Database(e.to_string()))?;
+
+        let task = stmt
+            .query_row(params![task_id], |row| Ok(map_task_row(row)?))
+            .optional()
+            .map_err(|e| StrataError::Database(e.to_string()))?;
+
+        Ok(task)
+    }
+
+    /// Lists tasks matching an optional filter.
+    pub fn list_tasks(&self, filter: &TaskFilter) -> Result<Vec<TaskRecord>, StrataError> {
+        let conn = self
+            .conn
+            .lock()
+            .map_err(|_| StrataError::Database("Lock poisoned on SQLite connection".to_string()))?;
+
+        let mut sql = String::from(
+            "SELECT task_id, plan_id, parent_id, title, description, status,
+                    assigned_agent, required_resources_json, dependencies_json,
+                    outputs_json, created_at, updated_at
+             FROM tasks WHERE 1=1",
+        );
+
+        let mut param_values: Vec<Box<dyn rusqlite::ToSql>> = Vec::new();
+
+        if let Some(plan_id) = &filter.plan_id {
+            sql.push_str(" AND plan_id = ?");
+            param_values.push(Box::new(plan_id.clone()));
+        }
+
+        if let Some(status) = &filter.status {
+            sql.push_str(" AND status = ?");
+            param_values.push(Box::new(status.as_str().to_string()));
+        }
+
+        if let Some(agent) = &filter.assigned_agent {
+            sql.push_str(" AND assigned_agent = ?");
+            param_values.push(Box::new(agent.clone()));
+        }
+
+        sql.push_str(" ORDER BY created_at ASC");
+
+        if let Some(limit) = filter.limit {
+            sql.push_str(&format!(" LIMIT {limit}"));
+        }
+
+        let mut stmt = conn.prepare(&sql).map_err(|e| StrataError::Database(e.to_string()))?;
+
+        let params_slice: Vec<&dyn rusqlite::ToSql> = param_values.iter().map(|b| b.as_ref()).collect();
+        let rows = stmt
+            .query_map(&params_slice[..], |row| Ok(map_task_row(row)?))
+            .map_err(|e| StrataError::Database(e.to_string()))?;
+
+        let mut list = Vec::new();
+        for r in rows {
+            list.push(r.map_err(|e| StrataError::Database(e.to_string()))?);
+        }
+
+        Ok(list)
+    }
+
+    /// Atomically claims a task (or finds the next unblocked task) and acquires
+    /// exclusive leases for all of its required resources.
+    pub fn claim_task_atomic(
+        &self,
+        task_id_opt: Option<&str>,
+        agent_id: &str,
+        lease_ttl_secs: i64,
+    ) -> Result<Option<TaskRecord>, StrataError> {
+        let conn = self
+            .conn
+            .lock()
+            .map_err(|_| StrataError::Database("Lock poisoned on SQLite connection".to_string()))?;
+
+        let now = Utc::now().timestamp();
+        let lease_expires_at = now + lease_ttl_secs;
+
+        // Fetch completed task IDs in the workspace to evaluate dependencies
+        let mut completed_stmt = conn
+            .prepare("SELECT task_id FROM tasks WHERE status = 'completed'")
+            .map_err(|e| StrataError::Database(e.to_string()))?;
+        let completed_rows = completed_stmt
+            .query_map([], |row| row.get::<_, String>(0))
+            .map_err(|e| StrataError::Database(e.to_string()))?;
+        let completed_ids: Vec<String> = completed_rows.filter_map(|r| r.ok()).collect();
+
+        // Query candidate tasks
+        let candidate_tasks: Vec<TaskRecord> = match task_id_opt {
+            Some(id) => {
+                let mut stmt = conn
+                    .prepare(
+                        "SELECT task_id, plan_id, parent_id, title, description, status,
+                                assigned_agent, required_resources_json, dependencies_json,
+                                outputs_json, created_at, updated_at
+                         FROM tasks WHERE task_id = ?1",
+                    )
+                    .map_err(|e| StrataError::Database(e.to_string()))?;
+                let row_opt = stmt
+                    .query_row(params![id], |row| Ok(map_task_row(row)?))
+                    .optional()
+                    .map_err(|e| StrataError::Database(e.to_string()))?;
+                match row_opt {
+                    Some(t) if t.status != TaskStatus::Completed => vec![t],
+                    _ => vec![],
+                }
+            }
+            None => {
+                let mut stmt = conn
+                    .prepare(
+                        "SELECT task_id, plan_id, parent_id, title, description, status,
+                                assigned_agent, required_resources_json, dependencies_json,
+                                outputs_json, created_at, updated_at
+                         FROM tasks
+                         WHERE status IN ('pending', 'blocked')
+                         ORDER BY created_at ASC",
+                    )
+                    .map_err(|e| StrataError::Database(e.to_string()))?;
+                let rows = stmt
+                    .query_map([], |row| Ok(map_task_row(row)?))
+                    .map_err(|e| StrataError::Database(e.to_string()))?;
+                rows.filter_map(|r| r.ok()).collect()
+            }
+        };
+
+        for candidate in candidate_tasks {
+            // Check 1: Are all prerequisite dependencies completed?
+            if !candidate.dependencies.iter().all(|dep| completed_ids.contains(dep)) {
+                continue;
+            }
+
+            // Check 2: Are all required resources unleased or owned by us?
+            let mut resources_available = true;
+            for res in &candidate.required_resources {
+                let mut lease_stmt = conn
+                    .prepare("SELECT agent_id, lease_expires_at FROM resource_leases WHERE resource_id = ?1")
+                    .map_err(|e| StrataError::Database(e.to_string()))?;
+                let active_lease = lease_stmt
+                    .query_row(params![res], |row| {
+                        Ok((row.get::<_, String>(0)?, row.get::<_, i64>(1)?))
+                    })
+                    .optional()
+                    .map_err(|e| StrataError::Database(e.to_string()))?;
+
+                if let Some((held_by, exp)) = active_lease {
+                    if exp > now && held_by != agent_id {
+                        resources_available = false;
+                        break;
+                    }
+                }
+            }
+
+            if !resources_available {
+                continue;
+            }
+
+            // Lock candidate resources
+            for res in &candidate.required_resources {
+                conn.execute(
+                    "INSERT INTO resource_leases (resource_id, agent_id, lease_expires_at, metadata)
+                     VALUES (?1, ?2, ?3, ?4)
+                     ON CONFLICT(resource_id) DO UPDATE SET
+                         agent_id = excluded.agent_id,
+                         lease_expires_at = excluded.lease_expires_at,
+                         metadata = excluded.metadata",
+                    params![res, agent_id, lease_expires_at, format!("task:{}", candidate.task_id)],
+                )
+                .map_err(|e| StrataError::Database(format!("Failed to acquire resource lease {res}: {e}")))?;
+            }
+
+            // Update task to claimed
+            conn.execute(
+                "UPDATE tasks SET status = 'claimed', assigned_agent = ?1, updated_at = ?2 WHERE task_id = ?3",
+                params![agent_id, now, candidate.task_id],
+            )
+            .map_err(|e| StrataError::Database(format!("Failed to update task to claimed: {e}")))?;
+
+            let mut claimed_task = candidate;
+            claimed_task.status = TaskStatus::Claimed;
+            claimed_task.assigned_agent = Some(agent_id.to_string());
+            claimed_task.updated_at = now;
+
+            return Ok(Some(claimed_task));
+        }
+
+        Ok(None)
+    }
+
+    /// Marks a task as completed, registers optional summary/artifact, releases leases,
+    /// and unblocks downstream tasks whose dependencies are now fully satisfied.
+    pub fn complete_task(
+        &self,
+        task_id: &str,
+        agent_id: &str,
+        summary: Option<&str>,
+        artifact: Option<&TaskArtifact>,
+    ) -> Result<bool, StrataError> {
+        let conn = self
+            .conn
+            .lock()
+            .map_err(|_| StrataError::Database("Lock poisoned on SQLite connection".to_string()))?;
+
+        let now = Utc::now().timestamp();
+
+        // Get task to know required_resources
+        let mut stmt = conn
+            .prepare("SELECT required_resources_json FROM tasks WHERE task_id = ?1")
+            .map_err(|e| StrataError::Database(e.to_string()))?;
+        let res_json_opt: Option<String> = stmt
+            .query_row(params![task_id], |row| row.get(0))
+            .optional()
+            .map_err(|e| StrataError::Database(e.to_string()))?;
+
+        let res_json = match res_json_opt {
+            Some(s) => s,
+            None => return Ok(false),
+        };
+
+        let outputs_val = summary.map(|s| serde_json::json!({ "summary": s, "completed_by": agent_id }));
+        let outputs_str = outputs_val.map(|v| serde_json::to_string(&v).unwrap_or_default());
+
+        conn.execute(
+            "UPDATE tasks SET status = 'completed', outputs_json = COALESCE(?1, outputs_json), updated_at = ?2 WHERE task_id = ?3",
+            params![outputs_str, now, task_id],
+        )
+        .map_err(|e| StrataError::Database(format!("Failed to update task to completed: {e}")))?;
+
+        // If artifact provided, insert into task_artifacts
+        if let Some(art) = artifact {
+            conn.execute(
+                "INSERT INTO task_artifacts (artifact_id, task_id, agent_id, kind, payload, created_at)
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6)
+                 ON CONFLICT(artifact_id) DO UPDATE SET payload = excluded.payload",
+                params![art.artifact_id, art.task_id, art.agent_id, art.kind, art.payload, art.created_at],
+            )
+            .map_err(|e| StrataError::Database(format!("Failed to record task artifact: {e}")))?;
+        }
+
+        // Release required_resources leases
+        let resources: Vec<String> = serde_json::from_str(&res_json).unwrap_or_default();
+        for res in resources {
+            let _ = conn.execute(
+                "DELETE FROM resource_leases WHERE resource_id = ?1 AND agent_id = ?2",
+                params![res, agent_id],
+            );
+        }
+
+        // Auto-unblock downstream blocked tasks
+        let mut completed_stmt = conn
+            .prepare("SELECT task_id FROM tasks WHERE status = 'completed'")
+            .map_err(|e| StrataError::Database(e.to_string()))?;
+        let completed_rows = completed_stmt
+            .query_map([], |row| row.get::<_, String>(0))
+            .map_err(|e| StrataError::Database(e.to_string()))?;
+        let completed_ids: Vec<String> = completed_rows.filter_map(|r| r.ok()).collect();
+
+        let mut blocked_stmt = conn
+            .prepare("SELECT task_id, dependencies_json FROM tasks WHERE status = 'blocked'")
+            .map_err(|e| StrataError::Database(e.to_string()))?;
+        let blocked_tasks: Vec<(String, String)> = blocked_stmt
+            .query_map([], |row| Ok((row.get(0)?, row.get(1)?)))
+            .map_err(|e| StrataError::Database(e.to_string()))?
+            .filter_map(|r| r.ok())
+            .collect();
+
+        for (b_id, b_deps_str) in blocked_tasks {
+            let deps: Vec<String> = serde_json::from_str(&b_deps_str).unwrap_or_default();
+            if deps.iter().all(|d| completed_ids.contains(d)) {
+                let _ = conn.execute(
+                    "UPDATE tasks SET status = 'pending', updated_at = ?1 WHERE task_id = ?2",
+                    params![now, b_id],
+                );
+            }
+        }
+
+        Ok(true)
+    }
+
+    /// Marks a task as failed and releases its resource leases.
+    pub fn fail_task(
+        &self,
+        task_id: &str,
+        agent_id: &str,
+        error_message: &str,
+    ) -> Result<bool, StrataError> {
+        let conn = self
+            .conn
+            .lock()
+            .map_err(|_| StrataError::Database("Lock poisoned on SQLite connection".to_string()))?;
+
+        let now = Utc::now().timestamp();
+        let err_json = serde_json::to_string(&serde_json::json!({
+            "error": error_message,
+            "failed_by": agent_id
+        }))
+        .unwrap_or_default();
+
+        let rows = conn
+            .execute(
+                "UPDATE tasks SET status = 'failed', outputs_json = ?1, updated_at = ?2 WHERE task_id = ?3",
+                params![err_json, now, task_id],
+            )
+            .map_err(|e| StrataError::Database(format!("Failed to mark task as failed: {e}")))?;
+
+        // Release leases
+        let _ = conn.execute(
+            "DELETE FROM resource_leases WHERE agent_id = ?1 AND metadata LIKE ?2",
+            params![agent_id, format!("task:{task_id}%")],
+        );
+
+        Ok(rows > 0)
+    }
+
+    /// Updates ongoing task progress or heartbeat.
+    pub fn update_task_progress(
+        &self,
+        task_id: &str,
+        agent_id: &str,
+        message: &str,
+    ) -> Result<bool, StrataError> {
+        let conn = self
+            .conn
+            .lock()
+            .map_err(|_| StrataError::Database("Lock poisoned on SQLite connection".to_string()))?;
+
+        let now = Utc::now().timestamp();
+        let progress_json = serde_json::to_string(&serde_json::json!({
+            "last_progress": message,
+            "agent_id": agent_id,
+            "updated_at": now
+        }))
+        .unwrap_or_default();
+
+        let rows = conn
+            .execute(
+                "UPDATE tasks SET status = 'running', outputs_json = ?1, updated_at = ?2 WHERE task_id = ?3 AND (assigned_agent = ?4 OR assigned_agent IS NULL)",
+                params![progress_json, now, task_id, agent_id],
+            )
+            .map_err(|e| StrataError::Database(format!("Failed to update task progress: {e}")))?;
+
+        Ok(rows > 0)
+    }
+
+    /// Stores a task artifact.
+    pub fn save_task_artifact(&self, artifact: &TaskArtifact) -> Result<(), StrataError> {
+        let conn = self
+            .conn
+            .lock()
+            .map_err(|_| StrataError::Database("Lock poisoned on SQLite connection".to_string()))?;
+
+        conn.execute(
+            "INSERT INTO task_artifacts (artifact_id, task_id, agent_id, kind, payload, created_at)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6)
+             ON CONFLICT(artifact_id) DO UPDATE SET payload = excluded.payload",
+            params![
+                artifact.artifact_id,
+                artifact.task_id,
+                artifact.agent_id,
+                artifact.kind,
+                artifact.payload,
+                artifact.created_at
+            ],
+        )
+        .map_err(|e| StrataError::Database(format!("Failed to save task artifact: {e}")))?;
+
+        Ok(())
+    }
+
+    /// Fetches all artifacts associated with a task.
+    pub fn get_task_artifacts(&self, task_id: &str) -> Result<Vec<TaskArtifact>, StrataError> {
+        let conn = self
+            .conn
+            .lock()
+            .map_err(|_| StrataError::Database("Lock poisoned on SQLite connection".to_string()))?;
+
+        let mut stmt = conn
+            .prepare(
+                "SELECT artifact_id, task_id, agent_id, kind, payload, created_at
+                 FROM task_artifacts
+                 WHERE task_id = ?1
+                 ORDER BY created_at ASC",
+            )
+            .map_err(|e| StrataError::Database(e.to_string()))?;
+
+        let rows = stmt
+            .query_map(params![task_id], |row| {
+                Ok(TaskArtifact {
+                    artifact_id: row.get(0)?,
+                    task_id: row.get(1)?,
+                    agent_id: row.get(2)?,
+                    kind: row.get(3)?,
+                    payload: row.get(4)?,
+                    created_at: row.get(5)?,
+                })
+            })
+            .map_err(|e| StrataError::Database(e.to_string()))?;
+
+        let mut list = Vec::new();
+        for r in rows {
+            list.push(r.map_err(|e| StrataError::Database(e.to_string()))?);
+        }
+
+        Ok(list)
+    }
+
+    // =========================================================================
+    // A2A Local Mailbox Messaging
+    // =========================================================================
+
+    /// Persists an A2A message into the mailbox.
+    pub fn save_a2a_message(&self, msg: &A2aMessage) -> Result<(), StrataError> {
+        let conn = self
+            .conn
+            .lock()
+            .map_err(|_| StrataError::Database("Lock poisoned on SQLite connection".to_string()))?;
+
+        conn.execute(
+            "INSERT INTO a2a_messages (
+                message_id, from_agent, to_agent, task_id, kind, content, read_at, created_at
+            ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)",
+            params![
+                msg.message_id,
+                msg.from_agent,
+                msg.to_agent,
+                msg.task_id,
+                msg.kind,
+                msg.content,
+                msg.read_at,
+                msg.created_at
+            ],
+        )
+        .map_err(|e| StrataError::Database(format!("Failed to save A2A message: {e}")))?;
+
+        Ok(())
+    }
+
+    /// Fetches inbox messages for an agent (including broadcasts).
+    pub fn get_a2a_inbox(&self, agent_id: &str, unread_only: bool) -> Result<Vec<A2aMessage>, StrataError> {
+        let conn = self
+            .conn
+            .lock()
+            .map_err(|_| StrataError::Database("Lock poisoned on SQLite connection".to_string()))?;
+
+        let sql = if unread_only {
+            "SELECT message_id, from_agent, to_agent, task_id, kind, content, read_at, created_at
+             FROM a2a_messages
+             WHERE (to_agent = ?1 OR to_agent IS NULL) AND read_at IS NULL
+             ORDER BY created_at ASC"
+        } else {
+            "SELECT message_id, from_agent, to_agent, task_id, kind, content, read_at, created_at
+             FROM a2a_messages
+             WHERE (to_agent = ?1 OR to_agent IS NULL)
+             ORDER BY created_at ASC"
+        };
+
+        let mut stmt = conn.prepare(sql).map_err(|e| StrataError::Database(e.to_string()))?;
+
+        let rows = stmt
+            .query_map(params![agent_id], |row| {
+                Ok(A2aMessage {
+                    message_id: row.get(0)?,
+                    from_agent: row.get(1)?,
+                    to_agent: row.get(2)?,
+                    task_id: row.get(3)?,
+                    kind: row.get(4)?,
+                    content: row.get(5)?,
+                    read_at: row.get(6)?,
+                    created_at: row.get(7)?,
+                })
+            })
+            .map_err(|e| StrataError::Database(e.to_string()))?;
+
+        let mut list = Vec::new();
+        for r in rows {
+            list.push(r.map_err(|e| StrataError::Database(e.to_string()))?);
+        }
+
+        Ok(list)
+    }
+
+    /// Marks a list of messages as read by message IDs.
+    pub fn mark_a2a_read(&self, message_ids: &[String]) -> Result<usize, StrataError> {
+        if message_ids.is_empty() {
+            return Ok(0);
+        }
+
+        let conn = self
+            .conn
+            .lock()
+            .map_err(|_| StrataError::Database("Lock poisoned on SQLite connection".to_string()))?;
+
+        let now = Utc::now().timestamp();
+        let mut count = 0;
+
+        for id in message_ids {
+            let rows = conn
+                .execute(
+                    "UPDATE a2a_messages SET read_at = ?1 WHERE message_id = ?2 AND read_at IS NULL",
+                    params![now, id],
+                )
+                .map_err(|e| StrataError::Database(format!("Failed to mark message {id} as read: {e}")))?;
+            count += rows;
+        }
+
+        Ok(count)
+    }
+}
+
+fn map_task_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<TaskRecord> {
+    let task_id: String = row.get(0)?;
+    let plan_id: Option<String> = row.get(1)?;
+    let parent_id: Option<String> = row.get(2)?;
+    let title: String = row.get(3)?;
+    let description: Option<String> = row.get(4)?;
+    let status_str: String = row.get(5)?;
+    let assigned_agent: Option<String> = row.get(6)?;
+    let req_res_str: String = row.get(7)?;
+    let deps_str: String = row.get(8)?;
+    let outputs_str: Option<String> = row.get(9)?;
+    let created_at: i64 = row.get(10)?;
+    let updated_at: i64 = row.get(11)?;
+
+    let status = status_str.parse::<TaskStatus>().unwrap_or(TaskStatus::Pending);
+    let required_resources: Vec<String> = serde_json::from_str(&req_res_str).unwrap_or_default();
+    let dependencies: Vec<String> = serde_json::from_str(&deps_str).unwrap_or_default();
+    let outputs: Option<serde_json::Value> = outputs_str.and_then(|s| serde_json::from_str(&s).ok());
+
+    Ok(TaskRecord {
+        task_id,
+        plan_id,
+        parent_id,
+        title,
+        description,
+        status,
+        assigned_agent,
+        required_resources,
+        dependencies,
+        outputs,
+        created_at,
+        updated_at,
+    })
 }
 
 /// Helper to sanitize and prepare a query for SQLite FTS5 MATCH expressions.

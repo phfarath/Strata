@@ -501,6 +501,41 @@ impl IpcClient {
     pub fn endpoint(&self) -> &str {
         &self.endpoint
     }
+
+    /// Awaits the first event matching `filter_fn` or times out after `timeout`.
+    ///
+    /// Provides a synchronous blocking wait primitive with zero CPU polling overhead.
+    pub async fn wait_for_event<F>(&self, filter_fn: F, timeout: Duration) -> Result<Option<IpcEvent>, StrataError>
+    where
+        F: Fn(&IpcEvent) -> bool,
+    {
+        let mut sub = self.subscribe();
+        let timeout_fut = tokio::time::sleep(timeout);
+        tokio::pin!(timeout_fut);
+
+        loop {
+            tokio::select! {
+                _ = &mut timeout_fut => {
+                    return Ok(None);
+                }
+                recv_res = sub.recv() => {
+                    match recv_res {
+                        Ok(event) => {
+                            if filter_fn(&event) {
+                                return Ok(Some(event));
+                            }
+                        }
+                        Err(broadcast::error::RecvError::Lagged(_)) => {
+                            // Continue listening
+                        }
+                        Err(broadcast::error::RecvError::Closed) => {
+                            return Err(StrataError::Internal("IPC event channel closed".to_string()));
+                        }
+                    }
+                }
+            }
+        }
+    }
 }
 
 fn spawn_client_worker<R, W>(

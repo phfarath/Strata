@@ -1,4 +1,5 @@
 pub mod a2a;
+pub mod blackboard;
 pub mod config;
 pub mod errors;
 pub mod events;
@@ -7,7 +8,8 @@ pub mod state;
 pub mod traits;
 
 // Re-exports for convenience
-pub use a2a::{AgentPresence, LeaseAcquireResult, ResourceLease};
+pub use a2a::{A2aMessage, AgentPresence, LeaseAcquireResult, ResourceLease};
+pub use blackboard::{TaskArtifact, TaskFilter, TaskRecord, TaskStatus};
 pub use config::StrataConfig;
 pub use errors::StrataError;
 pub use events::{

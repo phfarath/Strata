@@ -1,7 +1,12 @@
 use anyhow::Result;
 use clap::{Args, Subcommand};
-use strata_core::a2a::{AgentPresence, LeaseAcquireResult, ResourceLease};
+use std::time::Duration;
+use uuid::Uuid;
+
+use strata_core::a2a::{A2aMessage, AgentPresence, IpcEvent, LeaseAcquireResult, ResourceLease};
 use strata_memory::StigmergyCoordinator;
+
+use crate::agent_env::{is_json_mode, resolve_agent_id, resolve_task_id};
 
 #[derive(Args, Debug)]
 pub struct A2aArgs {
@@ -83,6 +88,75 @@ pub enum A2aAction {
     /// Listen to real-time events on the local A2A IPC event bus
     Listen {
         #[arg(long, help = "Output raw JSON lines")]
+        json: bool,
+    },
+
+    /// Send a direct message to another agent
+    Send {
+        #[arg(help = "Destination agent identifier")]
+        to: String,
+
+        #[arg(help = "Message payload")]
+        content: String,
+
+        #[arg(long, help = "Task ID this message relates to")]
+        task: Option<String>,
+
+        #[arg(long, help = "Sender agent identifier")]
+        agent: Option<String>,
+
+        #[arg(long, default_value = "direct", help = "Message kind (direct, handoff, question, blocker)")]
+        kind: String,
+
+        #[arg(long)]
+        json: bool,
+    },
+
+    /// Broadcast a message to all agents in the workspace
+    Broadcast {
+        #[arg(help = "Message payload")]
+        content: String,
+
+        #[arg(long, help = "Task ID this message relates to")]
+        task: Option<String>,
+
+        #[arg(long, help = "Sender agent identifier")]
+        agent: Option<String>,
+
+        #[arg(long, default_value = "broadcast", help = "Message kind")]
+        kind: String,
+
+        #[arg(long)]
+        json: bool,
+    },
+
+    /// Query inbox messages for an agent
+    Inbox {
+        #[arg(long, help = "Agent identifier (defaults to STRATA_AGENT_ID)")]
+        agent: Option<String>,
+
+        #[arg(long, help = "Show only unread messages")]
+        unread: bool,
+
+        #[arg(long, help = "Automatically mark fetched messages as read")]
+        mark_read: bool,
+
+        #[arg(long)]
+        json: bool,
+    },
+
+    /// Synchronously wait for a matching event on the local IPC bus (zero polling)
+    Wait {
+        #[arg(long, help = "Filter by task ID")]
+        task: Option<String>,
+
+        #[arg(long, help = "Filter by sender agent ID")]
+        from: Option<String>,
+
+        #[arg(long, default_value_t = 30, help = "Timeout in seconds before exiting (default: 30s)")]
+        timeout: u64,
+
+        #[arg(long)]
         json: bool,
     },
 }
@@ -340,6 +414,18 @@ pub async fn run_a2a(args: A2aArgs, coordinator: StigmergyCoordinator) -> Result
                                         strata_core::a2a::IpcEvent::MemoryPromoted { memory_id, tier, to_global, .. } => {
                                             println!("⭐ [MEMORY PROMOTED] id='{}' tier='{}' global={}", memory_id, tier, to_global);
                                         }
+                                        strata_core::a2a::IpcEvent::DirectMessage { from_agent, to_agent, task_id, content, .. } => {
+                                            let task_str = task_id.as_deref().unwrap_or("-");
+                                            println!("💬 [DIRECT MSG] from='{}' to='{}' task='{}': {}", from_agent, to_agent, task_str, content);
+                                        }
+                                        strata_core::a2a::IpcEvent::TaskBroadcast { from_agent, task_id, kind, content, .. } => {
+                                            let task_str = task_id.as_deref().unwrap_or("-");
+                                            println!("📢 [BROADCAST] from='{}' task='{}' kind='{}': {}", from_agent, task_str, kind, content);
+                                        }
+                                        strata_core::a2a::IpcEvent::TaskStateChanged { task_id, old_status, new_status, agent_id, .. } => {
+                                            let agent_str = agent_id.as_deref().unwrap_or("-");
+                                            println!("📋 [TASK STATE] id='{}' status: {} -> {} (by {})", task_id, old_status, new_status, agent_str);
+                                        }
                                     }
                                 }
                             }
@@ -351,6 +437,215 @@ pub async fn run_a2a(args: A2aArgs, coordinator: StigmergyCoordinator) -> Result
                                 break;
                             }
                         }
+                    }
+                }
+            }
+        }
+
+        Some(A2aAction::Send {
+            to,
+            content,
+            task,
+            agent,
+            kind,
+            json,
+        }) => {
+            let json_mode = is_json_mode(json);
+            let from_agent = resolve_agent_id(agent.as_deref());
+            let task_id = resolve_task_id(task.as_deref());
+            let message_id = format!("msg-{}", &Uuid::new_v4().simple().to_string()[..12]);
+
+            let mut msg = A2aMessage::direct(&message_id, &from_agent, &to, &content).with_kind(kind);
+            if let Some(t) = &task_id {
+                msg = msg.with_task_id(t);
+            }
+
+            coordinator.save_a2a_message(&msg)?;
+
+            // Broadcast over IPC bus
+            let cwd = std::env::current_dir().unwrap_or_else(|_| std::path::PathBuf::from("."));
+            let (endpoint, _) = strata_memory::endpoint_for_workspace(&cwd);
+            if let Ok(ipc) = strata_memory::IpcClient::connect(&endpoint).await {
+                let _ = ipc
+                    .publish(IpcEvent::DirectMessage {
+                        message_id: message_id.clone(),
+                        from_agent: from_agent.clone(),
+                        to_agent: to.clone(),
+                        task_id: task_id.clone(),
+                        content: content.clone(),
+                        timestamp_us: chrono::Utc::now().timestamp_micros(),
+                    })
+                    .await;
+            }
+
+            if json_mode {
+                println!("{}", serde_json::to_string_pretty(&msg)?);
+            } else {
+                println!("✓ Message '{}' sent to '{}' by '{}'.", message_id, to, from_agent);
+            }
+        }
+
+        Some(A2aAction::Broadcast {
+            content,
+            task,
+            agent,
+            kind,
+            json,
+        }) => {
+            let json_mode = is_json_mode(json);
+            let from_agent = resolve_agent_id(agent.as_deref());
+            let task_id = resolve_task_id(task.as_deref());
+            let message_id = format!("msg-{}", &Uuid::new_v4().simple().to_string()[..12]);
+
+            let mut msg = A2aMessage::broadcast(&message_id, &from_agent, &content).with_kind(kind.clone());
+            if let Some(t) = &task_id {
+                msg = msg.with_task_id(t);
+            }
+
+            coordinator.save_a2a_message(&msg)?;
+
+            // Broadcast over IPC bus
+            let cwd = std::env::current_dir().unwrap_or_else(|_| std::path::PathBuf::from("."));
+            let (endpoint, _) = strata_memory::endpoint_for_workspace(&cwd);
+            if let Ok(ipc) = strata_memory::IpcClient::connect(&endpoint).await {
+                let _ = ipc
+                    .publish(IpcEvent::TaskBroadcast {
+                        message_id: message_id.clone(),
+                        from_agent: from_agent.clone(),
+                        task_id: task_id.clone(),
+                        kind,
+                        content: content.clone(),
+                        timestamp_us: chrono::Utc::now().timestamp_micros(),
+                    })
+                    .await;
+            }
+
+            if json_mode {
+                println!("{}", serde_json::to_string_pretty(&msg)?);
+            } else {
+                println!("✓ Broadcast message '{}' dispatched by '{}'.", message_id, from_agent);
+            }
+        }
+
+        Some(A2aAction::Inbox {
+            agent,
+            unread,
+            mark_read,
+            json,
+        }) => {
+            let json_mode = is_json_mode(json);
+            let agent_id = resolve_agent_id(agent.as_deref());
+            let messages = coordinator.get_a2a_inbox(&agent_id, unread)?;
+
+            if mark_read && !messages.is_empty() {
+                let ids: Vec<String> = messages.iter().map(|m| m.message_id.clone()).collect();
+                let _ = coordinator.mark_a2a_read(&ids);
+            }
+
+            if json_mode {
+                println!("{}", serde_json::to_string_pretty(&messages)?);
+            } else {
+                println!("\n📬 [A2A Mailbox Inbox: {}]", agent_id);
+                println!("═════════════════════════════════════════════════════════════");
+                if messages.is_empty() {
+                    println!("  (Inbox is empty)");
+                } else {
+                    for m in &messages {
+                        let read_str = if m.read_at.is_some() { "read" } else { "UNREAD" };
+                        let task_str = m.task_id.as_deref().unwrap_or("-");
+                        println!(
+                            "  • [{:<6}] from={:<14} task={:<12} kind={:<10} content='{}'",
+                            read_str, m.from_agent, task_str, m.kind, m.content
+                        );
+                    }
+                }
+                println!();
+            }
+        }
+
+        Some(A2aAction::Wait {
+            task,
+            from,
+            timeout,
+            json,
+        }) => {
+            let json_mode = is_json_mode(json);
+            let cwd = std::env::current_dir().unwrap_or_else(|_| std::path::PathBuf::from("."));
+            let (client_opt, _server) =
+                strata_memory::IpcBrokerManager::start_or_connect(&cwd).await;
+            let client = match client_opt {
+                Some(c) => c,
+                None => {
+                    anyhow::bail!("Could not connect to A2A IPC bus.");
+                }
+            };
+
+            let filter_task = resolve_task_id(task.as_deref());
+            let filter_from = from;
+
+            let event_opt = client
+                .wait_for_event(
+                    move |event| {
+                        match event {
+                            IpcEvent::DirectMessage { from_agent, task_id, .. } => {
+                                if let Some(expected_from) = &filter_from {
+                                    if from_agent != expected_from {
+                                        return false;
+                                    }
+                                }
+                                if let Some(expected_task) = &filter_task {
+                                    if task_id.as_deref() != Some(expected_task.as_str()) {
+                                        return false;
+                                    }
+                                }
+                                true
+                            }
+                            IpcEvent::TaskBroadcast { from_agent, task_id, .. } => {
+                                if let Some(expected_from) = &filter_from {
+                                    if from_agent != expected_from {
+                                        return false;
+                                    }
+                                }
+                                if let Some(expected_task) = &filter_task {
+                                    if task_id.as_deref() != Some(expected_task.as_str()) {
+                                        return false;
+                                    }
+                                }
+                                true
+                            }
+                            IpcEvent::TaskStateChanged { task_id, agent_id, .. } => {
+                                if let Some(expected_task) = &filter_task {
+                                    if task_id != expected_task {
+                                        return false;
+                                    }
+                                }
+                                if let Some(expected_from) = &filter_from {
+                                    if agent_id.as_deref() != Some(expected_from.as_str()) {
+                                        return false;
+                                    }
+                                }
+                                true
+                            }
+                            _ => false,
+                        }
+                    },
+                    Duration::from_secs(timeout),
+                )
+                .await?;
+
+            match event_opt {
+                Some(event) => {
+                    if json_mode {
+                        println!("{}", serde_json::json!({ "status": "event_received", "event": event }));
+                    } else {
+                        println!("✓ Event received: {:?}", event);
+                    }
+                }
+                None => {
+                    if json_mode {
+                        println!("{}", serde_json::json!({ "status": "timeout", "waited_seconds": timeout }));
+                    } else {
+                        println!("⏱️ Timeout reached ({}s) without matching event.", timeout);
                     }
                 }
             }

@@ -37,6 +37,7 @@ use strata_cli::{
         search::{run_search, SearchOptions},
         sync::{run_sync, SyncArgs},
         sync_hosts::{run_sync_hosts, SyncHostsArgs},
+        task::{run_task, TaskArgs},
         train::{run_train, TrainArgs},
         transfer::{run_transfer, TransferArgs},
         workspace::{run_workspace, WorkspaceArgs},
@@ -325,6 +326,10 @@ enum Commands {
     #[command(name = "a2a", alias = "stigmergy", alias = "leases")]
     A2a(A2aArgs),
 
+    /// Multi-agent shared blackboard task management and work-stealing
+    #[command(name = "task", alias = "tasks", alias = "board", alias = "subtasks")]
+    Task(TaskArgs),
+
     /// Cross-project knowledge transfer: import memories, failure patterns, and procedural skills from another repository
     #[command(name = "transfer", alias = "import-from", alias = "cross-project")]
     Transfer(TransferArgs),
@@ -424,9 +429,11 @@ async fn main() -> Result<()> {
         }
     }
 
-    // Fast-path for Plan (can execute standalone or with scheduler)
-    if let Commands::Plan(args) = cli.command {
-        return run_plan(args).await;
+    // Fast-path for Plan (without --persist, can execute standalone or with scheduler)
+    if let Commands::Plan(ref args) = cli.command {
+        if !args.persist {
+            return run_plan(args.clone(), None).await;
+        }
     }
 
     // Fast-path for Auth, Key & Login commands (communicate over HTTP with Strata Cloud)
@@ -487,7 +494,6 @@ async fn main() -> Result<()> {
 
     match cli.command {
         Commands::Init { .. }
-        | Commands::Plan(_)
         | Commands::Auth(_)
         | Commands::Key(_)
         | Commands::Login(_)
@@ -746,6 +752,16 @@ async fn main() -> Result<()> {
         Commands::A2a(args) => {
             let coordinator = engine.stigmergy();
             run_a2a(args, coordinator).await?;
+        }
+
+        Commands::Task(args) => {
+            let coordinator = engine.stigmergy();
+            run_task(args, coordinator).await?;
+        }
+
+        Commands::Plan(args) => {
+            let coordinator = engine.stigmergy();
+            run_plan(args, Some(coordinator)).await?;
         }
 
         Commands::Config(args) => {

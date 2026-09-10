@@ -125,6 +125,30 @@ pub enum IpcEvent {
         to_global: bool,
         timestamp_us: i64,
     },
+    DirectMessage {
+        message_id: String,
+        from_agent: String,
+        to_agent: String,
+        task_id: Option<String>,
+        content: String,
+        timestamp_us: i64,
+    },
+    TaskBroadcast {
+        message_id: String,
+        from_agent: String,
+        task_id: Option<String>,
+        kind: String,
+        content: String,
+        timestamp_us: i64,
+    },
+    TaskStateChanged {
+        task_id: String,
+        plan_id: Option<String>,
+        old_status: crate::blackboard::TaskStatus,
+        new_status: crate::blackboard::TaskStatus,
+        agent_id: Option<String>,
+        timestamp_us: i64,
+    },
 }
 
 impl IpcEvent {
@@ -135,7 +159,70 @@ impl IpcEvent {
             Self::AntiPatternDiscovered { timestamp_us, .. } => *timestamp_us,
             Self::AgentPresenceChanged { timestamp_us, .. } => *timestamp_us,
             Self::MemoryPromoted { timestamp_us, .. } => *timestamp_us,
+            Self::DirectMessage { timestamp_us, .. } => *timestamp_us,
+            Self::TaskBroadcast { timestamp_us, .. } => *timestamp_us,
+            Self::TaskStateChanged { timestamp_us, .. } => *timestamp_us,
         }
+    }
+}
+
+/// Persistent Agent-to-Agent message stored in SQLite and dispatched via IPC.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct A2aMessage {
+    pub message_id: String,
+    pub from_agent: String,
+    pub to_agent: Option<String>, // None = broadcast to all agents in workspace
+    pub task_id: Option<String>,
+    pub kind: String, // "direct", "broadcast", "blocker", "question", "handoff"
+    pub content: String,
+    pub read_at: Option<i64>,
+    pub created_at: i64,
+}
+
+impl A2aMessage {
+    pub fn direct(
+        message_id: impl Into<String>,
+        from: impl Into<String>,
+        to: impl Into<String>,
+        content: impl Into<String>,
+    ) -> Self {
+        Self {
+            message_id: message_id.into(),
+            from_agent: from.into(),
+            to_agent: Some(to.into()),
+            task_id: None,
+            kind: "direct".to_string(),
+            content: content.into(),
+            read_at: None,
+            created_at: Utc::now().timestamp(),
+        }
+    }
+
+    pub fn broadcast(
+        message_id: impl Into<String>,
+        from: impl Into<String>,
+        content: impl Into<String>,
+    ) -> Self {
+        Self {
+            message_id: message_id.into(),
+            from_agent: from.into(),
+            to_agent: None,
+            task_id: None,
+            kind: "broadcast".to_string(),
+            content: content.into(),
+            read_at: None,
+            created_at: Utc::now().timestamp(),
+        }
+    }
+
+    pub fn with_task_id(mut self, task_id: impl Into<String>) -> Self {
+        self.task_id = Some(task_id.into());
+        self
+    }
+
+    pub fn with_kind(mut self, kind: impl Into<String>) -> Self {
+        self.kind = kind.into();
+        self
     }
 }
 
@@ -227,4 +314,43 @@ mod tests {
         let ping_de: IpcMessage = serde_json::from_str(&ping_json).unwrap();
         assert_eq!(ping, ping_de);
     }
+
+    #[test]
+    fn test_a2a_messaging_events() {
+        let dm = IpcEvent::DirectMessage {
+            message_id: "msg-1".to_string(),
+            from_agent: "claude".to_string(),
+            to_agent: "cursor".to_string(),
+            task_id: Some("task-10".to_string()),
+            content: "Schema created, ready for endpoints".to_string(),
+            timestamp_us: 1700000000000000,
+        };
+        assert_eq!(dm.timestamp_us(), 1700000000000000);
+
+        let json = serde_json::to_string(&dm).unwrap();
+        assert!(json.contains("\"type\":\"direct_message\""));
+        assert!(json.contains("\"from_agent\":\"claude\""));
+
+        let de: IpcEvent = serde_json::from_str(&json).unwrap();
+        assert_eq!(dm, de);
+
+        let task_event = IpcEvent::TaskStateChanged {
+            task_id: "task-10".to_string(),
+            plan_id: Some("plan-1".to_string()),
+            old_status: crate::blackboard::TaskStatus::Running,
+            new_status: crate::blackboard::TaskStatus::Completed,
+            agent_id: Some("claude".to_string()),
+            timestamp_us: 1700000000000001,
+        };
+        let task_json = serde_json::to_string(&task_event).unwrap();
+        assert!(task_json.contains("\"type\":\"task_state_changed\""));
+        assert!(task_json.contains("\"new_status\":\"completed\""));
+
+        let a2a_msg = A2aMessage::direct("m-1", "agent-a", "agent-b", "hello")
+            .with_task_id("task-1")
+            .with_kind("handoff");
+        assert_eq!(a2a_msg.kind, "handoff");
+        assert_eq!(a2a_msg.to_agent.as_deref(), Some("agent-b"));
+    }
 }
+
