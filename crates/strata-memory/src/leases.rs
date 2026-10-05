@@ -141,6 +141,10 @@ impl StigmergyCoordinator {
         self.store.update_task_progress(task_id, agent_id, message)
     }
 
+    pub fn reclaim_stale_tasks(&self, stale_secs: i64) -> Result<Vec<String>, StrataError> {
+        self.store.reclaim_stale_tasks(stale_secs)
+    }
+
     pub fn save_task_artifact(&self, artifact: &TaskArtifact) -> Result<(), StrataError> {
         self.store.save_task_artifact(artifact)
     }
@@ -399,6 +403,49 @@ mod tests {
         let unread = coordinator.get_a2a_inbox("agent-cursor", true).unwrap();
         assert_eq!(unread.len(), 1);
         assert_eq!(unread[0].message_id, "m-2");
+    }
+
+    #[test]
+    fn test_reclaim_stale_tasks_returns_orphans_to_pending() {
+        use strata_core::blackboard::TaskStatus;
+
+        let store = Arc::new(SqliteStore::open_in_memory().expect("in-memory db"));
+        let coordinator = StigmergyCoordinator::new(store);
+        let now = Utc::now().timestamp();
+
+        // Orphan: running for 1000s without any progress heartbeat, holding a lease.
+        let mut orphan = TaskRecord::new("orphan", "Dead agent task")
+            .with_status(TaskStatus::Running)
+            .with_required_resources(vec!["file:src/a.rs".to_string()]);
+        orphan.assigned_agent = Some("agent-dead".to_string());
+        orphan.updated_at = now - 1000;
+        coordinator.create_task(&orphan).unwrap();
+        coordinator
+            .acquire_lease("file:src/a.rs", "agent-dead", 3600, Some("task:orphan"))
+            .unwrap();
+
+        // Healthy: claimed just now.
+        let mut fresh = TaskRecord::new("fresh", "Live agent task").with_status(TaskStatus::Claimed);
+        fresh.assigned_agent = Some("agent-live".to_string());
+        coordinator.create_task(&fresh).unwrap();
+
+        let reclaimed = coordinator.reclaim_stale_tasks(300).unwrap();
+        assert_eq!(reclaimed, vec!["orphan".to_string()]);
+
+        let orphan_after = coordinator.get_task("orphan").unwrap().unwrap();
+        assert_eq!(orphan_after.status, TaskStatus::Pending);
+        assert!(orphan_after.assigned_agent.is_none());
+        assert!(coordinator.get_lease("file:src/a.rs").unwrap().is_none());
+
+        let fresh_after = coordinator.get_task("fresh").unwrap().unwrap();
+        assert_eq!(fresh_after.status, TaskStatus::Claimed);
+
+        // Reclaimed task is claimable again by another agent.
+        let again = coordinator
+            .claim_task_atomic(Some("orphan"), "agent-new", 60)
+            .unwrap()
+            .expect("orphan re-claimable");
+        assert_eq!(again.assigned_agent.as_deref(), Some("agent-new"));
     }
 }
 

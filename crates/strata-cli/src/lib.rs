@@ -1010,5 +1010,115 @@ pub fn process_data(msg: &str) {
         };
         let cursor_tasks = coordinator.list_tasks(&filter_cursor).unwrap();
         assert!(!cursor_tasks.is_empty(), "Cursor must successfully claim next unblocked task");
+
+        // 10. Cursor goes silent: reclaim returns its task to the pool
+        let reclaim_args = TaskArgs {
+            action: TaskAction::Reclaim {
+                stale_after: 0,
+                json: true,
+            },
+        };
+        assert!(run_task(reclaim_args, coordinator.clone()).await.is_ok());
+        let orphan = &coordinator.list_tasks(&filter_cursor).unwrap();
+        assert!(orphan.is_empty(), "Reclaimed task must be unassigned from the silent agent");
+    }
+
+    #[tokio::test]
+    async fn test_mcp_blackboard_tools_end_to_end() {
+        use strata_core::blackboard::{TaskRecord, TaskStatus};
+        use strata_memory::SqliteMemoryEngine;
+
+        let engine = Arc::new(SqliteMemoryEngine::open_in_memory(None).unwrap());
+        let coordinator = engine.stigmergy();
+        let server = McpServer::new_with_engine(Arc::clone(&engine));
+
+        let defs = McpServer::tool_definitions();
+        for name in [
+            "task_list",
+            "task_claim",
+            "task_progress",
+            "task_complete",
+            "task_fail",
+            "task_reclaim",
+            "a2a_send",
+            "a2a_inbox",
+        ] {
+            assert!(defs.iter().any(|t| t.name == name), "missing MCP tool {name}");
+        }
+
+        coordinator.create_task(&TaskRecord::new("t1", "First")).unwrap();
+        coordinator
+            .create_task(
+                &TaskRecord::new("t2", "Second")
+                    .with_status(TaskStatus::Blocked)
+                    .with_dependencies(vec!["t1".to_string()]),
+            )
+            .unwrap();
+
+        async fn call(server: &McpServer, tool: &str, args: serde_json::Value) -> serde_json::Value {
+            let res = server.execute_tool(tool, args).await;
+            assert!(res.is_error != Some(true), "{tool} failed: {}", res.content[0].text);
+            serde_json::from_str(&res.content[0].text).expect("tool output must be JSON")
+        }
+
+        // Work-stealing: a1 gets t1, a2 finds nothing (t2 still blocked)
+        let c1 = call(&server, "task_claim", serde_json::json!({ "agent_id": "a1" })).await;
+        assert_eq!(c1["status"], "claimed");
+        assert_eq!(c1["task"]["task_id"], "t1");
+        let c2 = call(&server, "task_claim", serde_json::json!({ "agent_id": "a2" })).await;
+        assert_eq!(c2["status"], "none_available");
+
+        call(
+            &server,
+            "task_progress",
+            serde_json::json!({ "task_id": "t1", "agent_id": "a1", "message": "halfway" }),
+        )
+        .await;
+        let running = call(&server, "task_list", serde_json::json!({ "status": "running" })).await;
+        assert_eq!(running.as_array().unwrap().len(), 1);
+
+        call(
+            &server,
+            "task_complete",
+            serde_json::json!({
+                "task_id": "t1", "agent_id": "a1",
+                "summary": "done", "artifact_content": "schema.sql"
+            }),
+        )
+        .await;
+        let inspected = call(&server, "task_list", serde_json::json!({ "task_id": "t1" })).await;
+        assert_eq!(inspected["task"]["status"], "completed");
+        assert_eq!(inspected["artifacts"].as_array().unwrap().len(), 1);
+
+        // Downstream unblocked, upstream artifacts handed to the claimer
+        let c3 = call(&server, "task_claim", serde_json::json!({ "agent_id": "a2" })).await;
+        assert_eq!(c3["task"]["task_id"], "t2");
+        assert_eq!(c3["upstream_artifacts"][0]["payload"], "schema.sql");
+
+        call(
+            &server,
+            "task_fail",
+            serde_json::json!({ "task_id": "t2", "agent_id": "a2", "error": "boom" }),
+        )
+        .await;
+        assert_eq!(coordinator.get_task("t2").unwrap().unwrap().status, TaskStatus::Failed);
+
+        // Orphan recovery
+        coordinator.create_task(&TaskRecord::new("t3", "Orphan")).unwrap();
+        call(&server, "task_claim", serde_json::json!({ "task_id": "t3", "agent_id": "a3" })).await;
+        let rec = call(&server, "task_reclaim", serde_json::json!({ "stale_secs": 0 })).await;
+        assert_eq!(rec["reclaimed"], serde_json::json!(["t3"]));
+
+        // A2A mailbox: direct + broadcast reach a2
+        call(&server, "a2a_send", serde_json::json!({ "agent_id": "a1", "to": "a2", "content": "review?" })).await;
+        call(&server, "a2a_send", serde_json::json!({ "agent_id": "a1", "content": "all green" })).await;
+        let inbox = call(&server, "a2a_inbox", serde_json::json!({ "agent_id": "a2", "unread": true })).await;
+        assert_eq!(inbox.as_array().unwrap().len(), 2);
+        let after = call(&server, "a2a_inbox", serde_json::json!({ "agent_id": "a2", "unread": true })).await;
+        assert!(after.as_array().unwrap().is_empty(), "inbox read must mark messages as read");
+
+        // Validation
+        let bad = server.execute_tool("task_complete", serde_json::json!({ "agent_id": "a1" })).await;
+        assert_eq!(bad.is_error, Some(true));
     }
 }

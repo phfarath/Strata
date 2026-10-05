@@ -137,6 +137,15 @@ pub enum TaskAction {
         #[arg(long, help = "Output as raw JSON")]
         json: bool,
     },
+
+    /// Return orphaned tasks (claimed/running, no progress heartbeat) to the pool
+    Reclaim {
+        #[arg(long, default_value_t = 600, help = "Seconds without progress before a task is considered orphaned")]
+        stale_after: i64,
+
+        #[arg(long, help = "Output as raw JSON")]
+        json: bool,
+    },
 }
 
 #[derive(Serialize)]
@@ -509,6 +518,36 @@ pub async fn run_task(args: TaskArgs, coordinator: StigmergyCoordinator) -> Resu
                     println!("  • [{}] {} (by {})", a.kind, a.payload, a.agent_id);
                 }
                 println!();
+            }
+        }
+
+        TaskAction::Reclaim { stale_after, json } => {
+            let json_mode = is_json_mode(json);
+            let reclaimed = coordinator.reclaim_stale_tasks(stale_after)?;
+
+            let cwd = std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
+            let (endpoint, _) = endpoint_for_workspace(&cwd);
+            if let Ok(ipc) = IpcClient::connect(&endpoint).await {
+                for id in &reclaimed {
+                    let _ = ipc
+                        .publish(IpcEvent::TaskStateChanged {
+                            task_id: id.clone(),
+                            plan_id: None,
+                            old_status: TaskStatus::Running,
+                            new_status: TaskStatus::Pending,
+                            agent_id: None,
+                            timestamp_us: chrono::Utc::now().timestamp_micros(),
+                        })
+                        .await;
+                }
+            }
+
+            if json_mode {
+                println!("{}", serde_json::json!({ "reclaimed": reclaimed }));
+            } else if reclaimed.is_empty() {
+                println!("✓ No orphaned tasks (none silent for more than {stale_after}s).");
+            } else {
+                println!("♻ Reclaimed {} orphaned task(s): {}", reclaimed.len(), reclaimed.join(", "));
             }
         }
     }

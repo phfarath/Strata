@@ -28,8 +28,8 @@ Claim ready tasks atomically without race conditions, post progress updates, and
 # Claim next available task whose dependencies are satisfied
 strata task claim --next
 
-# Update progress
-strata task progress <task-id> --note "Wrote unit test"
+# Update progress (also the liveness heartbeat: silent tasks get reclaimed)
+strata task progress <task-id> --message "Wrote unit test"
 
 # Complete task (automatically releases associated leases and unblocks downstream tasks)
 strata task complete <task-id> --summary "Implemented and verified" --artifact src/auth.rs
@@ -39,8 +39,13 @@ strata task fail <task-id> --error "Missing dependency"
 
 # Inspect task status and artifacts
 strata task inspect <task-id>
-strata task list --status ready
+strata task list --status pending
+
+# Return orphaned tasks (agent died, no progress for N seconds) to the pool
+strata task reclaim --stale-after 600
 ```
+
+MCP-only hosts get the same primitives as tools: `task_list` (pass `task_id` to inspect), `task_claim`, `task_progress`, `task_complete`, `task_fail`, `task_reclaim`, `a2a_send` (omit `to` to broadcast) and `a2a_inbox` (marks returned messages as read).
 
 ### 4. Direct Agent-to-Agent (A2A) Messaging & Synchronization
 Communicate directly with peer agents or synchronize on asynchronous events:

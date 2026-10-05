@@ -4889,6 +4889,49 @@ impl SqliteStore {
         Ok(rows > 0)
     }
 
+    /// Returns `claimed`/`running` tasks silent for longer than `stale_secs` to
+    /// `pending` (unassigned) and drops their task-owned leases. `task progress`
+    /// refreshes `updated_at`, so it acts as the liveness heartbeat.
+    pub fn reclaim_stale_tasks(&self, stale_secs: i64) -> Result<Vec<String>, StrataError> {
+        let mut conn = self
+            .conn
+            .lock()
+            .map_err(|_| StrataError::Database("Lock poisoned on SQLite connection".to_string()))?;
+
+        let now = Utc::now().timestamp();
+        let tx = conn
+            .transaction_with_behavior(rusqlite::TransactionBehavior::Immediate)
+            .map_err(|e| StrataError::Database(format!("Failed to start transaction: {e}")))?;
+
+        let ids: Vec<String> = {
+            let mut stmt = tx
+                .prepare("SELECT task_id FROM tasks WHERE status IN ('claimed', 'running') AND updated_at <= ?1")
+                .map_err(|e| StrataError::Database(e.to_string()))?;
+            let rows = stmt
+                .query_map(params![now - stale_secs], |row| row.get::<_, String>(0))
+                .map_err(|e| StrataError::Database(e.to_string()))?;
+            rows.collect::<Result<_, _>>()
+                .map_err(|e| StrataError::Database(e.to_string()))?
+        };
+
+        for id in &ids {
+            tx.execute(
+                "UPDATE tasks SET status = 'pending', assigned_agent = NULL, updated_at = ?1 WHERE task_id = ?2",
+                params![now, id],
+            )
+            .map_err(|e| StrataError::Database(format!("Failed to reclaim task {id}: {e}")))?;
+            tx.execute(
+                "DELETE FROM resource_leases WHERE metadata = ?1",
+                params![format!("task:{id}")],
+            )
+            .map_err(|e| StrataError::Database(format!("Failed to release leases of task {id}: {e}")))?;
+        }
+
+        tx.commit()
+            .map_err(|e| StrataError::Database(format!("Failed to commit reclaim: {e}")))?;
+        Ok(ids)
+    }
+
     /// Stores a task artifact.
     pub fn save_task_artifact(&self, artifact: &TaskArtifact) -> Result<(), StrataError> {
         let conn = self

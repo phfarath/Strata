@@ -76,7 +76,7 @@ impl McpServer {
     }
 
     pub fn tool_definitions() -> Vec<ToolDefinition> {
-        vec![
+        let mut defs = vec![
             ToolDefinition {
                 name: "memory_search".to_string(),
                 description: "Search persistent memory records across sessions using hybrid semantic and lexical search. Returns relevant pointers, summaries, and confidence scores.".to_string(),
@@ -544,7 +544,9 @@ impl McpServer {
                     "required": ["id", "approved_by_human"]
                 }),
             },
-        ]
+        ];
+        defs.extend(super::blackboard::definitions());
+        defs
     }
 
     pub async fn run_stdio(self) -> anyhow::Result<()> {
@@ -1573,6 +1575,16 @@ impl McpServer {
                     }
                     Err(e) => CallToolResult::error(format!("Consolidation error: {e}")),
                 }
+            }
+            name if name.starts_with("task_") || name.starts_with("a2a_") => {
+                let Some(coordinator) = &self.stigmergy else {
+                    return CallToolResult::error(
+                        "Blackboard coordination requires a local SQLite storage engine",
+                    );
+                };
+                super::blackboard::execute(coordinator, self.ipc_client.as_ref(), name, &args)
+                    .await
+                    .unwrap_or_else(|| CallToolResult::error(format!("Unknown tool: '{name}'")))
             }
             unknown_tool => CallToolResult::error(format!("Unknown tool: '{unknown_tool}'")),
         }

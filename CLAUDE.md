@@ -10,9 +10,11 @@
 - Auto-detected or env-provided identity: `STRATA_AGENT_ID`, `STRATA_AGENT_HOST`, `STRATA_TASK_ID`.
 - Plan & Persist: `strata plan "<goal>" --persist` generates and stores a dependency DAG in the blackboard.
 - Claim next task atomically: `strata task claim --next` (returns JSON when piped or `--json`).
-- Progress: `strata task progress <task-id> --note "..."`.
+- Progress (also the liveness heartbeat): `strata task progress <task-id> --message "..."`.
 - Complete: `strata task complete <task-id> --summary "..." --artifact <file>` (releases task leases and unblocks downstream tasks).
+- Orphan recovery: `strata task reclaim --stale-after 600` returns tasks of silent/dead agents to the pool.
 - Messaging: `strata a2a send <agent-id> "..."`, `strata a2a broadcast "..."`, `strata a2a inbox --unread`, `strata a2a wait --timeout 30`.
+- Same primitives as MCP tools: `task_list`, `task_claim`, `task_progress`, `task_complete`, `task_fail`, `task_reclaim`, `a2a_send`, `a2a_inbox`.
 <!-- STRATA_MEMORY_END -->
 
 
