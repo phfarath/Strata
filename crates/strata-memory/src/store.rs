@@ -4549,7 +4549,7 @@ impl SqliteStore {
             .map_err(|e| StrataError::Database(e.to_string()))?;
 
         let task = stmt
-            .query_row(params![task_id], |row| Ok(map_task_row(row)?))
+            .query_row(params![task_id], map_task_row)
             .optional()
             .map_err(|e| StrataError::Database(e.to_string()))?;
 
@@ -4597,7 +4597,7 @@ impl SqliteStore {
 
         let params_slice: Vec<&dyn rusqlite::ToSql> = param_values.iter().map(|b| b.as_ref()).collect();
         let rows = stmt
-            .query_map(&params_slice[..], |row| Ok(map_task_row(row)?))
+            .query_map(&params_slice[..], map_task_row)
             .map_err(|e| StrataError::Database(e.to_string()))?;
 
         let mut list = Vec::new();
@@ -4645,11 +4645,20 @@ impl SqliteStore {
                     )
                     .map_err(|e| StrataError::Database(e.to_string()))?;
                 let row_opt = stmt
-                    .query_row(params![id], |row| Ok(map_task_row(row)?))
+                    .query_row(params![id], map_task_row)
                     .optional()
                     .map_err(|e| StrataError::Database(e.to_string()))?;
                 match row_opt {
-                    Some(t) if t.status != TaskStatus::Completed => vec![t],
+                    Some(t) if t.status != TaskStatus::Completed => {
+                        // Prevent peer agents from stealing an active task; owner renewal is allowed
+                        if (t.status == TaskStatus::Claimed || t.status == TaskStatus::Running)
+                            && t.assigned_agent.as_deref() != Some(agent_id)
+                        {
+                            vec![]
+                        } else {
+                            vec![t]
+                        }
+                    }
                     _ => vec![],
                 }
             }
@@ -4665,7 +4674,7 @@ impl SqliteStore {
                     )
                     .map_err(|e| StrataError::Database(e.to_string()))?;
                 let rows = stmt
-                    .query_map([], |row| Ok(map_task_row(row)?))
+                    .query_map([], map_task_row)
                     .map_err(|e| StrataError::Database(e.to_string()))?;
                 rows.filter_map(|r| r.ok()).collect()
             }

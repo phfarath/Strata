@@ -390,10 +390,8 @@ pub async fn run_task(args: TaskArgs, coordinator: StigmergyCoordinator) -> Resu
                 let content = std::fs::read_to_string(&path)
                     .with_context(|| format!("Failed to read artifact file at {:?}", path))?;
                 Some(("file", content))
-            } else if let Some(content) = artifact_content {
-                Some(("text", content))
             } else {
-                None
+                artifact_content.map(|content| ("text", content))
             };
 
             let task_artifact = art_payload.map(|(kind, payload)| {

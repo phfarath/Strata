@@ -447,5 +447,37 @@ mod tests {
             .expect("orphan re-claimable");
         assert_eq!(again.assigned_agent.as_deref(), Some("agent-new"));
     }
+
+    #[test]
+    fn test_claim_task_atomic_conflict_and_renewal() {
+        use strata_core::blackboard::TaskStatus;
+
+        let store = Arc::new(SqliteStore::open_in_memory().expect("in-memory db"));
+        let coordinator = StigmergyCoordinator::new(store);
+
+        let task = TaskRecord::new("task-active", "Active work");
+        coordinator.create_task(&task).unwrap();
+
+        // Agent 1 claims the task
+        let claimed = coordinator
+            .claim_task_atomic(Some("task-active"), "agent-1", 60)
+            .unwrap()
+            .expect("claimed by agent-1");
+        assert_eq!(claimed.assigned_agent.as_deref(), Some("agent-1"));
+        assert_eq!(claimed.status, TaskStatus::Claimed);
+
+        // Agent 2 attempts to claim the same task by explicit ID -> should fail (None)
+        let conflict = coordinator
+            .claim_task_atomic(Some("task-active"), "agent-2", 60)
+            .unwrap();
+        assert!(conflict.is_none(), "peer agent cannot steal active task");
+
+        // Agent 1 renews/re-claims the same task -> should succeed
+        let renewed = coordinator
+            .claim_task_atomic(Some("task-active"), "agent-1", 120)
+            .unwrap()
+            .expect("renewal by owner succeeds");
+        assert_eq!(renewed.assigned_agent.as_deref(), Some("agent-1"));
+    }
 }
 
