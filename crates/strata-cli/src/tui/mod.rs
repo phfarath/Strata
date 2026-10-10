@@ -17,7 +17,7 @@ use crossterm::{
 use ratatui::{backend::CrosstermBackend, Terminal};
 use strata_memory::SqliteMemoryEngine;
 
-use self::app::App;
+use self::app::{App, AppTab};
 
 /// RAII Guard ensuring terminal raw mode and alternate screen are always cleaned up
 struct TerminalGuard;
@@ -69,6 +69,16 @@ pub async fn run_tui(engine: Arc<SqliteMemoryEngine>, db_path: &Path) -> Result<
                     match key.code {
                         KeyCode::Char('q') | KeyCode::Esc => {
                             app.quit();
+                        }
+                        KeyCode::Left | KeyCode::Char('h') => {
+                            app.prev_tab();
+                        }
+                        KeyCode::Right | KeyCode::Char('l') => {
+                            app.next_tab();
+                        }
+                        KeyCode::Char(c @ '1'..='6') => {
+                            let idx = (c as u8 - b'1') as usize;
+                            app.set_tab(AppTab::from_index(idx));
                         }
                         KeyCode::Tab | KeyCode::Char('j') | KeyCode::Down => {
                             app.next_row();
