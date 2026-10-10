@@ -1,10 +1,20 @@
-﻿<!-- STRATA_MEMORY_START -->
+<!-- STRATA_MEMORY_START -->
 ## Strata Persistent Memory & Concurrency Protocol
 - Contextual memory and known anti-patterns are automatically injected via hooks on session start and prompt submit.
-- Concurrency & Leases: Before modifying any file or crate, acquire an exclusive lease via `lease_acquire(resource_id, ttl_seconds)`. If conflict occurs, yield and select another non-conflicting task. Release via `lease_release(resource_id)` upon completion (mechanical PreTool hooks also block conflicting edits automatically).
+- Concurrency & Leases: Before modifying any file or crate, acquire an exclusive lease via `lease_acquire(resource_id, ttl_seconds)` or `strata lease acquire <resource_id>`. If conflict occurs, yield and select another non-conflicting task. Release via `lease_release(resource_id)` or `strata lease release <resource_id>` upon completion (mechanical PreTool hooks also block conflicting edits automatically).
 - Use the MCP tools (`memory_search`, `memory_get`, `memory_write`, `memory_digest`) when exploring context or persisting verified architectural decisions.
 - Execute build/test commands via `strata hook wrap -- <cmd>` to automatically synthesize failure anti-patterns out-of-band.
 - Record negative patterns immediately upon encountering dead-ends or tool errors.
+
+## Multi-Agent CLI Blackboard & A2A Collaboration
+- Auto-detected or env-provided identity: `STRATA_AGENT_ID`, `STRATA_AGENT_HOST`, `STRATA_TASK_ID`.
+- Plan & Persist: `strata plan "<goal>" --persist` generates and stores a dependency DAG in the blackboard.
+- Claim next task atomically: `strata task claim --next` (returns JSON when piped or `--json`).
+- Progress (also the liveness heartbeat): `strata task progress <task-id> --message "..."`.
+- Complete: `strata task complete <task-id> --summary "..." --artifact <file>` (releases task leases and unblocks downstream tasks).
+- Orphan recovery: `strata task reclaim --stale-after 600` returns tasks of silent/dead agents to the pool.
+- Messaging: `strata a2a send <agent-id> "..."`, `strata a2a broadcast "..."`, `strata a2a inbox --unread`, `strata a2a wait --timeout 30`.
+- Same primitives as MCP tools: `task_list`, `task_claim`, `task_progress`, `task_complete`, `task_fail`, `task_reclaim`, `a2a_send`, `a2a_inbox`.
 <!-- STRATA_MEMORY_END -->
 
 

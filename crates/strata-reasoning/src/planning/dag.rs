@@ -204,6 +204,38 @@ impl GoalDag {
         dependents
     }
 
+    /// Converts this Goal DAG into persistent multi-agent TaskRecords for the blackboard.
+    pub fn to_task_records(&self, plan_id: &str) -> Vec<strata_core::blackboard::TaskRecord> {
+        let mut records = Vec::new();
+        for node in self.all_nodes() {
+            let prereqs = self.get_prerequisites(&node.id);
+            let status = if prereqs.is_empty() {
+                strata_core::blackboard::TaskStatus::Pending
+            } else {
+                strata_core::blackboard::TaskStatus::Blocked
+            };
+
+            let mut resources = Vec::new();
+            if let Some(target) = node.metadata.get("target_resource").and_then(|v| v.as_str()) {
+                resources.push(target.to_string());
+            } else if let Some(action) = &node.action {
+                if action.contains('/') || action.contains('\\') || action.ends_with(".rs") || action.ends_with(".ts") || action.ends_with(".py") {
+                    resources.push(format!("file:{action}"));
+                }
+            }
+
+            let task = strata_core::blackboard::TaskRecord::new(&node.id, &node.title)
+                .with_plan_id(plan_id)
+                .with_description(&node.description)
+                .with_status(status)
+                .with_dependencies(prereqs)
+                .with_required_resources(resources);
+
+            records.push(task);
+        }
+        records
+    }
+
     /// Check if the DAG contains any directed cycles.
     pub fn contains_cycle(&self) -> bool {
         is_cyclic_directed(&self.graph)

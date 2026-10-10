@@ -1,8 +1,10 @@
+pub mod agent_env;
 pub mod commands;
 pub mod config;
 pub mod mcp;
 pub mod tui;
 
+pub use agent_env::*;
 pub use commands::*;
 pub use config::*;
 pub use mcp::*;
@@ -872,5 +874,251 @@ pub fn process_data(msg: &str) {
             !facts.is_empty(),
             "Automatic consolidation must persist semantic fact"
         );
+    }
+
+    #[tokio::test]
+    async fn test_multi_agent_blackboard_cli_workflow() {
+        use crate::commands::task::{run_task, TaskAction, TaskArgs};
+        use crate::commands::a2a::{run_a2a, A2aAction, A2aArgs};
+        use crate::commands::plan::{run_plan, PlanArgs};
+        use strata_memory::SqliteMemoryEngine;
+
+        let engine = Arc::new(SqliteMemoryEngine::open_in_memory(None).unwrap());
+        let coordinator = engine.stigmergy();
+
+        // 1. Create a persistent plan with --persist
+        let plan_args = PlanArgs {
+            goal: Some("Build user authentication and write tests".to_string()),
+            execute: false,
+            concurrency: 2,
+            no_recover: false,
+            persist: true,
+            json: true,
+        };
+        let plan_res = run_plan(plan_args, Some(coordinator.clone())).await;
+        assert!(plan_res.is_ok());
+
+        // 2. List tasks
+        let list_args = TaskArgs {
+            action: TaskAction::List {
+                plan: None,
+                status: None,
+                agent: None,
+                limit: 20,
+                json: true,
+            },
+        };
+        assert!(run_task(list_args, coordinator.clone()).await.is_ok());
+
+        // 3. Agent 1 (claude) claims next task
+        let claim_args1 = TaskArgs {
+            action: TaskAction::Claim {
+                task: None,
+                next: true,
+                agent: Some("agent-claude".to_string()),
+                ttl: 60,
+                json: true,
+            },
+        };
+        assert!(run_task(claim_args1, coordinator.clone()).await.is_ok());
+
+        // Verify task is claimed by claude
+        let filter_claude = strata_core::blackboard::TaskFilter {
+            assigned_agent: Some("agent-claude".to_string()),
+            ..Default::default()
+        };
+        let claude_tasks = coordinator.list_tasks(&filter_claude).unwrap();
+        assert_eq!(claude_tasks.len(), 1);
+        let claimed_id = claude_tasks[0].task_id.clone();
+
+        // 4. Claude updates progress
+        let prog_args = TaskArgs {
+            action: TaskAction::Progress {
+                task: Some(claimed_id.clone()),
+                message: "Writing authentication models".to_string(),
+                agent: Some("agent-claude".to_string()),
+                json: true,
+            },
+        };
+        assert!(run_task(prog_args, coordinator.clone()).await.is_ok());
+
+        // 5. Claude sends A2A message to agent-cursor
+        let send_args = A2aArgs {
+            action: Some(A2aAction::Send {
+                to: "agent-cursor".to_string(),
+                content: "Auth model finished, please review when ready".to_string(),
+                task: Some(claimed_id.clone()),
+                agent: Some("agent-claude".to_string()),
+                kind: "handoff".to_string(),
+                json: true,
+            }),
+            ttl: 60,
+            json: true,
+        };
+        assert!(run_a2a(send_args, coordinator.clone()).await.is_ok());
+
+        // 6. Cursor inspects inbox
+        let inbox_args = A2aArgs {
+            action: Some(A2aAction::Inbox {
+                agent: Some("agent-cursor".to_string()),
+                unread: true,
+                mark_read: true,
+                json: true,
+            }),
+            ttl: 60,
+            json: true,
+        };
+        assert!(run_a2a(inbox_args, coordinator.clone()).await.is_ok());
+
+        // 7. Claude completes task with artifact
+        let comp_args = TaskArgs {
+            action: TaskAction::Complete {
+                task: Some(claimed_id.clone()),
+                summary: Some("Auth models and middleware implemented".to_string()),
+                artifact: None,
+                artifact_content: Some("User struct, JwtValidator, TokenPair".to_string()),
+                agent: Some("agent-claude".to_string()),
+                json: true,
+            },
+        };
+        assert!(run_task(comp_args, coordinator.clone()).await.is_ok());
+
+        // 8. Inspect task
+        let inspect_args = TaskArgs {
+            action: TaskAction::Inspect {
+                task: claimed_id.clone(),
+                json: true,
+            },
+        };
+        assert!(run_task(inspect_args, coordinator.clone()).await.is_ok());
+
+        // 9. Agent Cursor now claims next unblocked task
+        let claim_args2 = TaskArgs {
+            action: TaskAction::Claim {
+                task: None,
+                next: true,
+                agent: Some("agent-cursor".to_string()),
+                ttl: 60,
+                json: true,
+            },
+        };
+        assert!(run_task(claim_args2, coordinator.clone()).await.is_ok());
+
+        let filter_cursor = strata_core::blackboard::TaskFilter {
+            assigned_agent: Some("agent-cursor".to_string()),
+            ..Default::default()
+        };
+        let cursor_tasks = coordinator.list_tasks(&filter_cursor).unwrap();
+        assert!(!cursor_tasks.is_empty(), "Cursor must successfully claim next unblocked task");
+
+        // 10. Cursor goes silent: reclaim returns its task to the pool
+        let reclaim_args = TaskArgs {
+            action: TaskAction::Reclaim {
+                stale_after: 0,
+                json: true,
+            },
+        };
+        assert!(run_task(reclaim_args, coordinator.clone()).await.is_ok());
+        let orphan = &coordinator.list_tasks(&filter_cursor).unwrap();
+        assert!(orphan.is_empty(), "Reclaimed task must be unassigned from the silent agent");
+    }
+
+    #[tokio::test]
+    async fn test_mcp_blackboard_tools_end_to_end() {
+        use strata_core::blackboard::{TaskRecord, TaskStatus};
+        use strata_memory::SqliteMemoryEngine;
+
+        let engine = Arc::new(SqliteMemoryEngine::open_in_memory(None).unwrap());
+        let coordinator = engine.stigmergy();
+        let server = McpServer::new_with_engine(Arc::clone(&engine));
+
+        let defs = McpServer::tool_definitions();
+        for name in [
+            "task_list",
+            "task_claim",
+            "task_progress",
+            "task_complete",
+            "task_fail",
+            "task_reclaim",
+            "a2a_send",
+            "a2a_inbox",
+        ] {
+            assert!(defs.iter().any(|t| t.name == name), "missing MCP tool {name}");
+        }
+
+        coordinator.create_task(&TaskRecord::new("t1", "First")).unwrap();
+        coordinator
+            .create_task(
+                &TaskRecord::new("t2", "Second")
+                    .with_status(TaskStatus::Blocked)
+                    .with_dependencies(vec!["t1".to_string()]),
+            )
+            .unwrap();
+
+        async fn call(server: &McpServer, tool: &str, args: serde_json::Value) -> serde_json::Value {
+            let res = server.execute_tool(tool, args).await;
+            assert!(res.is_error != Some(true), "{tool} failed: {}", res.content[0].text);
+            serde_json::from_str(&res.content[0].text).expect("tool output must be JSON")
+        }
+
+        // Work-stealing: a1 gets t1, a2 finds nothing (t2 still blocked)
+        let c1 = call(&server, "task_claim", serde_json::json!({ "agent_id": "a1" })).await;
+        assert_eq!(c1["status"], "claimed");
+        assert_eq!(c1["task"]["task_id"], "t1");
+        let c2 = call(&server, "task_claim", serde_json::json!({ "agent_id": "a2" })).await;
+        assert_eq!(c2["status"], "none_available");
+
+        call(
+            &server,
+            "task_progress",
+            serde_json::json!({ "task_id": "t1", "agent_id": "a1", "message": "halfway" }),
+        )
+        .await;
+        let running = call(&server, "task_list", serde_json::json!({ "status": "running" })).await;
+        assert_eq!(running.as_array().unwrap().len(), 1);
+
+        call(
+            &server,
+            "task_complete",
+            serde_json::json!({
+                "task_id": "t1", "agent_id": "a1",
+                "summary": "done", "artifact_content": "schema.sql"
+            }),
+        )
+        .await;
+        let inspected = call(&server, "task_list", serde_json::json!({ "task_id": "t1" })).await;
+        assert_eq!(inspected["task"]["status"], "completed");
+        assert_eq!(inspected["artifacts"].as_array().unwrap().len(), 1);
+
+        // Downstream unblocked, upstream artifacts handed to the claimer
+        let c3 = call(&server, "task_claim", serde_json::json!({ "agent_id": "a2" })).await;
+        assert_eq!(c3["task"]["task_id"], "t2");
+        assert_eq!(c3["upstream_artifacts"][0]["payload"], "schema.sql");
+
+        call(
+            &server,
+            "task_fail",
+            serde_json::json!({ "task_id": "t2", "agent_id": "a2", "error": "boom" }),
+        )
+        .await;
+        assert_eq!(coordinator.get_task("t2").unwrap().unwrap().status, TaskStatus::Failed);
+
+        // Orphan recovery
+        coordinator.create_task(&TaskRecord::new("t3", "Orphan")).unwrap();
+        call(&server, "task_claim", serde_json::json!({ "task_id": "t3", "agent_id": "a3" })).await;
+        let rec = call(&server, "task_reclaim", serde_json::json!({ "stale_secs": 0 })).await;
+        assert_eq!(rec["reclaimed"], serde_json::json!(["t3"]));
+
+        // A2A mailbox: direct + broadcast reach a2
+        call(&server, "a2a_send", serde_json::json!({ "agent_id": "a1", "to": "a2", "content": "review?" })).await;
+        call(&server, "a2a_send", serde_json::json!({ "agent_id": "a1", "content": "all green" })).await;
+        let inbox = call(&server, "a2a_inbox", serde_json::json!({ "agent_id": "a2", "unread": true })).await;
+        assert_eq!(inbox.as_array().unwrap().len(), 2);
+        let after = call(&server, "a2a_inbox", serde_json::json!({ "agent_id": "a2", "unread": true })).await;
+        assert!(after.as_array().unwrap().is_empty(), "inbox read must mark messages as read");
+
+        // Validation
+        let bad = server.execute_tool("task_complete", serde_json::json!({ "agent_id": "a1" })).await;
+        assert_eq!(bad.is_error, Some(true));
     }
 }

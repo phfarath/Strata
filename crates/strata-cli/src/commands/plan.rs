@@ -20,18 +20,31 @@ pub struct PlanArgs {
     #[arg(long)]
     pub no_recover: bool,
 
+    /// Persist decomposed tasks to the shared SQLite blackboard for multi-agent execution
+    #[arg(short = 'p', long)]
+    pub persist: bool,
+
     /// Output full plan and execution report in JSON format
     #[arg(long)]
     pub json: bool,
 }
 
-pub async fn run_plan(args: PlanArgs) -> Result<()> {
+pub async fn run_plan(args: PlanArgs, coordinator: Option<strata_memory::StigmergyCoordinator>) -> Result<()> {
     let goal = args
         .goal
         .unwrap_or_else(|| "Refactor memory engine and add Redis sync".to_string());
 
     let decomposer = GoalDecomposer::new();
     let dag = decomposer.decompose(&goal)?;
+
+    let plan_id = format!("plan-{}", &uuid::Uuid::new_v4().simple().to_string()[..10]);
+
+    if args.persist {
+        if let Some(coord) = &coordinator {
+            let records = dag.to_task_records(&plan_id);
+            coord.create_tasks_batch(&records)?;
+        }
+    }
 
     if !args.execute {
         if args.json {
@@ -40,6 +53,8 @@ pub async fn run_plan(args: PlanArgs) -> Result<()> {
                 "{}",
                 serde_json::to_string_pretty(&serde_json::json!({
                     "goal": goal,
+                    "plan_id": if args.persist { Some(&plan_id) } else { None },
+                    "persisted": args.persist,
                     "total_nodes": dag.node_count(),
                     "total_waves": waves.len(),
                     "waves": waves,
@@ -48,6 +63,10 @@ pub async fn run_plan(args: PlanArgs) -> Result<()> {
             );
         } else {
             render_plan_preview(&goal, &dag);
+            if args.persist {
+                println!("💾 Plan persisted to blackboard with PLAN ID: \x1b[1;36m{}\x1b[0m", plan_id);
+                println!("   Agents can claim subtasks using: \x1b[1mstrata task claim --plan {} --next\x1b[0m\n", plan_id);
+            }
         }
         return Ok(());
     }
