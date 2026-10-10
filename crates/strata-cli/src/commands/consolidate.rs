@@ -16,10 +16,51 @@ pub struct ConsolidateOptions {
     pub model: Option<String>,
     pub provider: Option<String>,
     pub json: bool,
+    pub hippocampus: bool,
 }
 
 pub async fn run_consolidate(opts: ConsolidateOptions, store: Arc<SqliteStore>) -> Result<()> {
     let start_time = Instant::now();
+
+    if opts.hippocampus {
+        let sid = if opts.all { None } else { opts.session.as_deref() };
+        let res = store
+            .consolidate_episodes(sid)
+            .context("Failed to run hippocampal consolidation over episodes")?;
+        let duration_ms = start_time.elapsed().as_secs_f64() * 1000.0;
+
+        if opts.json {
+            let json_report = serde_json::json!({
+                "session": opts.session,
+                "episodes_processed": res.episodes_processed,
+                "facts_consolidated": res.facts_consolidated,
+                "promoted_to_core": res.promoted_to_core,
+                "anti_patterns_learned": res.anti_patterns_learned,
+                "contradictions_resolved": res.contradictions_resolved,
+                "latency_ms": duration_ms,
+                "engine": "hippocampal-consolidation",
+            });
+            println!("{}", serde_json::to_string_pretty(&json_report)?);
+        } else {
+            println!("\n🧠 [Strata Hippocampal Memory Consolidation]");
+            println!("══════════════════════════════════════════════════");
+            if let Some(ref s) = opts.session {
+                println!("Target Session:          {s}");
+            } else if opts.all {
+                println!("Target Session:          [All Sessions]");
+            } else {
+                println!("Target Session:          default");
+            }
+            println!("📊 Episodes Processed:   {}", res.episodes_processed);
+            println!("💡 Facts Consolidated:   {}", res.facts_consolidated);
+            println!("🔒 Promoted to Core:     {}", res.promoted_to_core);
+            println!("⚠️ Anti-Patterns Learned:{}", res.anti_patterns_learned);
+            println!("⚖️ Contradictions Fixed: {}", res.contradictions_resolved);
+            println!("⏱️ Latency:               {:.2}ms", duration_ms);
+        }
+        return Ok(());
+    }
+
     let embedder: Arc<dyn strata_memory::EmbeddingProvider> =
         if let Ok(fast) = FastEmbedProvider::try_new() {
             Arc::new(fast)

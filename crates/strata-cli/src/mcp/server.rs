@@ -5,6 +5,7 @@ use uuid::Uuid;
 
 use strata_core::{
     a2a::AgentPresence,
+    schemas::{EpisodeRecord, EpisodeStep},
     state::{MemoryRecord, MemoryType, Scope},
     traits::MemoryEngine,
 };
@@ -542,6 +543,86 @@ impl McpServer {
                         }
                     },
                     "required": ["id", "approved_by_human"]
+                }),
+            },
+            ToolDefinition {
+                name: "episode_record".to_string(),
+                description: "Record a multi-step episodic execution trace with action steps, observations, rewards, salience score, and outcomes for subsequent replay and hippocampal consolidation.".to_string(),
+                input_schema: serde_json::json!({
+                    "type": "object",
+                    "properties": {
+                        "summary": {
+                            "type": "string",
+                            "description": "High-level summary of the episodic execution trace"
+                        },
+                        "session_id": {
+                            "type": "string",
+                            "description": "Session ID (default: 'default')"
+                        },
+                        "agent_id": {
+                            "type": "string",
+                            "description": "Agent ID that executed the steps (default: 'local-agent')"
+                        },
+                        "task_id": {
+                            "type": "string",
+                            "description": "Optional task ID on the blackboard"
+                        },
+                        "salience_score": {
+                            "type": "number",
+                            "description": "Salience score (0.0 to 1.0, default: 0.5)"
+                        },
+                        "outcomes": {
+                            "type": "array",
+                            "items": { "type": "string" },
+                            "description": "List of observed outcomes or assertions"
+                        },
+                        "steps": {
+                            "type": "array",
+                            "items": {
+                                "type": "object",
+                                "properties": {
+                                    "action": { "type": "string" },
+                                    "observation": { "type": "string" },
+                                    "reward": { "type": "number" },
+                                    "error": { "type": "string" }
+                                },
+                                "required": ["action", "observation"]
+                            },
+                            "description": "Sequential steps executed during the episode"
+                        },
+                        "causal_provenance": {
+                            "type": "string",
+                            "description": "Optional causal provenance or environment context"
+                        }
+                    },
+                    "required": ["summary", "steps"]
+                }),
+            },
+            ToolDefinition {
+                name: "episode_replay".to_string(),
+                description: "Replay and evaluate an episodic trace against expectations, computing simulated reward and extracting candidate semantic facts and anti-patterns.".to_string(),
+                input_schema: serde_json::json!({
+                    "type": "object",
+                    "properties": {
+                        "id": {
+                            "type": "string",
+                            "description": "UUID of the episode record to replay"
+                        }
+                    },
+                    "required": ["id"]
+                }),
+            },
+            ToolDefinition {
+                name: "episode_consolidate".to_string(),
+                description: "Run hippocampal consolidation over recorded episodic traces: synthesizes semantic facts, performs JTMS contradiction arbitration, and promotes durable insights to Core or Working memory tiers.".to_string(),
+                input_schema: serde_json::json!({
+                    "type": "object",
+                    "properties": {
+                        "session_id": {
+                            "type": "string",
+                            "description": "Optional session ID to consolidate (omitted = consolidate all pending episodes)"
+                        }
+                    }
                 }),
             },
         ];
@@ -1574,6 +1655,177 @@ impl McpServer {
                         CallToolResult::structured(text_summary, structured)
                     }
                     Err(e) => CallToolResult::error(format!("Consolidation error: {e}")),
+                }
+            }
+            "episode_record" => {
+                let sqlite = match &self.sqlite_engine {
+                    Some(s) => s,
+                    None => {
+                        return CallToolResult::error(
+                            "Episode recording requires a local SQLite storage engine",
+                        )
+                    }
+                };
+
+                let summary = match args.get("summary").and_then(|v| v.as_str()) {
+                    Some(s) => s.to_string(),
+                    None => return CallToolResult::error("Missing required parameter: summary"),
+                };
+
+                let session_id = args
+                    .get("session_id")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("default")
+                    .to_string();
+                let agent_id = args
+                    .get("agent_id")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("local-agent")
+                    .to_string();
+                let task_id = args
+                    .get("task_id")
+                    .and_then(|v| v.as_str())
+                    .map(|s| s.to_string());
+                let salience = args
+                    .get("salience_score")
+                    .and_then(|v| v.as_f64())
+                    .unwrap_or(0.5) as f32;
+                let causal_provenance = args
+                    .get("causal_provenance")
+                    .and_then(|v| v.as_str())
+                    .map(|s| s.to_string());
+
+                let outcomes: Vec<String> = args
+                    .get("outcomes")
+                    .and_then(|v| v.as_array())
+                    .map(|arr| {
+                        arr.iter()
+                            .filter_map(|x| x.as_str().map(|s| s.to_string()))
+                            .collect()
+                    })
+                    .unwrap_or_default();
+
+                let steps: Vec<EpisodeStep> =
+                    if let Some(arr) = args.get("steps").and_then(|v| v.as_array()) {
+                        arr.iter()
+                            .enumerate()
+                            .map(|(idx, item)| {
+                                let action = item
+                                    .get("action")
+                                    .and_then(|v| v.as_str())
+                                    .unwrap_or("action");
+                                let obs = item
+                                    .get("observation")
+                                    .and_then(|v| v.as_str())
+                                    .unwrap_or("");
+                                let mut step = EpisodeStep::new(idx as u32, action)
+                                    .with_output(serde_json::json!({ "observation": obs }));
+                                if let Some(e) = item.get("error").and_then(|v| v.as_str()) {
+                                    step = step.with_error(e);
+                                }
+                                step
+                            })
+                            .collect()
+                    } else {
+                        vec![]
+                    };
+
+                let mut ep = EpisodeRecord::new(session_id, agent_id, summary)
+                    .with_salience(salience)
+                    .with_steps(steps)
+                    .with_outcomes(outcomes);
+                if let Some(tid) = task_id {
+                    ep = ep.with_task_id(tid);
+                }
+                if let Some(prov) = causal_provenance {
+                    ep = ep.with_provenance(prov);
+                }
+
+                match sqlite.store().write_episode(&ep) {
+                    Ok(()) => CallToolResult::structured(
+                        format!(
+                            "Recorded episode trace '{}' (id: {}) with {} steps",
+                            ep.summary,
+                            ep.id,
+                            ep.event_trace.len()
+                        ),
+                        serde_json::to_value(&ep).unwrap_or_default(),
+                    ),
+                    Err(e) => CallToolResult::error(format!("Failed to record episode: {e}")),
+                }
+            }
+            "episode_replay" => {
+                let sqlite = match &self.sqlite_engine {
+                    Some(s) => s,
+                    None => {
+                        return CallToolResult::error(
+                            "Episode replay requires a local SQLite storage engine",
+                        )
+                    }
+                };
+
+                let id_str = match args.get("id").and_then(|v| v.as_str()) {
+                    Some(s) => s,
+                    None => return CallToolResult::error("Missing required parameter: id"),
+                };
+
+                let uuid = match Uuid::parse_str(id_str) {
+                    Ok(u) => u,
+                    Err(e) => return CallToolResult::error(format!("Invalid UUID: {e}")),
+                };
+
+                match sqlite.store().replay_episode(&uuid) {
+                    Ok(Some(replay)) => {
+                        let text = format!(
+                            "Replay for episode {}: {} total steps, {} succeeded, {} failed. Simulated reward: {:.2}. Insights: {}",
+                            replay.episode_id,
+                            replay.total_steps,
+                            replay.successful_steps,
+                            replay.failed_steps,
+                            replay.simulated_reward,
+                            replay.extracted_insights.join("; ")
+                        );
+                        CallToolResult::structured(
+                            text,
+                            serde_json::to_value(&replay).unwrap_or_default(),
+                        )
+                    }
+                    Ok(None) => {
+                        CallToolResult::error(format!("Episode with ID '{id_str}' not found"))
+                    }
+                    Err(e) => CallToolResult::error(format!("Replay error: {e}")),
+                }
+            }
+            "episode_consolidate" => {
+                let sqlite = match &self.sqlite_engine {
+                    Some(s) => s,
+                    None => {
+                        return CallToolResult::error(
+                            "Hippocampal consolidation requires a local SQLite storage engine",
+                        )
+                    }
+                };
+
+                let session_id = args.get("session_id").and_then(|v| v.as_str());
+
+                match sqlite.store().consolidate_episodes(session_id) {
+                    Ok(res) => {
+                        let text = format!(
+                            "Hippocampal consolidation completed: {} episodes processed, {} facts consolidated ({} promoted to Core), {} anti-patterns learned, {} contradictions resolved.",
+                            res.episodes_processed,
+                            res.facts_consolidated,
+                            res.promoted_to_core,
+                            res.anti_patterns_learned,
+                            res.contradictions_resolved
+                        );
+                        CallToolResult::structured(
+                            text,
+                            serde_json::to_value(&res).unwrap_or_default(),
+                        )
+                    }
+                    Err(e) => {
+                        CallToolResult::error(format!("Hippocampal consolidation error: {e}"))
+                    }
                 }
             }
             name if name.starts_with("task_") || name.starts_with("a2a_") => {

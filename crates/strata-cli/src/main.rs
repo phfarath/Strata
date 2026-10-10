@@ -38,6 +38,7 @@ use strata_cli::{
         sync::{run_sync, SyncArgs},
         sync_hosts::{run_sync_hosts, SyncHostsArgs},
         task::{run_task, TaskArgs},
+        episode::{run_episode, EpisodeArgs},
         train::{run_train, TrainArgs},
         transfer::{run_transfer, TransferArgs},
         workspace::{run_workspace, WorkspaceArgs},
@@ -195,6 +196,13 @@ enum Commands {
 
         #[arg(long, help = "Output report as raw JSON")]
         json: bool,
+
+        #[arg(
+            long = "hippocampus",
+            short = 'H',
+            help = "Run hippocampal consolidation over recorded episodic traces"
+        )]
+        hippocampus: bool,
     },
 
     /// Run mathematical ACT-R decay engine to prune expired low-importance memories
@@ -329,6 +337,10 @@ enum Commands {
     /// Multi-agent shared blackboard task management and work-stealing
     #[command(name = "task", alias = "tasks", alias = "board", alias = "subtasks")]
     Task(TaskArgs),
+
+    /// Episodic memory trace recording, replay, and hippocampal consolidation
+    #[command(name = "episode", alias = "episodes", alias = "trace", alias = "replay")]
+    Episode(EpisodeArgs),
 
     /// Cross-project knowledge transfer: import memories, failure patterns, and procedural skills from another repository
     #[command(name = "transfer", alias = "import-from", alias = "cross-project")]
@@ -658,6 +670,7 @@ async fn main() -> Result<()> {
             model,
             provider,
             json,
+            hippocampus,
         } => {
             let store = engine.store_arc();
             run_consolidate(
@@ -667,6 +680,7 @@ async fn main() -> Result<()> {
                     model,
                     provider,
                     json,
+                    hippocampus,
                 },
                 store,
             )
@@ -757,6 +771,11 @@ async fn main() -> Result<()> {
         Commands::Task(args) => {
             let coordinator = engine.stigmergy();
             run_task(args, coordinator).await?;
+        }
+
+        Commands::Episode(args) => {
+            let store = engine.store_arc();
+            run_episode(args, store).await?;
         }
 
         Commands::Plan(args) => {
