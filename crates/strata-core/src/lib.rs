@@ -18,11 +18,12 @@ pub use events::{
     SessionEnded, SessionStarted, TaskCompleted, TaskStarted, ToolInvoked, ToolResultReceived,
 };
 pub use schemas::{
-    CodeAnchor, ContextBudgetConfig, DecayConfig, DecayMetrics, EpisodicMemory, EvidenceRef,
-    ExportFormat, FactDependency, FactStatus, FeedbackEvent, FeedbackRating, HostTargetConfig,
-    ImplicitSignal, JtmsAuditRow, KtoSample, MemoryFeedback, ParameterDef, PreferencePair,
-    ProceduralExample, ProceduralSkill, ProceduralStep, SemanticFact, SftSample, SignalKind,
-    SignalScores, SymbolType, SyncConfig, SyncDelta, SyncReport,
+    CodeAnchor, ContextBudgetConfig, DecayConfig, DecayMetrics, EpisodeRecord, EpisodeReplay,
+    EpisodeStep, EpisodicMemory, EvidenceRef, ExportFormat, FactDependency, FactStatus,
+    FeedbackEvent, FeedbackRating, HippocampalConsolidationResult, HostTargetConfig, ImplicitSignal,
+    JtmsAuditRow, KtoSample, MemoryFeedback, ParameterDef, PreferencePair, ProceduralExample,
+    ProceduralSkill, ProceduralStep, SemanticFact, SftSample, SignalKind, SignalScores, SymbolType,
+    SyncConfig, SyncDelta, SyncReport,
 };
 pub use state::{
     DigestOutput, FailurePattern, FailureSeverity, MemoryHandle, MemoryRecord, MemoryTier,
@@ -315,5 +316,45 @@ mod tests {
 
         assert_eq!(ExportFormat::Dpo.to_string(), "dpo");
         assert_eq!("kto".parse::<ExportFormat>().unwrap(), ExportFormat::Kto);
+    }
+
+    #[test]
+    fn test_episode_record_and_replay_serialization() {
+        let step = EpisodeStep::new(0, "run_tests")
+            .with_tool("cargo_test")
+            .with_input(serde_json::json!({"package": "strata-core"}))
+            .with_output(serde_json::json!({"passed": 5}))
+            .with_error("none");
+
+        let ep = EpisodeRecord::new("sess-100", "agent-claude", "Ran test suite and verified")
+            .with_task_id("task-123")
+            .with_salience(0.85)
+            .with_step(step)
+            .with_outcome("all tests passing")
+            .with_provenance("prompt-v1");
+
+        let json = serde_json::to_string(&ep).expect("serialize episode");
+        let de: EpisodeRecord = serde_json::from_str(&json).expect("deserialize episode");
+        assert_eq!(ep.id, de.id);
+        assert_eq!(ep.session_id, de.session_id);
+        assert_eq!(ep.event_trace.len(), 1);
+        assert_eq!(ep.salience_score, 0.85);
+
+        let replay = EpisodeReplay {
+            episode_id: ep.id,
+            session_id: ep.session_id.clone(),
+            agent_id: ep.agent_id.clone(),
+            total_steps: 1,
+            successful_steps: 1,
+            failed_steps: 0,
+            simulated_reward: 0.9,
+            extracted_insights: vec!["Fast test execution".to_string()],
+            candidate_facts: vec!["All crates compile".to_string()],
+            candidate_anti_patterns: vec![],
+        };
+        let replay_json = serde_json::to_string(&replay).expect("serialize replay");
+        let de_replay: EpisodeReplay = serde_json::from_str(&replay_json).expect("deserialize replay");
+        assert_eq!(replay.episode_id, de_replay.episode_id);
+        assert_eq!(de_replay.simulated_reward, 0.9);
     }
 }

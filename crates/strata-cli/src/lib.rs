@@ -689,6 +689,7 @@ pub fn process_data(msg: &str) {
             model: None,
             provider: None,
             json: true,
+            hippocampus: false,
         };
 
         let res = run_consolidate(opts, Arc::clone(&store)).await;
@@ -1120,5 +1121,122 @@ pub fn process_data(msg: &str) {
         // Validation
         let bad = server.execute_tool("task_complete", serde_json::json!({ "agent_id": "a1" })).await;
         assert_eq!(bad.is_error, Some(true));
+    }
+
+    #[tokio::test]
+    async fn test_mcp_and_cli_episode_tools_and_consolidation() {
+        use crate::commands::episode::{run_episode, EpisodeArgs, EpisodeCommand};
+        use crate::mcp::server::McpServer;
+        use strata_memory::SqliteMemoryEngine;
+
+        let engine = Arc::new(SqliteMemoryEngine::open_in_memory(None).unwrap());
+        let store = engine.store_arc();
+        let server = McpServer::new_with_engine(Arc::clone(&engine));
+
+        // 1. Record an episode via MCP
+        let record_res = server
+            .execute_tool(
+                "episode_record",
+                serde_json::json!({
+                    "summary": "Fix connection timeout in Redis client",
+                    "session_id": "session-redis",
+                    "agent_id": "agent-redis-worker",
+                    "task_id": "task-redis-101",
+                    "salience_score": 0.85,
+                    "outcomes": ["Timeout eliminated", "Throughput doubled"],
+                    "steps": [
+                        {
+                            "action": "Increase socket timeout to 5000ms",
+                            "observation": "Socket connection established reliably"
+                        },
+                        {
+                            "action": "Disable TCP keepalive prematurely",
+                            "observation": "Broken pipe error",
+                            "error": "ConnectionResetByPeer"
+                        }
+                    ],
+                    "causal_provenance": "High latency cloud VPC environment"
+                }),
+            )
+            .await;
+
+        assert!(record_res.is_error != Some(true), "episode_record must succeed");
+        let content_text = &record_res.content[0].text;
+        assert!(content_text.contains("Recorded episode trace"));
+
+        // List episodes from store
+        let episodes = store.list_episodes(Some("session-redis"), None, 10).unwrap();
+        assert_eq!(episodes.len(), 1);
+        let ep = &episodes[0];
+        assert_eq!(ep.salience_score, 0.85);
+        assert_eq!(ep.event_trace.len(), 2);
+        assert!(!ep.consolidated);
+
+        // 2. Replay the episode via MCP
+        let replay_res = server
+            .execute_tool(
+                "episode_replay",
+                serde_json::json!({ "id": ep.id.to_string() }),
+            )
+            .await;
+        assert!(replay_res.is_error != Some(true), "episode_replay must succeed");
+        let replay_text = &replay_res.content[0].text;
+        assert!(replay_text.contains("total steps"));
+
+        // 3. Consolidate via MCP
+        let consolidate_res = server
+            .execute_tool(
+                "episode_consolidate",
+                serde_json::json!({ "session_id": "session-redis" }),
+            )
+            .await;
+        assert!(consolidate_res.is_error != Some(true), "episode_consolidate must succeed");
+        let cons_text = &consolidate_res.content[0].text;
+        assert!(cons_text.contains("Hippocampal consolidation completed"));
+        assert!(cons_text.contains("1 episodes processed"));
+
+        // Verify that facts and anti-patterns are persisted and marked consolidated
+        let updated_episodes = store.list_episodes(Some("session-redis"), None, 10).unwrap();
+        assert!(updated_episodes[0].consolidated);
+
+        let facts = store.get_all_semantic_facts(None, None, 10).unwrap();
+        assert!(!facts.is_empty(), "Must synthesize semantic fact from high-salience episode");
+        assert_eq!(facts[0].tier, strata_core::state::MemoryTier::Core);
+
+        let failures = store.search_failures(None, None, 10).unwrap();
+        assert!(!failures.is_empty(), "Must learn anti-pattern from failed step");
+
+        // 4. Test CLI EpisodeCommand execution
+        let cli_record_args = EpisodeArgs {
+            command: EpisodeCommand::Record {
+                summary: "CLI episode verification".to_string(),
+                session: "cli-session".to_string(),
+                task_id: None,
+                agent: "cli-agent".to_string(),
+                salience: 0.9,
+                outcomes: Some("CLI works cleanly".to_string()),
+                steps_json: None,
+                provenance: None,
+                json: true,
+            },
+        };
+        assert!(run_episode(cli_record_args, Arc::clone(&store)).await.is_ok());
+
+        let cli_list_args = EpisodeArgs {
+            command: EpisodeCommand::List {
+                session: Some("cli-session".to_string()),
+                limit: 10,
+                json: true,
+            },
+        };
+        assert!(run_episode(cli_list_args, Arc::clone(&store)).await.is_ok());
+
+        let cli_cons_args = EpisodeArgs {
+            command: EpisodeCommand::Consolidate {
+                session: Some("cli-session".to_string()),
+                json: true,
+            },
+        };
+        assert!(run_episode(cli_cons_args, Arc::clone(&store)).await.is_ok());
     }
 }

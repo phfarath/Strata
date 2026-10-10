@@ -150,6 +150,157 @@ impl EpisodicMemory {
     }
 }
 
+/// An execution step or tool action within an episodic trace.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct EpisodeStep {
+    pub step_index: u32,
+    pub action: String,
+    pub tool: Option<String>,
+    pub input: Option<serde_json::Value>,
+    pub output: Option<serde_json::Value>,
+    pub error: Option<String>,
+    pub timestamp: i64,
+}
+
+impl EpisodeStep {
+    pub fn new(step_index: u32, action: impl Into<String>) -> Self {
+        Self {
+            step_index,
+            action: action.into(),
+            tool: None,
+            input: None,
+            output: None,
+            error: None,
+            timestamp: Utc::now().timestamp(),
+        }
+    }
+
+    pub fn with_tool(mut self, tool: impl Into<String>) -> Self {
+        self.tool = Some(tool.into());
+        self
+    }
+
+    pub fn with_input(mut self, input: serde_json::Value) -> Self {
+        self.input = Some(input);
+        self
+    }
+
+    pub fn with_output(mut self, output: serde_json::Value) -> Self {
+        self.output = Some(output);
+        self
+    }
+
+    pub fn with_error(mut self, error: impl Into<String>) -> Self {
+        self.error = Some(error.into());
+        self
+    }
+}
+
+/// A structured episodic execution trace capturing agent trajectory, state snapshots, and outcomes.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct EpisodeRecord {
+    pub id: Uuid,
+    pub session_id: String,
+    pub agent_id: String,
+    pub task_id: Option<String>,
+    pub summary: String,
+    pub event_trace: Vec<EpisodeStep>,
+    pub outcomes: Vec<String>,
+    pub salience_score: f32,
+    pub state_snapshot: Option<serde_json::Value>,
+    pub causal_provenance: Option<String>,
+    pub consolidated: bool,
+    pub created_at: i64,
+}
+
+impl EpisodeRecord {
+    pub fn new(
+        session_id: impl Into<String>,
+        agent_id: impl Into<String>,
+        summary: impl Into<String>,
+    ) -> Self {
+        Self {
+            id: Uuid::new_v4(),
+            session_id: session_id.into(),
+            agent_id: agent_id.into(),
+            task_id: None,
+            summary: summary.into(),
+            event_trace: Vec::new(),
+            outcomes: Vec::new(),
+            salience_score: 0.5,
+            state_snapshot: None,
+            causal_provenance: None,
+            consolidated: false,
+            created_at: Utc::now().timestamp(),
+        }
+    }
+
+    pub fn with_task_id(mut self, task_id: impl Into<String>) -> Self {
+        self.task_id = Some(task_id.into());
+        self
+    }
+
+    pub fn with_salience(mut self, score: f32) -> Self {
+        self.salience_score = score.clamp(0.0, 1.0);
+        self
+    }
+
+    pub fn with_step(mut self, step: EpisodeStep) -> Self {
+        self.event_trace.push(step);
+        self
+    }
+
+    pub fn with_steps(mut self, steps: impl IntoIterator<Item = EpisodeStep>) -> Self {
+        self.event_trace.extend(steps);
+        self
+    }
+
+    pub fn with_outcome(mut self, outcome: impl Into<String>) -> Self {
+        self.outcomes.push(outcome.into());
+        self
+    }
+
+    pub fn with_outcomes(mut self, outcomes: impl IntoIterator<Item = String>) -> Self {
+        self.outcomes.extend(outcomes);
+        self
+    }
+
+    pub fn with_snapshot(mut self, snapshot: serde_json::Value) -> Self {
+        self.state_snapshot = Some(snapshot);
+        self
+    }
+
+    pub fn with_provenance(mut self, prov: impl Into<String>) -> Self {
+        self.causal_provenance = Some(prov.into());
+        self
+    }
+}
+
+/// Evaluation and re-simulation of an episodic trajectory based on task salience and reward signals.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct EpisodeReplay {
+    pub episode_id: Uuid,
+    pub session_id: String,
+    pub agent_id: String,
+    pub total_steps: usize,
+    pub successful_steps: usize,
+    pub failed_steps: usize,
+    pub simulated_reward: f32,
+    pub extracted_insights: Vec<String>,
+    pub candidate_facts: Vec<String>,
+    pub candidate_anti_patterns: Vec<String>,
+}
+
+/// Outcome report of hippocampal episodic consolidation into semantic and procedural layers.
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+pub struct HippocampalConsolidationResult {
+    pub episodes_processed: usize,
+    pub facts_consolidated: usize,
+    pub anti_patterns_learned: usize,
+    pub contradictions_resolved: usize,
+    pub promoted_to_core: usize,
+}
+
 /// Truth maintenance status of a semantic fact.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize, Default)]
 #[serde(rename_all = "snake_case")]

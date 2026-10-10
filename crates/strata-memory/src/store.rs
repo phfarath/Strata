@@ -9,10 +9,10 @@ use strata_core::events::{
     DataClassification, Event, EventId, EventPayload, Provenance, RetentionPolicy,
 };
 use strata_core::schemas::{
-    CodeAnchor, EpisodicMemory, EvidenceRef, FactDependency, FactStatus, FeedbackEvent,
-    FeedbackRating, ImplicitSignal, JtmsAuditRow, MemoryFeedback, ParameterDef, PreferencePair,
-    ProceduralExample, ProceduralSkill, ProceduralStep, SemanticFact, SignalKind, SignalScores,
-    SyncDelta,
+    CodeAnchor, EpisodeRecord, EpisodeReplay, EpisodeStep, EpisodicMemory, EvidenceRef,
+    FactDependency, FactStatus, FeedbackEvent, FeedbackRating, HippocampalConsolidationResult,
+    ImplicitSignal, JtmsAuditRow, MemoryFeedback, ParameterDef, PreferencePair, ProceduralExample,
+    ProceduralSkill, ProceduralStep, SemanticFact, SignalKind, SignalScores, SyncDelta,
 };
 
 use strata_core::a2a::{A2aMessage, AgentPresence, LeaseAcquireResult, ResourceLease};
@@ -632,6 +632,26 @@ impl SqliteStore {
             CREATE INDEX IF NOT EXISTS idx_a2a_messages_to ON a2a_messages(to_agent);
             CREATE INDEX IF NOT EXISTS idx_a2a_messages_task ON a2a_messages(task_id);
             CREATE INDEX IF NOT EXISTS idx_a2a_messages_read ON a2a_messages(read_at);
+
+            -- Hippocampal Episodic Traces Table
+            CREATE TABLE IF NOT EXISTS episodes (
+                id TEXT PRIMARY KEY,
+                session_id TEXT NOT NULL,
+                agent_id TEXT NOT NULL,
+                task_id TEXT,
+                summary TEXT NOT NULL,
+                event_trace_json TEXT NOT NULL,
+                outcomes_json TEXT NOT NULL,
+                salience_score REAL NOT NULL,
+                state_snapshot_json TEXT,
+                causal_provenance TEXT,
+                consolidated INTEGER NOT NULL DEFAULT 0,
+                created_at INTEGER NOT NULL
+            );
+
+            CREATE INDEX IF NOT EXISTS idx_episodes_session ON episodes(session_id);
+            CREATE INDEX IF NOT EXISTS idx_episodes_agent ON episodes(agent_id);
+            CREATE INDEX IF NOT EXISTS idx_episodes_consolidated ON episodes(consolidated);
             ",
         )
         .map_err(|e| StrataError::Database(format!("Failed to execute schema migration: {e}")))?;
@@ -5103,6 +5123,378 @@ impl SqliteStore {
         }
 
         Ok(count)
+    }
+
+    // ==========================================
+    // Episodic Memory & Hippocampal Consolidation
+    // ==========================================
+
+    /// Writes an episodic execution trace for hippocampal ingestion.
+    pub fn write_episode(&self, episode: &EpisodeRecord) -> Result<(), StrataError> {
+        let conn = self
+            .conn
+            .lock()
+            .map_err(|_| StrataError::Database("Lock poisoned on SQLite connection".to_string()))?;
+
+        let id_str = episode.id.to_string();
+        let event_trace_json = serde_json::to_string(&episode.event_trace)
+            .map_err(|e| StrataError::Serialization(format!("Failed to serialize event trace: {e}")))?;
+        let outcomes_json = serde_json::to_string(&episode.outcomes)
+            .map_err(|e| StrataError::Serialization(format!("Failed to serialize outcomes: {e}")))?;
+        let snapshot_json = episode
+            .state_snapshot
+            .as_ref()
+            .map(serde_json::to_string)
+            .transpose()
+            .map_err(|e| StrataError::Serialization(format!("Failed to serialize state snapshot: {e}")))?;
+
+        conn.execute(
+            "INSERT INTO episodes (
+                id, session_id, agent_id, task_id, summary, event_trace_json,
+                outcomes_json, salience_score, state_snapshot_json, causal_provenance,
+                consolidated, created_at
+            ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12)
+            ON CONFLICT(id) DO UPDATE SET
+                summary = excluded.summary,
+                event_trace_json = excluded.event_trace_json,
+                outcomes_json = excluded.outcomes_json,
+                salience_score = excluded.salience_score,
+                state_snapshot_json = excluded.state_snapshot_json,
+                causal_provenance = excluded.causal_provenance,
+                consolidated = excluded.consolidated",
+            params![
+                id_str,
+                episode.session_id,
+                episode.agent_id,
+                episode.task_id,
+                episode.summary,
+                event_trace_json,
+                outcomes_json,
+                episode.salience_score,
+                snapshot_json,
+                episode.causal_provenance,
+                if episode.consolidated { 1 } else { 0 },
+                episode.created_at,
+            ],
+        )
+        .map_err(|e| StrataError::Database(format!("Failed to insert episode: {e}")))?;
+
+        Ok(())
+    }
+
+    /// Fetches an episodic trace by ID.
+    pub fn get_episode(&self, id: &Uuid) -> Result<Option<EpisodeRecord>, StrataError> {
+        let conn = self
+            .conn
+            .lock()
+            .map_err(|_| StrataError::Database("Lock poisoned on SQLite connection".to_string()))?;
+
+        let id_str = id.to_string();
+        let mut stmt = conn
+            .prepare(
+                "SELECT id, session_id, agent_id, task_id, summary, event_trace_json,
+                        outcomes_json, salience_score, state_snapshot_json, causal_provenance,
+                        consolidated, created_at
+                 FROM episodes WHERE id = ?1",
+            )
+            .map_err(|e| StrataError::Database(e.to_string()))?;
+
+        let result = stmt
+            .query_row(params![id_str], Self::row_to_episode)
+            .optional()
+            .map_err(|e| StrataError::Database(e.to_string()))?;
+
+        Ok(result)
+    }
+
+    /// Lists episodic execution traces with optional filters.
+    pub fn list_episodes(
+        &self,
+        session_id: Option<&str>,
+        agent_id: Option<&str>,
+        limit: usize,
+    ) -> Result<Vec<EpisodeRecord>, StrataError> {
+        let conn = self
+            .conn
+            .lock()
+            .map_err(|_| StrataError::Database("Lock poisoned on SQLite connection".to_string()))?;
+
+        let mut query = String::from(
+            "SELECT id, session_id, agent_id, task_id, summary, event_trace_json,
+                    outcomes_json, salience_score, state_snapshot_json, causal_provenance,
+                    consolidated, created_at
+             FROM episodes WHERE 1=1",
+        );
+
+        let mut param_values: Vec<Box<dyn rusqlite::ToSql>> = Vec::new();
+
+        if let Some(s) = session_id {
+            query.push_str(" AND session_id = ?");
+            param_values.push(Box::new(s.to_string()));
+        }
+
+        if let Some(a) = agent_id {
+            query.push_str(" AND agent_id = ?");
+            param_values.push(Box::new(a.to_string()));
+        }
+
+        query.push_str(" ORDER BY created_at DESC LIMIT ?");
+        param_values.push(Box::new(limit as i64));
+
+        let mut stmt = conn.prepare(&query).map_err(|e| StrataError::Database(e.to_string()))?;
+        let rusqlite_params: Vec<&dyn rusqlite::ToSql> = param_values.iter().map(|p| p.as_ref()).collect();
+
+        let rows = stmt
+            .query_map(rusqlite_params.as_slice(), Self::row_to_episode)
+            .map_err(|e| StrataError::Database(e.to_string()))?;
+
+        let mut list = Vec::new();
+        for r in rows {
+            list.push(r.map_err(|e| StrataError::Database(e.to_string()))?);
+        }
+
+        Ok(list)
+    }
+
+    fn row_to_episode(row: &rusqlite::Row<'_>) -> rusqlite::Result<EpisodeRecord> {
+        let id_str: String = row.get(0)?;
+        let id = Uuid::parse_str(&id_str).map_err(|e| {
+            rusqlite::Error::FromSqlConversionFailure(
+                0,
+                rusqlite::types::Type::Text,
+                Box::new(e),
+            )
+        })?;
+        let session_id: String = row.get(1)?;
+        let agent_id: String = row.get(2)?;
+        let task_id: Option<String> = row.get(3)?;
+        let summary: String = row.get(4)?;
+        let event_trace_json: String = row.get(5)?;
+        let outcomes_json: String = row.get(6)?;
+        let salience_score: f64 = row.get(7)?;
+        let state_snapshot_json: Option<String> = row.get(8)?;
+        let causal_provenance: Option<String> = row.get(9)?;
+        let consolidated_int: i32 = row.get(10)?;
+        let created_at: i64 = row.get(11)?;
+
+        let event_trace: Vec<EpisodeStep> =
+            serde_json::from_str(&event_trace_json).unwrap_or_default();
+        let outcomes: Vec<String> = serde_json::from_str(&outcomes_json).unwrap_or_default();
+        let state_snapshot = state_snapshot_json.and_then(|s| serde_json::from_str(&s).ok());
+
+        Ok(EpisodeRecord {
+            id,
+            session_id,
+            agent_id,
+            task_id,
+            summary,
+            event_trace,
+            outcomes,
+            salience_score: salience_score as f32,
+            state_snapshot,
+            causal_provenance,
+            consolidated: consolidated_int != 0,
+            created_at,
+        })
+    }
+
+    /// Replays an episodic trajectory, computing simulated reward and extracting candidate insights.
+    pub fn replay_episode(&self, id: &Uuid) -> Result<Option<EpisodeReplay>, StrataError> {
+        let episode = match self.get_episode(id)? {
+            Some(ep) => ep,
+            None => return Ok(None),
+        };
+
+        let total_steps = episode.event_trace.len();
+        let mut successful_steps = 0;
+        let mut failed_steps = 0;
+        let mut candidate_anti_patterns = Vec::new();
+
+        for step in &episode.event_trace {
+            if step.error.is_some() {
+                failed_steps += 1;
+                if let Some(err) = &step.error {
+                    if err != "none" && !err.is_empty() {
+                        candidate_anti_patterns.push(format!("Action '{}' failed: {}", step.action, err));
+                    }
+                }
+            } else {
+                successful_steps += 1;
+            }
+        }
+
+        let base_reward = if total_steps > 0 {
+            (successful_steps as f32) / (total_steps as f32)
+        } else {
+            1.0
+        };
+        let simulated_reward = (base_reward * 0.7 + episode.salience_score * 0.3).clamp(0.0, 1.0);
+
+        let mut candidate_facts = Vec::new();
+        if simulated_reward >= 0.5 {
+            candidate_facts.push(format!("Successful trajectory: {}", episode.summary));
+            for out in &episode.outcomes {
+                candidate_facts.push(format!("Outcome observed: {out}"));
+            }
+        }
+
+        let mut extracted_insights = Vec::new();
+        if let Some(prov) = &episode.causal_provenance {
+            extracted_insights.push(format!("Causal context: {prov}"));
+        }
+        extracted_insights.push(format!("Step success rate: {:.1}%", base_reward * 100.0));
+
+        Ok(Some(EpisodeReplay {
+            episode_id: episode.id,
+            session_id: episode.session_id,
+            agent_id: episode.agent_id,
+            total_steps,
+            successful_steps,
+            failed_steps,
+            simulated_reward,
+            extracted_insights,
+            candidate_facts,
+            candidate_anti_patterns,
+        }))
+    }
+
+    /// Consolidates pending episodic traces into semantic facts and procedural failure patterns
+    /// using Justification-based Truth Maintenance (JTMS) for non-monotonic contradiction arbitration.
+    pub fn consolidate_episodes(&self, session_id: Option<&str>) -> Result<HippocampalConsolidationResult, StrataError> {
+        let episodes = {
+            let conn = self
+                .conn
+                .lock()
+                .map_err(|_| StrataError::Database("Lock poisoned on SQLite connection".to_string()))?;
+
+            let mut query = String::from(
+                "SELECT id, session_id, agent_id, task_id, summary, event_trace_json,
+                        outcomes_json, salience_score, state_snapshot_json, causal_provenance,
+                        consolidated, created_at
+                 FROM episodes WHERE consolidated = 0",
+            );
+            let mut param_values: Vec<Box<dyn rusqlite::ToSql>> = Vec::new();
+            if let Some(sid) = session_id {
+                query.push_str(" AND session_id = ?");
+                param_values.push(Box::new(sid.to_string()));
+            }
+            query.push_str(" ORDER BY created_at ASC");
+
+            let mut stmt = conn.prepare(&query).map_err(|e| StrataError::Database(e.to_string()))?;
+            let rusqlite_params: Vec<&dyn rusqlite::ToSql> = param_values.iter().map(|p| p.as_ref()).collect();
+            let rows = stmt
+                .query_map(rusqlite_params.as_slice(), Self::row_to_episode)
+                .map_err(|e| StrataError::Database(e.to_string()))?;
+
+            let mut list = Vec::new();
+            for r in rows {
+                list.push(r.map_err(|e| StrataError::Database(e.to_string()))?);
+            }
+            list
+        };
+
+        let mut result = HippocampalConsolidationResult::default();
+        if episodes.is_empty() {
+            return Ok(result);
+        }
+
+        for ep in episodes {
+            result.episodes_processed += 1;
+
+            // 1. Synthesize candidate semantic facts from successes
+            if ep.salience_score >= 0.4 {
+                let scope = Scope::Project(ep.session_id.clone());
+                let statement = if ep.outcomes.is_empty() {
+                    ep.summary.clone()
+                } else {
+                    format!("{}: {}", ep.summary, ep.outcomes.join("; "))
+                };
+
+                let mut fact = SemanticFact::new(statement, "hippocampal_consolidation", scope)
+                    .with_importance(ep.salience_score)
+                    .with_confidence(0.9)
+                    .with_evidence(vec![EvidenceRef::new("episode", ep.id.to_string(), ep.salience_score)]);
+
+                if ep.salience_score >= 0.8 {
+                    fact.tier = MemoryTier::Core;
+                    result.promoted_to_core += 1;
+                } else {
+                    fact.tier = MemoryTier::Working;
+                }
+
+                // Check for contradiction against existing facts in the store using JTMS arbitration
+                let existing_facts = self.get_all_semantic_facts(None, Some(FactStatus::Active), 1000)?;
+                let jtms = crate::jtms::TruthMaintenanceSystem::with_default_threshold();
+
+                for existing in &existing_facts {
+                    if existing.id == fact.id || existing.status != FactStatus::Active {
+                        continue;
+                    }
+                    if !existing.scope.is_compatible(&fact.scope) {
+                        continue;
+                    }
+                    let (is_contradiction, cues) = jtms.detect_lexical_contradiction(&existing.statement, &fact.statement);
+                    if is_contradiction || (!cues.is_empty() && existing.statement != fact.statement) {
+                        let (resolution, _reason) = jtms.arbitrate_pair(existing, &fact, &cues);
+                        match resolution {
+                            crate::jtms::ConflictResolution::Supersede => {
+                                if let Some(mut old) = self.get_semantic_fact(&existing.id)? {
+                                    old.deprecate_and_replace(fact.id);
+                                    let _ = self.insert_or_update_semantic_fact(&old);
+                                    result.contradictions_resolved += 1;
+                                }
+                            }
+                            crate::jtms::ConflictResolution::Reject => {
+                                fact.status = FactStatus::Deprecated;
+                                result.contradictions_resolved += 1;
+                            }
+                            _ => {}
+                        }
+                    }
+                }
+
+                if fact.status == FactStatus::Active {
+                    self.insert_or_update_semantic_fact(&fact)?;
+                    result.facts_consolidated += 1;
+                }
+            }
+
+            // 2. Extract anti-patterns / failure rules from failed steps
+            for step in &ep.event_trace {
+                if let Some(err) = &step.error {
+                    if err != "none" && !err.is_empty() {
+                        let sig = format!("err-{}-{:x}", step.action, ep.id.as_fields().0);
+                        let mut fp = FailurePattern::new(
+                            sig,
+                            format!("Action '{}' failure", step.action),
+                            err.clone(),
+                            format!("Avoid repeating failed invocation in action '{}'", step.action),
+                        );
+                        fp.scope = Scope::Project(ep.session_id.clone());
+                        fp.severity = FailureSeverity::Medium;
+                        if let Err(e) = self.upsert_failure_pattern(&fp) {
+                            tracing::warn!("Failed to persist learned failure pattern: {e}");
+                        } else {
+                            result.anti_patterns_learned += 1;
+                        }
+                    }
+                }
+            }
+
+            // Mark episode as consolidated
+            {
+                let conn = self
+                    .conn
+                    .lock()
+                    .map_err(|_| StrataError::Database("Lock poisoned on SQLite connection".to_string()))?;
+                let _ = conn.execute(
+                    "UPDATE episodes SET consolidated = 1 WHERE id = ?1",
+                    params![ep.id.to_string()],
+                );
+            }
+        }
+
+        Ok(result)
     }
 }
 

@@ -6,10 +6,11 @@ use strata_core::events::{
     TaskStarted, ToolInvoked, ToolResultReceived,
 };
 use strata_core::schemas::{
-    CodeAnchor, ContextBudgetConfig, DecayConfig, EpisodicMemory, ExportFormat, FactStatus,
-    FeedbackEvent, FeedbackRating, HostTargetConfig, ImplicitSignal, MemoryFeedback, ParameterDef,
-    PreferencePair, ProceduralExample, ProceduralSkill, ProceduralStep, SemanticFact, SftSample,
-    SignalKind, SignalScores, SymbolType, SyncConfig, SyncDelta,
+    CodeAnchor, ContextBudgetConfig, DecayConfig, EpisodeRecord, EpisodeReplay, EpisodeStep,
+    EpisodicMemory, ExportFormat, FactStatus, FeedbackEvent, FeedbackRating, HostTargetConfig,
+    ImplicitSignal, MemoryFeedback, ParameterDef, PreferencePair, ProceduralExample,
+    ProceduralSkill, ProceduralStep, SemanticFact, SftSample, SignalKind, SignalScores, SymbolType,
+    SyncConfig, SyncDelta,
 };
 
 use strata_core::state::{FailureSeverity, MemoryRecord, MemoryTier, MemoryType, Scope};
@@ -3227,4 +3228,106 @@ async fn test_cross_project_transfer() {
         .expect("second transfer");
     assert_eq!(report2.transferred_memories, 0);
     assert!(report2.skipped_duplicates >= 2);
+}
+
+#[test]
+fn test_write_and_list_episodes() {
+    let store = Arc::new(SqliteStore::open_in_memory().expect("open store"));
+
+    let step1 = EpisodeStep::new(0, "read_code")
+        .with_tool("view_file")
+        .with_input(serde_json::json!({"path": "src/main.rs"}));
+    let step2 = EpisodeStep::new(1, "edit_code")
+        .with_tool("replace_content")
+        .with_output(serde_json::json!({"lines_changed": 10}));
+
+    let ep = EpisodeRecord::new("sess-1", "agent-worker", "Implemented auth middleware")
+        .with_task_id("task-auth")
+        .with_salience(0.9)
+        .with_step(step1)
+        .with_step(step2)
+        .with_outcome("Auth middleware compiles cleanly")
+        .with_provenance("task-auth-dag");
+
+    store.write_episode(&ep).expect("write episode");
+
+    let fetched = store.get_episode(&ep.id).expect("get episode").expect("found");
+    assert_eq!(fetched.id, ep.id);
+    assert_eq!(fetched.summary, "Implemented auth middleware");
+    assert_eq!(fetched.event_trace.len(), 2);
+    assert_eq!(fetched.outcomes, vec!["Auth middleware compiles cleanly".to_string()]);
+    assert_eq!(fetched.salience_score, 0.9);
+    assert!(!fetched.consolidated);
+
+    let list = store.list_episodes(Some("sess-1"), None, 10).expect("list");
+    assert_eq!(list.len(), 1);
+    assert_eq!(list[0].id, ep.id);
+}
+
+#[test]
+fn test_replay_episode_evaluation() {
+    let store = Arc::new(SqliteStore::open_in_memory().expect("open store"));
+
+    let step_ok = EpisodeStep::new(0, "check_env");
+    let step_err = EpisodeStep::new(1, "connect_db")
+        .with_error("Connection timed out after 5000ms");
+
+    let ep = EpisodeRecord::new("sess-db", "agent-cursor", "Failed database connection attempt")
+        .with_salience(0.7)
+        .with_step(step_ok)
+        .with_step(step_err)
+        .with_outcome("Database unreachable");
+
+    store.write_episode(&ep).expect("write episode");
+
+    let replay: EpisodeReplay = store.replay_episode(&ep.id).expect("replay").expect("found");
+    assert_eq!(replay.total_steps, 2);
+    assert_eq!(replay.successful_steps, 1);
+    assert_eq!(replay.failed_steps, 1);
+    assert_eq!(replay.candidate_anti_patterns.len(), 1);
+    assert!(replay.candidate_anti_patterns[0].contains("Connection timed out"));
+}
+
+#[test]
+fn test_consolidate_episodes_with_jtms_conflict_resolution() {
+    let store = Arc::new(SqliteStore::open_in_memory().expect("open store"));
+
+    // 1. Seed existing active fact
+    let existing_fact = SemanticFact::new(
+        "PostgreSQL 14 is the primary database",
+        "hippocampal_consolidation",
+        Scope::Project("sess-migration".to_string()),
+    )
+    .with_importance(0.6)
+    .with_confidence(0.8);
+    store.insert_or_update_semantic_fact(&existing_fact).expect("insert existing");
+
+    // 2. Write an episode with high salience that supersedes the old architecture (PostgreSQL 16 migration)
+    let step1 = EpisodeStep::new(0, "migrate_db").with_output(serde_json::json!({"version": 16}));
+    let step_fail = EpisodeStep::new(1, "old_driver").with_error("Driver v1.0 incompatible with PG16");
+
+    let ep = EpisodeRecord::new("sess-migration", "agent-claude", "Migrated database to PostgreSQL 16")
+        .with_salience(0.95)
+        .with_step(step1)
+        .with_step(step_fail)
+        .with_outcome("PostgreSQL 16 is now the primary database")
+        .with_provenance("migration-script");
+
+    store.write_episode(&ep).expect("write episode");
+
+    // 3. Run hippocampal consolidation
+    let result = store.consolidate_episodes(Some("sess-migration")).expect("consolidate");
+
+    assert_eq!(result.episodes_processed, 1);
+    assert_eq!(result.facts_consolidated, 1);
+    assert_eq!(result.anti_patterns_learned, 1);
+    assert_eq!(result.promoted_to_core, 1);
+
+    // 4. Verify episode marked as consolidated
+    let ep_after = store.get_episode(&ep.id).expect("get").expect("found");
+    assert!(ep_after.consolidated);
+
+    // 5. Running consolidation again should process 0 episodes (idempotent)
+    let result2 = store.consolidate_episodes(Some("sess-migration")).expect("consolidate 2");
+    assert_eq!(result2.episodes_processed, 0);
 }
