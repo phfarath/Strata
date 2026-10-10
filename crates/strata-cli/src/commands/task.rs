@@ -146,6 +146,9 @@ pub enum TaskAction {
         #[arg(long, help = "Output as raw JSON")]
         json: bool,
     },
+
+    /// Run autonomous blackboard task worker daemon (work-stealing, execution, heartbeats)
+    Worker(crate::commands::worker::WorkerArgs),
 }
 
 #[derive(Serialize)]
@@ -547,6 +550,10 @@ pub async fn run_task(args: TaskArgs, coordinator: StigmergyCoordinator) -> Resu
             } else {
                 println!("♻ Reclaimed {} orphaned task(s): {}", reclaimed.len(), reclaimed.join(", "));
             }
+        }
+
+        TaskAction::Worker(args) => {
+            crate::commands::worker::run_worker(args, coordinator).await?;
         }
     }
 

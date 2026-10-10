@@ -1239,4 +1239,96 @@ pub fn process_data(msg: &str) {
         };
         assert!(run_episode(cli_cons_args, Arc::clone(&store)).await.is_ok());
     }
+
+    #[tokio::test]
+    async fn test_autonomous_blackboard_worker_daemon_lifecycle() {
+        use crate::commands::worker::{run_worker, WorkerArgs};
+        use strata_core::blackboard::{TaskRecord, TaskStatus};
+        use strata_memory::SqliteMemoryEngine;
+
+        let engine = Arc::new(SqliteMemoryEngine::open_in_memory(None).unwrap());
+        let coordinator = engine.stigmergy();
+
+        // 1. Setup a DAG on the blackboard: task1 -> task2 (depends on task1)
+        let task1 = TaskRecord::new("w-task-1", "Compile core models")
+            .with_description("cmd: echo \"Core compiled\"");
+        let task2 = TaskRecord::new("w-task-2", "Package binary")
+            .with_status(TaskStatus::Blocked)
+            .with_dependencies(vec!["w-task-1".to_string()]);
+        let task_failing = TaskRecord::new("w-task-fail", "Run broken oracle")
+            .with_description("cmd: exit 42");
+
+        coordinator.create_task(&task1).unwrap();
+        coordinator.create_task(&task2).unwrap();
+        coordinator.create_task(&task_failing).unwrap();
+
+        // Check initial statuses
+        assert_eq!(coordinator.get_task("w-task-1").unwrap().unwrap().status, TaskStatus::Pending);
+        assert_eq!(coordinator.get_task("w-task-2").unwrap().unwrap().status, TaskStatus::Blocked);
+        assert_eq!(coordinator.get_task("w-task-fail").unwrap().unwrap().status, TaskStatus::Pending);
+
+        // 2. Run worker to claim and execute ready tasks
+        let args = WorkerArgs {
+            agent: Some("autonomous-worker-1".to_string()),
+            host: Some("antigravity-daemon".to_string()),
+            plan: None,
+            poll_interval: 1,
+            heartbeat_interval: 1,
+            lease_ttl: 60,
+            stale_timeout: 600,
+            auto_reclaim: true,
+            max_tasks: Some(1),
+            exit_when_idle: true,
+            dry_run: false,
+            json: true,
+        };
+
+        // Worker executes w-task-1
+        let stats1 = run_worker(args.clone(), coordinator.clone()).await.unwrap();
+        assert_eq!(stats1.tasks_executed, 1);
+        assert_eq!(stats1.tasks_succeeded, 1);
+        assert_eq!(coordinator.get_task("w-task-1").unwrap().unwrap().status, TaskStatus::Completed);
+
+        // Verify task2 is now unblocked
+        assert_eq!(coordinator.get_task("w-task-2").unwrap().unwrap().status, TaskStatus::Pending);
+
+        // Worker executes w-task-2
+        let stats2 = run_worker(args.clone(), coordinator.clone()).await.unwrap();
+        assert_eq!(stats2.tasks_executed, 1);
+        assert_eq!(stats2.tasks_succeeded, 1);
+        assert_eq!(coordinator.get_task("w-task-2").unwrap().unwrap().status, TaskStatus::Completed);
+
+        // Worker executes failing task
+        let stats3 = run_worker(args.clone(), coordinator.clone()).await.unwrap();
+        assert_eq!(stats3.tasks_executed, 1);
+        assert_eq!(stats3.tasks_failed, 1);
+        assert_eq!(coordinator.get_task("w-task-fail").unwrap().unwrap().status, TaskStatus::Failed);
+
+        // 3. Test orphan reclamation by worker
+        let mut orphan_task = TaskRecord::new("w-orphan", "Orphaned background task");
+        orphan_task.status = TaskStatus::Running;
+        orphan_task.assigned_agent = Some("dead-worker".to_string());
+        orphan_task.updated_at = chrono::Utc::now().timestamp() - 1000;
+        coordinator.create_task(&orphan_task).unwrap();
+
+        let reclaim_worker_args = WorkerArgs {
+            agent: Some("cleaner-worker".to_string()),
+            host: Some("antigravity-daemon".to_string()),
+            plan: None,
+            poll_interval: 1,
+            heartbeat_interval: 1,
+            lease_ttl: 60,
+            stale_timeout: 50,
+            auto_reclaim: true,
+            max_tasks: Some(1),
+            exit_when_idle: true,
+            dry_run: true,
+            json: true,
+        };
+
+        let stats_reclaim = run_worker(reclaim_worker_args, coordinator.clone()).await.unwrap();
+        assert!(stats_reclaim.orphans_reclaimed >= 1);
+        assert_eq!(stats_reclaim.tasks_succeeded, 1);
+        assert_eq!(coordinator.get_task("w-orphan").unwrap().unwrap().status, TaskStatus::Completed);
+    }
 }
