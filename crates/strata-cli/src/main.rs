@@ -39,6 +39,7 @@ use strata_cli::{
         sync_hosts::{run_sync_hosts, SyncHostsArgs},
         task::{run_task, TaskArgs},
         episode::{run_episode, EpisodeArgs},
+        worker::{run_worker, WorkerArgs},
         train::{run_train, TrainArgs},
         transfer::{run_transfer, TransferArgs},
         workspace::{run_workspace, WorkspaceArgs},
@@ -341,6 +342,10 @@ enum Commands {
     /// Episodic memory trace recording, replay, and hippocampal consolidation
     #[command(name = "episode", alias = "episodes", alias = "trace", alias = "replay")]
     Episode(EpisodeArgs),
+
+    /// Run autonomous blackboard task worker daemon (work-stealing, execution, heartbeats)
+    #[command(name = "worker", alias = "runner")]
+    Worker(WorkerArgs),
 
     /// Cross-project knowledge transfer: import memories, failure patterns, and procedural skills from another repository
     #[command(name = "transfer", alias = "import-from", alias = "cross-project")]
@@ -776,6 +781,11 @@ async fn main() -> Result<()> {
         Commands::Episode(args) => {
             let store = engine.store_arc();
             run_episode(args, store).await?;
+        }
+
+        Commands::Worker(args) => {
+            let coordinator = engine.stigmergy();
+            run_worker(args, coordinator).await?;
         }
 
         Commands::Plan(args) => {

@@ -26,6 +26,7 @@ pub mod sync_hosts;
 pub mod task;
 pub mod train;
 pub mod transfer;
+pub mod worker;
 pub mod workspace;
 
 pub use a2a::*;
@@ -56,4 +57,5 @@ pub use sync_hosts::*;
 pub use task::*;
 pub use train::*;
 pub use transfer::*;
+pub use worker::*;
 pub use workspace::*;
