@@ -17,7 +17,7 @@ use crossterm::{
 use ratatui::{backend::CrosstermBackend, Terminal};
 use strata_memory::SqliteMemoryEngine;
 
-use self::app::App;
+use self::app::{App, AppTab};
 
 /// RAII Guard ensuring terminal raw mode and alternate screen are always cleaned up
 struct TerminalGuard;
@@ -59,16 +59,30 @@ pub async fn run_tui(engine: Arc<SqliteMemoryEngine>, db_path: &Path) -> Result<
     let mut app = App::new(engine.clone(), db_path.to_path_buf(), workspace_name)?;
 
     // 5. Main event loop
+    let tick_rate = Duration::from_millis(200);
+    let auto_refresh_interval = Duration::from_secs(2);
+    let mut last_refresh = std::time::Instant::now();
+
     loop {
         terminal.draw(|f| ui::render(f, &app))?;
 
         // 200ms event tick rate
-        if event::poll(Duration::from_millis(200))? {
+        if event::poll(tick_rate)? {
             if let Event::Key(key) = event::read()? {
                 if key.kind == KeyEventKind::Press {
                     match key.code {
                         KeyCode::Char('q') | KeyCode::Esc => {
                             app.quit();
+                        }
+                        KeyCode::Left | KeyCode::Char('h') => {
+                            app.prev_tab();
+                        }
+                        KeyCode::Right | KeyCode::Char('l') => {
+                            app.next_tab();
+                        }
+                        KeyCode::Char(c @ '1'..='6') => {
+                            let idx = (c as u8 - b'1') as usize;
+                            app.set_tab(AppTab::from_index(idx));
                         }
                         KeyCode::Tab | KeyCode::Char('j') | KeyCode::Down => {
                             app.next_row();
@@ -77,12 +91,21 @@ pub async fn run_tui(engine: Arc<SqliteMemoryEngine>, db_path: &Path) -> Result<
                             app.prev_row();
                         }
                         KeyCode::Char('r') => {
-                            let _ = app.refresh(engine.store());
+                            if let Err(e) = app.refresh(engine.store()) {
+                                app.status_message = Some(format!("Erro ao recarregar: {e}"));
+                            }
+                            last_refresh = std::time::Instant::now();
                         }
                         _ => {}
                     }
                 }
             }
+        }
+
+        // Auto-refresh Cockpit state if interval elapsed
+        if last_refresh.elapsed() >= auto_refresh_interval {
+            let _ = app.refresh(engine.store());
+            last_refresh = std::time::Instant::now();
         }
 
         if app.should_quit {
