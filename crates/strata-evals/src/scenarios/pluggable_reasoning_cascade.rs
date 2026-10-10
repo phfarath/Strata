@@ -105,8 +105,10 @@ impl PluggableReasoningCascadeEval {
         let db_path = temp_dir.join("eval.db");
         let store = Arc::new(SqliteStore::open(&db_path)?);
         let embedder = MockEmbeddingProvider::default();
-        let mut pipeline_cfg = strata_memory::PipelineConfig::default();
-        pipeline_cfg.min_salience_threshold = 0.0;
+        let pipeline_cfg = strata_memory::PipelineConfig {
+            min_salience_threshold: 0.0,
+            ..Default::default()
+        };
         let pipeline = ConsolidationPipeline::new(pipeline_cfg);
         let mock_engine = MockReasoningEngine::new();
 
