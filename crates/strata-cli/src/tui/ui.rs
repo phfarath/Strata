@@ -14,6 +14,21 @@ use strata_core::blackboard::TaskStatus;
 pub fn render(f: &mut Frame, app: &App) {
     let size = f.area();
 
+    if size.height < 16 || size.width < 70 {
+        let warning = Paragraph::new(
+            "Terminal muito pequeno para o Strata Cockpit.\nPor favor, redimensione para pelo menos 70x16.",
+        )
+        .alignment(Alignment::Center)
+        .block(
+            Block::default()
+                .borders(Borders::ALL)
+                .border_style(Theme::border_style())
+                .border_type(BorderType::Rounded),
+        );
+        f.render_widget(warning, size);
+        return;
+    }
+
     let chunks = Layout::default()
         .direction(Direction::Vertical)
         .constraints([
@@ -214,7 +229,14 @@ fn render_split(f: &mut Frame, app: &App, area: Rect) {
     let header = Row::new(header_cells).height(1).bottom_margin(1);
 
     let total = app.total_items();
-    let rows = (0..total).map(|idx| {
+    let visible_rows = area.height.saturating_sub(4) as usize;
+    let start_idx = if visible_rows > 0 && app.selected_idx >= visible_rows {
+        app.selected_idx + 1 - visible_rows
+    } else {
+        0
+    };
+
+    let rows = (start_idx..total).map(|idx| {
         let is_selected = idx == app.selected_idx;
         let row_style = if is_selected {
             Theme::selected_row_style()
@@ -503,21 +525,19 @@ fn render_swarm_kpis(f: &mut Frame, app: &App, area: Rect) {
         .split(kpi_chunks[0]);
 
     let total_tasks = app.tasks.len();
-    let pending_tasks = app
-        .tasks
-        .iter()
-        .filter(|t| t.status == TaskStatus::Pending || t.status == TaskStatus::Blocked)
-        .count();
-    let running_tasks = app
-        .tasks
-        .iter()
-        .filter(|t| t.status == TaskStatus::Running || t.status == TaskStatus::Claimed)
-        .count();
-    let completed_tasks = app
-        .tasks
-        .iter()
-        .filter(|t| t.status == TaskStatus::Completed)
-        .count();
+    let mut pending_tasks = 0;
+    let mut running_tasks = 0;
+    let mut completed_tasks = 0;
+
+    for t in &app.tasks {
+        match t.status {
+            TaskStatus::Pending | TaskStatus::Blocked => pending_tasks += 1,
+            TaskStatus::Running | TaskStatus::Claimed => running_tasks += 1,
+            TaskStatus::Completed => completed_tasks += 1,
+            TaskStatus::Failed => {}
+        }
+    }
+
     let now = Utc::now().timestamp();
     let active_leases = app.leases.iter().filter(|l| !l.is_expired(now)).count();
 
@@ -602,13 +622,17 @@ fn render_swarm_split(f: &mut Frame, app: &App, area: Rect) {
 
     render_swarm_tasks(f, app, split_chunks[0]);
 
-    let right_chunks = Layout::default()
-        .direction(Direction::Vertical)
-        .constraints([Constraint::Percentage(40), Constraint::Percentage(60)])
-        .split(split_chunks[1]);
+    if app.leases.is_empty() {
+        render_swarm_task_details(f, app, split_chunks[1]);
+    } else {
+        let right_chunks = Layout::default()
+            .direction(Direction::Vertical)
+            .constraints([Constraint::Length(6), Constraint::Min(8)])
+            .split(split_chunks[1]);
 
-    render_swarm_leases(f, app, right_chunks[0]);
-    render_swarm_task_details(f, app, right_chunks[1]);
+        render_swarm_leases(f, app, right_chunks[0]);
+        render_swarm_task_details(f, app, right_chunks[1]);
+    }
 }
 
 fn render_swarm_tasks(f: &mut Frame, app: &App, area: Rect) {
@@ -621,7 +645,14 @@ fn render_swarm_tasks(f: &mut Frame, app: &App, area: Rect) {
     });
     let header = Row::new(header_cells).height(1).bottom_margin(1);
 
-    let rows = app.tasks.iter().enumerate().map(|(idx, t)| {
+    let visible_rows = area.height.saturating_sub(4) as usize;
+    let start_idx = if visible_rows > 0 && app.selected_task_idx >= visible_rows {
+        app.selected_task_idx + 1 - visible_rows
+    } else {
+        0
+    };
+
+    let rows = app.tasks.iter().enumerate().skip(start_idx).map(|(idx, t)| {
         let is_selected = idx == app.selected_task_idx;
         let row_style = if is_selected {
             Theme::selected_row_style()
@@ -653,7 +684,11 @@ fn render_swarm_tasks(f: &mut Frame, app: &App, area: Rect) {
             ),
         };
 
-        let title_short: String = t.title.chars().take(28).collect();
+        let title_short: String = if t.title.chars().count() > 28 {
+            format!("{}…", t.title.chars().take(27).collect::<String>())
+        } else {
+            t.title.clone()
+        };
         let agent_str = t.assigned_agent.as_deref().unwrap_or("-");
         let deps_str = if t.dependencies.is_empty() {
             "-".to_string()
@@ -663,9 +698,9 @@ fn render_swarm_tasks(f: &mut Frame, app: &App, area: Rect) {
 
         Row::new(vec![
             Cell::from(status_tag).style(status_style),
-            Cell::from(t.task_id.clone()),
+            Cell::from(t.task_id.as_str()),
             Cell::from(title_short),
-            Cell::from(agent_str.to_string()),
+            Cell::from(agent_str),
             Cell::from(deps_str),
         ])
         .style(row_style)
@@ -716,8 +751,8 @@ fn render_swarm_leases(f: &mut Frame, app: &App, area: Rect) {
         };
 
         Row::new(vec![
-            Cell::from(lease.resource_id.clone()),
-            Cell::from(lease.agent_id.clone()),
+            Cell::from(lease.resource_id.as_str()),
+            Cell::from(lease.agent_id.as_str()),
             Cell::from(format!("{}s", remaining)).style(ttl_style),
         ])
         .height(1)
@@ -905,6 +940,19 @@ mod tests {
         // Test rendering Swarm Cockpit
         app.set_tab(AppTab::Swarm);
         terminal.draw(|f| render(f, &app)).expect("draw swarm");
+
+        // Test rendering with small terminal (dimension guard)
+        let small_backend = TestBackend::new(50, 10);
+        let mut small_terminal = Terminal::new(small_backend).expect("small terminal");
+        small_terminal.draw(|f| render(f, &app)).expect("draw small");
+
+        // Test rendering with many tasks (scrolling/sliding window test)
+        for i in 0..25 {
+            let extra_task = TaskRecord::new(format!("task-{i}"), format!("Batch task {i}"));
+            app.tasks.push(extra_task);
+        }
+        app.selected_task_idx = 20; // past visible bounds
+        terminal.draw(|f| render(f, &app)).expect("draw scrolled swarm");
     }
 }
 
