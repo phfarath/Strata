@@ -27,11 +27,12 @@ pub async fn run_all_scenarios() -> Result<()> {
     ArchitectureClusteringEval::run_eval().await?;
     HitlCoreApprovalEval::run_eval().await?;
     run_a2a_stigmergic_leases_scenario().await?;
+    run_a2a_swarm_stress_benchmark_scenario().await?;
     run_pluggable_reasoning_cascade_scenario().await?;
     run_consolidation_ab_benchmark_scenario().await?;
 
     println!("\n========================================================");
-    println!("🎉 ALL EVAL SCENARIOS PASSED (19/19)");
+    println!("🎉 ALL EVAL SCENARIOS PASSED (20/20)");
     println!("========================================================\n");
 
     Ok(())
@@ -171,6 +172,13 @@ mod tests {
         run_a2a_stigmergic_leases_scenario()
             .await
             .expect("A2A stigmergic leases scenario failed");
+    }
+
+    #[tokio::test]
+    async fn test_eval_a2a_swarm_stress_benchmark() {
+        run_a2a_swarm_stress_benchmark_scenario()
+            .await
+            .expect("A2A swarm stress benchmark scenario failed");
     }
 
     #[tokio::test]
