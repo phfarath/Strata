@@ -249,6 +249,15 @@ impl SqliteStore {
             CREATE INDEX IF NOT EXISTS idx_failures_scope ON failure_patterns(scope);
             CREATE INDEX IF NOT EXISTS idx_failures_last_seen ON failure_patterns(last_seen);
 
+            -- Futility accumulator state, one row per (agent, task)
+            CREATE TABLE IF NOT EXISTS futility_state (
+                agent_id TEXT NOT NULL,
+                task_key TEXT NOT NULL,
+                state_json TEXT NOT NULL,
+                updated_at INTEGER NOT NULL,
+                PRIMARY KEY (agent_id, task_key)
+            );
+
             -- Failure patterns full text search
             CREATE VIRTUAL TABLE IF NOT EXISTS failure_patterns_fts USING fts5(
                 signature UNINDEXED,
@@ -1531,6 +1540,62 @@ impl SqliteStore {
         Ok(())
     }
 
+    /// Loads the futility accumulator for (agent, task). Returns a fresh one when no row
+    /// exists or the row has been idle for more than `idle_ttl_secs`.
+    pub fn load_futility_state(
+        &self,
+        agent_id: &str,
+        task_key: &str,
+        now: i64,
+        idle_ttl_secs: i64,
+    ) -> Result<crate::futility::FutilityAccumulator, StrataError> {
+        let conn = self
+            .conn
+            .lock()
+            .map_err(|_| StrataError::Database("Lock poisoned on SQLite connection".to_string()))?;
+
+        let row: Option<(String, i64)> = conn
+            .query_row(
+                "SELECT state_json, updated_at FROM futility_state
+                 WHERE agent_id = ?1 AND task_key = ?2",
+                params![agent_id, task_key],
+                |r| Ok((r.get(0)?, r.get(1)?)),
+            )
+            .optional()
+            .map_err(|e| StrataError::Database(e.to_string()))?;
+
+        match row {
+            Some((json, updated_at)) if now - updated_at <= idle_ttl_secs => {
+                Ok(serde_json::from_str(&json)?)
+            }
+            _ => Ok(crate::futility::FutilityAccumulator::new()),
+        }
+    }
+
+    /// Persists the futility accumulator for (agent, task).
+    pub fn save_futility_state(
+        &self,
+        agent_id: &str,
+        task_key: &str,
+        state: &crate::futility::FutilityAccumulator,
+        now: i64,
+    ) -> Result<(), StrataError> {
+        let conn = self
+            .conn
+            .lock()
+            .map_err(|_| StrataError::Database("Lock poisoned on SQLite connection".to_string()))?;
+
+        conn.execute(
+            "INSERT INTO futility_state (agent_id, task_key, state_json, updated_at)
+             VALUES (?1, ?2, ?3, ?4)
+             ON CONFLICT(agent_id, task_key) DO UPDATE SET
+                state_json = excluded.state_json,
+                updated_at = excluded.updated_at",
+            params![agent_id, task_key, serde_json::to_string(state)?, now],
+        )
+        .map_err(|e| StrataError::Database(e.to_string()))?;
+        Ok(())
+    }
     pub fn get_failure_pattern_by_signature(
         &self,
         signature: &str,
