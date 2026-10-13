@@ -125,6 +125,18 @@ impl SqliteStore {
             "ALTER TABLE preference_pairs ADD COLUMN verification_source TEXT",
             [],
         );
+        let _ = conn.execute(
+            "ALTER TABLE episodes ADD COLUMN tier INTEGER NOT NULL DEFAULT 1",
+            [],
+        );
+        let _ = conn.execute(
+            "ALTER TABLE episodes ADD COLUMN parent_id TEXT",
+            [],
+        );
+        let _ = conn.execute(
+            "ALTER TABLE episodes ADD COLUMN child_ids_json TEXT NOT NULL DEFAULT '[]'",
+            [],
+        );
 
         conn.execute_batch(
             "
@@ -681,12 +693,17 @@ impl SqliteStore {
                 state_snapshot_json TEXT,
                 causal_provenance TEXT,
                 consolidated INTEGER NOT NULL DEFAULT 0,
+                tier INTEGER NOT NULL DEFAULT 1,
+                parent_id TEXT,
+                child_ids_json TEXT NOT NULL DEFAULT '[]',
                 created_at INTEGER NOT NULL
             );
 
             CREATE INDEX IF NOT EXISTS idx_episodes_session ON episodes(session_id);
             CREATE INDEX IF NOT EXISTS idx_episodes_agent ON episodes(agent_id);
             CREATE INDEX IF NOT EXISTS idx_episodes_consolidated ON episodes(consolidated);
+            CREATE INDEX IF NOT EXISTS idx_episodes_tier ON episodes(tier);
+            CREATE INDEX IF NOT EXISTS idx_episodes_parent ON episodes(parent_id);
 
             -- Tripartite Synapse Modulated Edges Table
             CREATE TABLE IF NOT EXISTS memory_edges (
@@ -738,6 +755,26 @@ impl SqliteStore {
         );
         let _ = conn.execute(
             "ALTER TABLE preference_pairs ADD COLUMN verification_source TEXT",
+            [],
+        );
+        let _ = conn.execute(
+            "ALTER TABLE episodes ADD COLUMN tier INTEGER NOT NULL DEFAULT 1",
+            [],
+        );
+        let _ = conn.execute(
+            "ALTER TABLE episodes ADD COLUMN parent_id TEXT",
+            [],
+        );
+        let _ = conn.execute(
+            "ALTER TABLE episodes ADD COLUMN child_ids_json TEXT NOT NULL DEFAULT '[]'",
+            [],
+        );
+        let _ = conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_episodes_tier ON episodes(tier)",
+            [],
+        );
+        let _ = conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_episodes_parent ON episodes(parent_id)",
             [],
         );
 
@@ -5488,8 +5525,8 @@ impl SqliteStore {
     // Episodic Memory & Hippocampal Consolidation
     // ==========================================
 
-    /// Writes an episodic execution trace for hippocampal ingestion.
-    pub fn write_episode(&self, episode: &EpisodeRecord) -> Result<(), StrataError> {
+    /// Persists an episodic trace with multi-tier hierarchy support.
+    pub fn save_episode(&self, episode: &EpisodeRecord) -> Result<(), StrataError> {
         let conn = self
             .conn
             .lock()
@@ -5506,13 +5543,15 @@ impl SqliteStore {
             .map(serde_json::to_string)
             .transpose()
             .map_err(|e| StrataError::Serialization(format!("Failed to serialize state snapshot: {e}")))?;
+        let child_ids_json = serde_json::to_string(&episode.child_ids)
+            .map_err(|e| StrataError::Serialization(format!("Failed to serialize child_ids: {e}")))?;
 
         conn.execute(
             "INSERT INTO episodes (
                 id, session_id, agent_id, task_id, summary, event_trace_json,
                 outcomes_json, salience_score, state_snapshot_json, causal_provenance,
-                consolidated, created_at
-            ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12)
+                consolidated, tier, parent_id, child_ids_json, created_at
+            ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15)
             ON CONFLICT(id) DO UPDATE SET
                 summary = excluded.summary,
                 event_trace_json = excluded.event_trace_json,
@@ -5520,7 +5559,10 @@ impl SqliteStore {
                 salience_score = excluded.salience_score,
                 state_snapshot_json = excluded.state_snapshot_json,
                 causal_provenance = excluded.causal_provenance,
-                consolidated = excluded.consolidated",
+                consolidated = excluded.consolidated,
+                tier = excluded.tier,
+                parent_id = excluded.parent_id,
+                child_ids_json = excluded.child_ids_json",
             params![
                 id_str,
                 episode.session_id,
@@ -5533,10 +5575,98 @@ impl SqliteStore {
                 snapshot_json,
                 episode.causal_provenance,
                 if episode.consolidated { 1 } else { 0 },
+                episode.tier as i64,
+                episode.parent_id.map(|p| p.to_string()),
+                child_ids_json,
                 episode.created_at,
             ],
         )
         .map_err(|e| StrataError::Database(format!("Failed to insert episode: {e}")))?;
+
+        Ok(())
+    }
+
+    /// Writes an episodic execution trace for hippocampal ingestion (alias for `save_episode`).
+    pub fn write_episode(&self, episode: &EpisodeRecord) -> Result<(), StrataError> {
+        self.save_episode(episode)
+    }
+
+    /// Persists a rollup episode and atomically updates parent_id of all child episodes.
+    pub fn save_episode_rollup(&self, rollup: &EpisodeRecord) -> Result<(), StrataError> {
+        let mut conn = self
+            .conn
+            .lock()
+            .map_err(|_| StrataError::Database("Lock poisoned on SQLite connection".to_string()))?;
+
+        let tx = conn
+            .transaction()
+            .map_err(|e| StrataError::Database(format!("Failed to begin transaction: {e}")))?;
+
+        let id_str = rollup.id.to_string();
+        let event_trace_json = serde_json::to_string(&rollup.event_trace)
+            .map_err(|e| StrataError::Serialization(format!("Failed to serialize event trace: {e}")))?;
+        let outcomes_json = serde_json::to_string(&rollup.outcomes)
+            .map_err(|e| StrataError::Serialization(format!("Failed to serialize outcomes: {e}")))?;
+        let snapshot_json = rollup
+            .state_snapshot
+            .as_ref()
+            .map(serde_json::to_string)
+            .transpose()
+            .map_err(|e| StrataError::Serialization(format!("Failed to serialize state snapshot: {e}")))?;
+        let child_ids_json = serde_json::to_string(&rollup.child_ids)
+            .map_err(|e| StrataError::Serialization(format!("Failed to serialize child_ids: {e}")))?;
+
+        tx.execute(
+            "INSERT INTO episodes (
+                id, session_id, agent_id, task_id, summary, event_trace_json,
+                outcomes_json, salience_score, state_snapshot_json, causal_provenance,
+                consolidated, tier, parent_id, child_ids_json, created_at
+            ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15)
+            ON CONFLICT(id) DO UPDATE SET
+                summary = excluded.summary,
+                event_trace_json = excluded.event_trace_json,
+                outcomes_json = excluded.outcomes_json,
+                salience_score = excluded.salience_score,
+                state_snapshot_json = excluded.state_snapshot_json,
+                causal_provenance = excluded.causal_provenance,
+                consolidated = excluded.consolidated,
+                tier = excluded.tier,
+                parent_id = excluded.parent_id,
+                child_ids_json = excluded.child_ids_json",
+            params![
+                id_str,
+                rollup.session_id,
+                rollup.agent_id,
+                rollup.task_id,
+                rollup.summary,
+                event_trace_json,
+                outcomes_json,
+                rollup.salience_score,
+                snapshot_json,
+                rollup.causal_provenance,
+                if rollup.consolidated { 1 } else { 0 },
+                rollup.tier as i64,
+                rollup.parent_id.map(|p| p.to_string()),
+                child_ids_json,
+                rollup.created_at,
+            ],
+        )
+        .map_err(|e| StrataError::Database(format!("Failed to insert episode rollup: {e}")))?;
+
+        if !rollup.child_ids.is_empty() {
+            let mut update_stmt = tx
+                .prepare("UPDATE episodes SET parent_id = ?1 WHERE id = ?2")
+                .map_err(|e| StrataError::Database(e.to_string()))?;
+            for child_id in &rollup.child_ids {
+                update_stmt
+                    .execute(params![id_str, child_id.to_string()])
+                    .map_err(|e| StrataError::Database(format!("Failed to update parent_id for child {child_id}: {e}")))?;
+            }
+        }
+
+        tx.commit().map_err(|e| {
+            StrataError::Database(format!("Failed to commit episode rollup transaction: {e}"))
+        })?;
 
         Ok(())
     }
@@ -5553,7 +5683,7 @@ impl SqliteStore {
             .prepare(
                 "SELECT id, session_id, agent_id, task_id, summary, event_trace_json,
                         outcomes_json, salience_score, state_snapshot_json, causal_provenance,
-                        consolidated, created_at
+                        consolidated, created_at, tier, parent_id, child_ids_json
                  FROM episodes WHERE id = ?1",
             )
             .map_err(|e| StrataError::Database(e.to_string()))?;
@@ -5581,7 +5711,7 @@ impl SqliteStore {
         let mut query = String::from(
             "SELECT id, session_id, agent_id, task_id, summary, event_trace_json,
                     outcomes_json, salience_score, state_snapshot_json, causal_provenance,
-                    consolidated, created_at
+                    consolidated, created_at, tier, parent_id, child_ids_json
              FROM episodes WHERE 1=1",
         );
 
@@ -5615,6 +5745,140 @@ impl SqliteStore {
         Ok(list)
     }
 
+    /// Lists episodic execution traces by hierarchical tier with optional session filtering.
+    pub fn list_episodes_by_tier(
+        &self,
+        tier: u8,
+        session_id: Option<&str>,
+        limit: usize,
+    ) -> Result<Vec<EpisodeRecord>, StrataError> {
+        let conn = self
+            .conn
+            .lock()
+            .map_err(|_| StrataError::Database("Lock poisoned on SQLite connection".to_string()))?;
+
+        let mut query = String::from(
+            "SELECT id, session_id, agent_id, task_id, summary, event_trace_json,
+                    outcomes_json, salience_score, state_snapshot_json, causal_provenance,
+                    consolidated, created_at, tier, parent_id, child_ids_json
+             FROM episodes WHERE tier = ?",
+        );
+
+        let mut param_values: Vec<Box<dyn rusqlite::ToSql>> = vec![Box::new(tier as i64)];
+
+        if let Some(s) = session_id {
+            query.push_str(" AND session_id = ?");
+            param_values.push(Box::new(s.to_string()));
+        }
+
+        query.push_str(" ORDER BY created_at DESC LIMIT ?");
+        param_values.push(Box::new(limit as i64));
+
+        let mut stmt = conn.prepare(&query).map_err(|e| StrataError::Database(e.to_string()))?;
+        let rusqlite_params: Vec<&dyn rusqlite::ToSql> = param_values.iter().map(|p| p.as_ref()).collect();
+
+        let rows = stmt
+            .query_map(rusqlite_params.as_slice(), Self::row_to_episode)
+            .map_err(|e| StrataError::Database(e.to_string()))?;
+
+        let mut list = Vec::new();
+        for r in rows {
+            list.push(r.map_err(|e| StrataError::Database(e.to_string()))?);
+        }
+
+        Ok(list)
+    }
+
+    /// Retrieves immediate child episodes whose parent_id equals the given ID.
+    pub fn get_child_episodes(&self, parent_id: &Uuid) -> Result<Vec<EpisodeRecord>, StrataError> {
+        let conn = self
+            .conn
+            .lock()
+            .map_err(|_| StrataError::Database("Lock poisoned on SQLite connection".to_string()))?;
+
+        let parent_id_str = parent_id.to_string();
+        let mut stmt = conn
+            .prepare(
+                "SELECT id, session_id, agent_id, task_id, summary, event_trace_json,
+                        outcomes_json, salience_score, state_snapshot_json, causal_provenance,
+                        consolidated, created_at, tier, parent_id, child_ids_json
+                 FROM episodes WHERE parent_id = ?1 ORDER BY created_at ASC",
+            )
+            .map_err(|e| StrataError::Database(e.to_string()))?;
+
+        let rows = stmt
+            .query_map(params![parent_id_str], Self::row_to_episode)
+            .map_err(|e| StrataError::Database(e.to_string()))?;
+
+        let mut list = Vec::new();
+        for r in rows {
+            list.push(r.map_err(|e| StrataError::Database(e.to_string()))?);
+        }
+
+        Ok(list)
+    }
+
+    /// Recursively retrieves an episode and all of its transitive descendants ordered
+    /// topologicamente por tier decrescente.
+    pub fn get_drill_down_tree(&self, root_id: &Uuid) -> Result<Vec<EpisodeRecord>, StrataError> {
+        let conn = self
+            .conn
+            .lock()
+            .map_err(|_| StrataError::Database("Lock poisoned on SQLite connection".to_string()))?;
+
+        let root_str = root_id.to_string();
+        let mut stmt = conn
+            .prepare(
+                "WITH RECURSIVE episode_tree(id) AS (
+                    SELECT id FROM episodes WHERE id = ?1
+                    UNION
+                    SELECT e.id FROM episodes e
+                    JOIN episode_tree tree ON e.parent_id = tree.id
+                )
+                SELECT id, session_id, agent_id, task_id, summary, event_trace_json,
+                       outcomes_json, salience_score, state_snapshot_json, causal_provenance,
+                       consolidated, created_at, tier, parent_id, child_ids_json
+                FROM episodes
+                WHERE id IN (SELECT id FROM episode_tree)
+                ORDER BY tier DESC, created_at ASC",
+            )
+            .map_err(|e| StrataError::Database(e.to_string()))?;
+
+        let rows = stmt
+            .query_map(params![root_str], Self::row_to_episode)
+            .map_err(|e| StrataError::Database(e.to_string()))?;
+
+        let mut list = Vec::new();
+        for r in rows {
+            list.push(r.map_err(|e| StrataError::Database(e.to_string()))?);
+        }
+
+        // Augment with any child_ids referenced in rollup JSON if not already reached via parent_id
+        let mut known_ids: std::collections::HashSet<Uuid> = list.iter().map(|e| e.id).collect();
+        let mut queue: std::collections::VecDeque<Uuid> = std::collections::VecDeque::new();
+        for item in &list {
+            for child_id in &item.child_ids {
+                if known_ids.insert(*child_id) {
+                    queue.push_back(*child_id);
+                }
+            }
+        }
+        while let Some(child_id) = queue.pop_front() {
+            if let Some(child_ep) = self.get_episode(&child_id)? {
+                for cid in &child_ep.child_ids {
+                    if known_ids.insert(*cid) {
+                        queue.push_back(*cid);
+                    }
+                }
+                list.push(child_ep);
+            }
+        }
+
+        list.sort_by(|a, b| b.tier.cmp(&a.tier).then_with(|| a.created_at.cmp(&b.created_at)));
+
+        Ok(list)
+    }
+
     fn row_to_episode(row: &rusqlite::Row<'_>) -> rusqlite::Result<EpisodeRecord> {
         let id_str: String = row.get(0)?;
         let id = Uuid::parse_str(&id_str).map_err(|e| {
@@ -5636,6 +5900,19 @@ impl SqliteStore {
         let consolidated_int: i32 = row.get(10)?;
         let created_at: i64 = row.get(11)?;
 
+        let tier: u8 = row.get::<_, i64>(12).map(|t| t as u8).unwrap_or(1);
+        let parent_id: Option<Uuid> = row
+            .get::<_, Option<String>>(13)
+            .ok()
+            .flatten()
+            .and_then(|s| Uuid::parse_str(&s).ok());
+        let child_ids: Vec<Uuid> = row
+            .get::<_, Option<String>>(14)
+            .ok()
+            .flatten()
+            .and_then(|s| serde_json::from_str(&s).ok())
+            .unwrap_or_default();
+
         let event_trace: Vec<EpisodeStep> =
             serde_json::from_str(&event_trace_json).unwrap_or_default();
         let outcomes: Vec<String> = serde_json::from_str(&outcomes_json).unwrap_or_default();
@@ -5653,6 +5930,9 @@ impl SqliteStore {
             state_snapshot,
             causal_provenance,
             consolidated: consolidated_int != 0,
+            tier,
+            parent_id,
+            child_ids,
             created_at,
         })
     }
@@ -5729,7 +6009,7 @@ impl SqliteStore {
             let mut query = String::from(
                 "SELECT id, session_id, agent_id, task_id, summary, event_trace_json,
                         outcomes_json, salience_score, state_snapshot_json, causal_provenance,
-                        consolidated, created_at
+                        consolidated, created_at, tier, parent_id, child_ids_json
                  FROM episodes WHERE consolidated = 0",
             );
             let mut param_values: Vec<Box<dyn rusqlite::ToSql>> = Vec::new();

@@ -3258,10 +3258,126 @@ fn test_write_and_list_episodes() {
     assert_eq!(fetched.outcomes, vec!["Auth middleware compiles cleanly".to_string()]);
     assert_eq!(fetched.salience_score, 0.9);
     assert!(!fetched.consolidated);
+    assert_eq!(fetched.tier, 1);
+    assert_eq!(fetched.parent_id, None);
+    assert!(fetched.child_ids.is_empty());
 
     let list = store.list_episodes(Some("sess-1"), None, 10).expect("list");
     assert_eq!(list.len(), 1);
     assert_eq!(list[0].id, ep.id);
+}
+
+#[test]
+fn test_hierarchical_episodic_pyramid_store() {
+    let store = Arc::new(SqliteStore::open_in_memory().expect("open store"));
+
+    // 1. Criação de episódios leaf (Tier 1)
+    let leaf1 = EpisodeRecord::new("sess-pyramid", "agent-worker", "Leaf Step 1: Added user schema")
+        .with_salience(0.6)
+        .with_outcome("Schema generated");
+    let leaf2 = EpisodeRecord::new("sess-pyramid", "agent-worker", "Leaf Step 2: Added user migrations")
+        .with_salience(0.7)
+        .with_outcome("Migration executed");
+    let leaf3 = EpisodeRecord::new("sess-pyramid", "agent-worker", "Leaf Step 3: Added user endpoints")
+        .with_salience(0.8)
+        .with_outcome("Endpoints bound");
+
+    assert_eq!(leaf1.tier, 1);
+    assert!(leaf1.is_leaf());
+    assert!(!leaf1.is_rollup());
+
+    store.save_episode(&leaf1).expect("save leaf1");
+    store.save_episode(&leaf2).expect("save leaf2");
+    store.save_episode(&leaf3).expect("save leaf3");
+
+    let fetched_leaf1 = store.get_episode(&leaf1.id).expect("get").expect("found");
+    assert_eq!(fetched_leaf1.tier, 1);
+    assert_eq!(fetched_leaf1.parent_id, None);
+    assert!(fetched_leaf1.child_ids.is_empty());
+
+    // 2. Criação de Rollup (Tier 2) associando filhos via save_episode_rollup
+    let rollup1 = EpisodeRecord::new("sess-pyramid", "agent-architect", "Milestone 1: DB Layer Complete")
+        .with_tier(2)
+        .with_salience(0.85)
+        .with_child_ids(vec![leaf1.id, leaf2.id])
+        .with_outcome("Database layer verified");
+
+    let rollup2 = EpisodeRecord::new("sess-pyramid", "agent-architect", "Milestone 2: API Layer Complete")
+        .with_tier(2)
+        .with_salience(0.9)
+        .with_child_id(leaf3.id)
+        .with_outcome("API layer verified");
+
+    store.save_episode_rollup(&rollup1).expect("save rollup1");
+    store.save_episode_rollup(&rollup2).expect("save rollup2");
+
+    // 3. Verificação de que os filhos tiveram seu parent_id atualizado
+    let leaf1_updated = store.get_episode(&leaf1.id).expect("get").expect("found");
+    assert_eq!(leaf1_updated.parent_id, Some(rollup1.id));
+
+    let leaf2_updated = store.get_episode(&leaf2.id).expect("get").expect("found");
+    assert_eq!(leaf2_updated.parent_id, Some(rollup1.id));
+
+    let leaf3_updated = store.get_episode(&leaf3.id).expect("get").expect("found");
+    assert_eq!(leaf3_updated.parent_id, Some(rollup2.id));
+
+    // Test get_child_episodes
+    let children_of_rollup1 = store.get_child_episodes(&rollup1.id).expect("get child episodes");
+    assert_eq!(children_of_rollup1.len(), 2);
+    let child_ids: Vec<Uuid> = children_of_rollup1.iter().map(|c| c.id).collect();
+    assert!(child_ids.contains(&leaf1.id));
+    assert!(child_ids.contains(&leaf2.id));
+
+    // 4. Criação de Epoch Rollup (Tier 3)
+    let epoch = EpisodeRecord::new("sess-pyramid", "agent-lead", "Epoch 1: User Feature Shipped")
+        .with_tier(3)
+        .with_salience(0.95)
+        .with_child_ids(vec![rollup1.id, rollup2.id])
+        .with_outcome("Feature complete and shipped");
+
+    store.save_episode_rollup(&epoch).expect("save epoch");
+
+    // Verificar que os rollups agora têm parent_id apontando para o epoch
+    let rollup1_updated = store.get_episode(&rollup1.id).expect("get").expect("found");
+    assert_eq!(rollup1_updated.parent_id, Some(epoch.id));
+
+    let rollup2_updated = store.get_episode(&rollup2.id).expect("get").expect("found");
+    assert_eq!(rollup2_updated.parent_id, Some(epoch.id));
+
+    // 5. get_drill_down_tree retornando a hierarquia completa
+    let full_tree = store.get_drill_down_tree(&epoch.id).expect("get drill down tree");
+    assert_eq!(full_tree.len(), 6); // 1 epoch + 2 milestones + 3 leaves
+    assert_eq!(full_tree[0].id, epoch.id);
+    assert_eq!(full_tree[0].tier, 3);
+
+    // Topological order check: tier non-increasing
+    for window in full_tree.windows(2) {
+        assert!(window[0].tier >= window[1].tier, "Expected tier {} >= {}", window[0].tier, window[1].tier);
+    }
+
+    // Subtree drill-down test
+    let sub_tree = store.get_drill_down_tree(&rollup1.id).expect("get subtree");
+    assert_eq!(sub_tree.len(), 3); // rollup1 + leaf1 + leaf2
+    assert_eq!(sub_tree[0].id, rollup1.id);
+    assert_eq!(sub_tree[0].tier, 2);
+
+    // 6. list_episodes_by_tier filtrando corretamente por tier
+    let tier1_list = store.list_episodes_by_tier(1, Some("sess-pyramid"), 10).expect("list tier 1");
+    assert_eq!(tier1_list.len(), 3);
+    assert!(tier1_list.iter().all(|e| e.tier == 1));
+
+    let tier2_list = store.list_episodes_by_tier(2, Some("sess-pyramid"), 10).expect("list tier 2");
+    assert_eq!(tier2_list.len(), 2);
+    assert!(tier2_list.iter().all(|e| e.tier == 2));
+
+    let tier3_list = store.list_episodes_by_tier(3, Some("sess-pyramid"), 10).expect("list tier 3");
+    assert_eq!(tier3_list.len(), 1);
+    assert_eq!(tier3_list[0].id, epoch.id);
+    assert_eq!(tier3_list[0].tier, 3);
+
+    // Filtering by different session_id should return empty
+    let empty_list = store.list_episodes_by_tier(1, Some("other-session"), 10).expect("list other");
+    assert!(empty_list.is_empty());
 }
 
 #[test]
