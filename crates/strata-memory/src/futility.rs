@@ -1,3 +1,4 @@
+use serde::{Deserialize, Serialize};
 use std::collections::VecDeque;
 
 /// Evidence units are integers so the accumulator is exactly reproducible (no float drift).
@@ -32,7 +33,7 @@ pub enum Verdict {
 
 /// Leaky evidence integrator that decides when failures without progress mean the
 /// current approach is a dead end. Track one per (agent, task).
-#[derive(Debug, Default, Clone)]
+#[derive(Debug, Default, Clone, Serialize, Deserialize)]
 pub struct FutilityAccumulator {
     evidence: u32,
     latched: bool,
@@ -153,5 +154,92 @@ mod tests {
         assert_eq!(acc.observe(Signal::Progress), Verdict::Continue);
         // After reset a single failure must not immediately re-trip.
         assert_eq!(acc.observe(fail("a")), Verdict::Continue);
+    }
+
+    fn fail_sig(s: &str) -> Signal {
+        Signal::Failure(s.to_string())
+    }
+
+    #[test]
+    fn state_roundtrips_through_store_and_keeps_behavior() {
+        let store = crate::SqliteStore::open_in_memory().unwrap();
+        let mut acc = FutilityAccumulator::new();
+        for _ in 0..3 {
+            acc.observe(fail_sig("a"));
+        }
+        store
+            .save_futility_state("agent", "task", &acc, 1_000)
+            .unwrap();
+
+        let mut loaded = store
+            .load_futility_state("agent", "task", 1_010, 1_800)
+            .unwrap();
+        assert_eq!(loaded.evidence(), acc.evidence());
+        // Same next observation must give the same verdict as the original.
+        assert_eq!(loaded.observe(fail_sig("a")), acc.observe(fail_sig("a")));
+    }
+
+    #[test]
+    fn state_is_isolated_per_agent_and_task() {
+        let store = crate::SqliteStore::open_in_memory().unwrap();
+        let mut acc = FutilityAccumulator::new();
+        acc.observe(fail_sig("a"));
+        store
+            .save_futility_state("agent-1", "task-1", &acc, 1_000)
+            .unwrap();
+
+        for (agent, task) in [("agent-2", "task-1"), ("agent-1", "task-2")] {
+            let other = store
+                .load_futility_state(agent, task, 1_000, 1_800)
+                .unwrap();
+            assert_eq!(other.evidence(), 0);
+        }
+    }
+
+    #[test]
+    fn idle_state_expires_and_missing_state_is_fresh() {
+        let store = crate::SqliteStore::open_in_memory().unwrap();
+        assert_eq!(
+            store
+                .load_futility_state("a", "t", 0, 1_800)
+                .unwrap()
+                .evidence(),
+            0
+        );
+
+        let mut acc = FutilityAccumulator::new();
+        acc.observe(fail_sig("a"));
+        store.save_futility_state("a", "t", &acc, 1_000).unwrap();
+        assert!(
+            store
+                .load_futility_state("a", "t", 2_800, 1_800)
+                .unwrap()
+                .evidence()
+                > 0
+        );
+        assert_eq!(
+            store
+                .load_futility_state("a", "t", 2_801, 1_800)
+                .unwrap()
+                .evidence(),
+            0
+        );
+    }
+
+    #[test]
+    fn save_overwrites_previous_state() {
+        let store = crate::SqliteStore::open_in_memory().unwrap();
+        let mut acc = FutilityAccumulator::new();
+        acc.observe(fail_sig("a"));
+        store.save_futility_state("a", "t", &acc, 1_000).unwrap();
+        acc.observe(Signal::Success);
+        store.save_futility_state("a", "t", &acc, 1_001).unwrap();
+        assert_eq!(
+            store
+                .load_futility_state("a", "t", 1_002, 1_800)
+                .unwrap()
+                .evidence(),
+            0
+        );
     }
 }
