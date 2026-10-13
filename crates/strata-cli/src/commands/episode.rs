@@ -4,7 +4,7 @@ use std::sync::Arc;
 use uuid::Uuid;
 
 use strata_core::schemas::{EpisodeRecord, EpisodeStep};
-use strata_memory::SqliteStore;
+use strata_memory::{EpisodicPyramidEngine, PyramidConfig, SqliteStore};
 
 #[derive(Debug, Clone, Args)]
 pub struct EpisodeArgs {
@@ -84,6 +84,55 @@ pub enum EpisodeCommand {
         /// Filter by session ID
         #[arg(long, help = "Filter by session ID")]
         session: Option<String>,
+
+        /// Output as raw JSON
+        #[arg(long, help = "Output as raw JSON")]
+        json: bool,
+    },
+
+    /// Hierarchical rollup of Tier 1 episodic traces into Tier 2 milestones
+    Rollup {
+        /// Filter by session ID
+        #[arg(long, help = "Filter by session ID")]
+        session: Option<String>,
+
+        /// Minimum cluster size required to form a rollup
+        #[arg(long, default_value_t = 2, help = "Minimum cluster size")]
+        min_cluster: usize,
+
+        /// Cosine similarity threshold for grouping
+        #[arg(long, default_value_t = 0.70, help = "Similarity threshold for clustering")]
+        similarity: f32,
+
+        /// Output as raw JSON
+        #[arg(long, help = "Output as raw JSON")]
+        json: bool,
+    },
+
+    /// Drill down into a milestone rollup to inspect underlying execution traces
+    DrillDown {
+        /// UUID of the rollup episode record
+        #[arg(help = "UUID of the rollup episode record")]
+        id: String,
+
+        /// Output as raw JSON
+        #[arg(long, help = "Output as raw JSON")]
+        json: bool,
+
+        /// Output hierarchical ASCII tree representation
+        #[arg(long, help = "Output hierarchical ASCII tree representation")]
+        ascii: bool,
+    },
+
+    /// Zoom out and view the hierarchical tree of milestone rollups
+    Tree {
+        /// Filter by session ID
+        #[arg(long, help = "Filter by session ID")]
+        session: Option<String>,
+
+        /// Maximum rollups to inspect
+        #[arg(long, default_value_t = 20, help = "Maximum rollups to return")]
+        limit: usize,
 
         /// Output as raw JSON
         #[arg(long, help = "Output as raw JSON")]
@@ -250,6 +299,91 @@ pub async fn run_episode(args: EpisodeArgs, store: Arc<SqliteStore>) -> Result<(
                 println!("Promoted to Core Tier:    {}", result.promoted_to_core);
                 println!("Anti-Patterns Learned:    {}", result.anti_patterns_learned);
                 println!("Contradictions Resolved:  {}", result.contradictions_resolved);
+            }
+        }
+
+        EpisodeCommand::Rollup {
+            session,
+            min_cluster,
+            similarity,
+            json,
+        } => {
+            let config = PyramidConfig::new()
+                .with_min_cluster_size(min_cluster)
+                .with_cluster_similarity_threshold(similarity);
+
+            let rollups = EpisodicPyramidEngine::aggregate_session_rollups(
+                store.as_ref(),
+                session.as_deref(),
+                &config,
+                None,
+            )
+            .map_err(|e| anyhow::anyhow!("Failed to aggregate episodic rollups: {e}"))?;
+
+            if json {
+                println!("{}", serde_json::to_string_pretty(&rollups)?);
+            } else {
+                println!("\n🏛️ [Strata Episodic Memory Pyramid Rollup Completed]");
+                println!("══════════════════════════════════════════════════");
+                println!("Generated Rollups: {}", rollups.len());
+                for r in &rollups {
+                    println!("\n  Rollup ID: {}", r.id);
+                    println!("  Tier:      {}", r.tier);
+                    println!("  Session:   {}", r.session_id);
+                    println!("  Salience:  {:.2}", r.salience_score);
+                    println!("  Children:  {}", r.child_ids.len());
+                    println!("  Summary:   {}", r.summary);
+                    if !r.outcomes.is_empty() {
+                        println!("  Outcomes:  {}", r.outcomes.join(", "));
+                    }
+                }
+            }
+        }
+
+        EpisodeCommand::DrillDown { id, json, ascii: _ } => {
+            let uuid = Uuid::parse_str(&id)
+                .with_context(|| format!("Invalid rollup episode UUID: '{id}'"))?;
+
+            let tree = EpisodicPyramidEngine::drill_down(store.as_ref(), &uuid)
+                .map_err(|e| anyhow::anyhow!("Failed to drill down: {e}"))?
+                .ok_or_else(|| anyhow::anyhow!("Rollup episode with ID '{id}' not found"))?;
+
+            if json {
+                println!("{}", serde_json::to_string_pretty(&tree)?);
+            } else {
+                print!("{}", tree.render_ascii());
+            }
+        }
+
+        EpisodeCommand::Tree {
+            session,
+            limit,
+            json,
+        } => {
+            let rollups = EpisodicPyramidEngine::zoom_out(store.as_ref(), session.as_deref(), limit)
+                .map_err(|e| anyhow::anyhow!("Failed to zoom out rollups: {e}"))?;
+
+            let mut trees = Vec::new();
+            for r in &rollups {
+                if let Some(tree) = EpisodicPyramidEngine::drill_down(store.as_ref(), &r.id)
+                    .map_err(|e| anyhow::anyhow!("Failed to drill down rollup '{}': {e}", r.id))?
+                {
+                    trees.push(tree);
+                }
+            }
+
+            if json {
+                println!("{}", serde_json::to_string_pretty(&trees)?);
+            } else {
+                if trees.is_empty() {
+                    println!("No Tier 2 rollups found.");
+                } else {
+                    println!("\n🌲 [Strata Episodic Memory Pyramid Trees ({} rollups)]", trees.len());
+                    println!("═══════════════════════════════════════════════════════════════════════");
+                    for tree in &trees {
+                        print!("{}", tree.render_ascii());
+                    }
+                }
             }
         }
     }

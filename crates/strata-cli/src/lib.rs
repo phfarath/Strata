@@ -1243,6 +1243,133 @@ pub fn process_data(msg: &str) {
     }
 
     #[tokio::test]
+    async fn test_mcp_and_cli_hierarchical_pyramid() {
+        use crate::commands::episode::{run_episode, EpisodeArgs, EpisodeCommand};
+        use crate::mcp::server::McpServer;
+        use strata_core::schemas::{EpisodeRecord, EpisodeStep};
+        use strata_memory::SqliteMemoryEngine;
+
+        let engine = Arc::new(SqliteMemoryEngine::open_in_memory(None).unwrap());
+        let store = engine.store_arc();
+        let server = McpServer::new_with_engine(Arc::clone(&engine));
+
+        // 1. Insert 2 episodes with shared task_id to form a cluster
+        let ep1 = EpisodeRecord::new("sess-pyr", "agent-1", "Step 1: Setup migration")
+            .with_task_id("task-cluster-1")
+            .with_salience(0.8)
+            .with_outcomes(vec!["Migration tables ready".to_string()])
+            .with_steps(vec![
+                EpisodeStep::new(0, "Create table auth_users").with_output(serde_json::json!({ "observation": "Table created" })),
+            ]);
+        let ep2 = EpisodeRecord::new("sess-pyr", "agent-2", "Step 2: Migrate JWT keys")
+            .with_task_id("task-cluster-1")
+            .with_salience(0.9)
+            .with_outcomes(vec!["JWT keys migrated".to_string()])
+            .with_steps(vec![
+                EpisodeStep::new(0, "Rotate HMAC secret").with_output(serde_json::json!({ "observation": "Secret updated" })),
+            ]);
+
+        store.write_episode(&ep1).unwrap();
+        store.write_episode(&ep2).unwrap();
+
+        // 2. Test CLI Rollup
+        let cli_rollup_args = EpisodeArgs {
+            command: EpisodeCommand::Rollup {
+                session: Some("sess-pyr".to_string()),
+                min_cluster: 2,
+                similarity: 0.70,
+                json: true,
+            },
+        };
+        assert!(run_episode(cli_rollup_args, Arc::clone(&store)).await.is_ok());
+
+        let rollups = store.list_episodes_by_tier(2, Some("sess-pyr"), 10).unwrap();
+        assert_eq!(rollups.len(), 1);
+        let rollup_id = rollups[0].id;
+
+        // 3. Test CLI DrillDown (both json and ascii)
+        let cli_drill_json = EpisodeArgs {
+            command: EpisodeCommand::DrillDown {
+                id: rollup_id.to_string(),
+                json: true,
+                ascii: false,
+            },
+        };
+        assert!(run_episode(cli_drill_json, Arc::clone(&store)).await.is_ok());
+
+        let cli_drill_ascii = EpisodeArgs {
+            command: EpisodeCommand::DrillDown {
+                id: rollup_id.to_string(),
+                json: false,
+                ascii: true,
+            },
+        };
+        assert!(run_episode(cli_drill_ascii, Arc::clone(&store)).await.is_ok());
+
+        // 4. Test CLI Tree
+        let cli_tree = EpisodeArgs {
+            command: EpisodeCommand::Tree {
+                session: Some("sess-pyr".to_string()),
+                limit: 10,
+                json: true,
+            },
+        };
+        assert!(run_episode(cli_tree, Arc::clone(&store)).await.is_ok());
+
+        // 5. Test MCP memory_episode_pyramid zoom_out
+        let mcp_zoom = server
+            .execute_tool(
+                "memory_episode_pyramid",
+                serde_json::json!({
+                    "action": "zoom_out",
+                    "session_id": "sess-pyr",
+                    "limit": 10
+                }),
+            )
+            .await;
+        assert!(mcp_zoom.is_error != Some(true));
+        assert!(mcp_zoom.content[0].text.contains("1 Tier 2 milestone rollups"));
+
+        // 6. Test MCP memory_episode_pyramid drill_down
+        let mcp_drill = server
+            .execute_tool(
+                "memory_episode_pyramid",
+                serde_json::json!({
+                    "action": "drill_down",
+                    "rollup_id": rollup_id.to_string()
+                }),
+            )
+            .await;
+        assert!(mcp_drill.is_error != Some(true));
+        assert!(mcp_drill.content[0].text.contains("Rollup"));
+
+        // 7. Test MCP memory_episode_pyramid tree
+        let mcp_tree = server
+            .execute_tool(
+                "memory_episode_pyramid",
+                serde_json::json!({
+                    "action": "tree",
+                    "session_id": "sess-pyr",
+                    "limit": 10
+                }),
+            )
+            .await;
+        assert!(mcp_tree.is_error != Some(true));
+
+        // 8. Test MCP memory_episode_pyramid rollup
+        let mcp_rollup = server
+            .execute_tool(
+                "memory_episode_pyramid",
+                serde_json::json!({
+                    "action": "rollup",
+                    "session_id": "sess-pyr"
+                }),
+            )
+            .await;
+        assert!(mcp_rollup.is_error != Some(true));
+    }
+
+    #[tokio::test]
     async fn test_autonomous_blackboard_worker_daemon_lifecycle() {
         use crate::commands::worker::{run_worker, WorkerArgs};
         use strata_core::blackboard::{TaskRecord, TaskStatus};
