@@ -51,6 +51,23 @@ impl Default for SubconsciousConfig {
     }
 }
 
+impl SubconsciousConfig {
+    /// Return the effective bypass importance threshold dynamically adapted to environmental volatility.
+    pub fn effective_bypass_threshold(&self, volatility: f32) -> f32 {
+        crate::metaplasticity::calculate_adapted_bypass_threshold(
+            self.bypass_importance_threshold,
+            volatility,
+        )
+    }
+
+    /// Return a new `SubconsciousConfig` with bypass importance threshold adapted to environmental volatility.
+    pub fn with_volatility(&self, volatility: f32) -> Self {
+        let mut cfg = self.clone();
+        cfg.bypass_importance_threshold = self.effective_bypass_threshold(volatility);
+        cfg
+    }
+}
+
 /// An entry in the subconscious buffer with precomputed embedding.
 #[derive(Debug, Clone)]
 pub struct SubconsciousEntry {
@@ -126,6 +143,17 @@ impl SubconsciousBuffer {
 
     pub fn with_default_config() -> Self {
         Self::new(SubconsciousConfig::default())
+    }
+
+    /// Return a new `SubconsciousBuffer` adapted to environmental volatility.
+    pub fn with_volatility(mut self, volatility: f32) -> Self {
+        self.config = self.config.with_volatility(volatility);
+        self
+    }
+
+    /// Set environmental volatility, adapting the bypass importance threshold.
+    pub fn set_volatility(&mut self, volatility: f32) {
+        self.config = self.config.with_volatility(volatility);
     }
 
     /// Ingest an event and evaluate gating decision.

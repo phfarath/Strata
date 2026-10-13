@@ -12,6 +12,7 @@ pub mod futility;
 pub mod ipc;
 pub mod jtms;
 pub mod leases;
+pub mod metaplasticity;
 pub mod pipeline;
 pub mod procedural_mining;
 pub mod retrieval;
@@ -64,6 +65,10 @@ pub use ipc::{
 };
 pub use jtms::{ConflictMatch, ConflictResolution, TruthMaintenanceSystem};
 pub use leases::StigmergyCoordinator;
+pub use metaplasticity::{
+    calculate_adapted_bypass_threshold, calculate_adapted_decay_stability,
+    calculate_adapted_prune_threshold, MetaplasticityConfig, MetaplasticityState,
+};
 pub use pipeline::{ConsolidationPipeline, ConsolidationResult, PipelineConfig};
 pub use procedural_mining::TrajectoryMiner;
 pub use retrieval::{HybridRanker, HybridRankerConfig};

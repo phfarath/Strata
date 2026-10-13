@@ -3453,3 +3453,178 @@ async fn test_record_memory_feedback_modulates_incident_edges() {
     assert!(pipe_edge.is_some(), "Pipe file -> mem edge should be present in memory_edges");
     assert!(pipe_edge.unwrap().weight > EdgeKind::MentionsFile.default_weight());
 }
+
+#[test]
+fn test_metaplasticity_threshold_adaptation_under_volatility() {
+    use crate::decay::DecayCalculator;
+    use crate::metaplasticity::{
+        calculate_adapted_bypass_threshold, calculate_adapted_decay_stability,
+        calculate_adapted_prune_threshold, MetaplasticityState,
+    };
+    use crate::subconscious::{GatingDecision, SubconsciousBuffer};
+    use chrono::{Duration, Utc};
+    use strata_core::events::Event;
+    use strata_core::state::MemoryTier;
+
+    // 1. Invariantes Matemáticas e Limites de Volatilidade
+    let base_s0 = 24.0;
+    let base_bypass = 0.90;
+    let base_prune = 0.05;
+
+    // Homeostase (volatilidade 0.0): limiares intocados
+    assert_eq!(calculate_adapted_decay_stability(base_s0, 0.0), 24.0);
+    assert_eq!(calculate_adapted_bypass_threshold(base_bypass, 0.0), 0.90);
+    assert_eq!(calculate_adapted_prune_threshold(base_prune, 0.0), 0.05);
+
+    // Alta volatilidade (0.8): bypass reduz para 0.75, s0 cai para 14.4, prune sobe para 0.09
+    let s0_high = calculate_adapted_decay_stability(base_s0, 0.8);
+    let bypass_high = calculate_adapted_bypass_threshold(base_bypass, 0.8);
+    let prune_high = calculate_adapted_prune_threshold(base_prune, 0.8);
+
+    assert!(
+        bypass_high < base_bypass,
+        "Limiar de bypass deve diminuir em alta volatilidade"
+    );
+    assert!(
+        (bypass_high - 0.75).abs() < 1e-4,
+        "Limiar de bypass adaptado deve ser 0.75 para volatilidade 0.8 (obtido: {bypass_high})"
+    );
+    assert!(
+        s0_high < base_s0,
+        "Estabilidade de decaimento deve diminuir em alta volatilidade"
+    );
+    assert!(
+        (s0_high - 14.4).abs() < 1e-4,
+        "Estabilidade s0 adaptada deve ser 14.4 para volatilidade 0.8 (obtido: {s0_high})"
+    );
+    assert!(
+        prune_high > base_prune,
+        "Limiar de poda deve subir para acelerar expiração em alta volatilidade"
+    );
+    assert!(
+        (prune_high - 0.09).abs() < 1e-4,
+        "Limiar de poda adaptado deve ser 0.09 para volatilidade 0.8 (obtido: {prune_high})"
+    );
+
+    // Limites matemáticos invioláveis contra valores fora de escala (negativos e > 1.0)
+    for v in [-100.0, -1.0, 0.0, 0.5, 0.8, 1.0, 2.0, 100.0] {
+        let s0 = calculate_adapted_decay_stability(base_s0, v);
+        let bypass = calculate_adapted_bypass_threshold(base_bypass, v);
+        let prune = calculate_adapted_prune_threshold(base_prune, v);
+
+        assert!(s0 > 0.0, "Estabilidade nunca deve ser negativa ou zero: {s0}");
+        assert!(bypass > 0.0 && bypass <= 1.0, "Bypass deve estar em (0, 1]: {bypass}");
+        assert!(prune > 0.0 && prune <= 1.0, "Prune deve estar em (0, 1]: {prune}");
+        assert!(s0 <= base_s0, "Estabilidade nunca excede a base: {s0}");
+        assert!(bypass <= base_bypass, "Bypass nunca excede a base: {bypass}");
+        assert!(prune >= base_prune, "Prune nunca fica abaixo da base: {prune}");
+    }
+
+    // 2. Adaptação do Subconsciente: Assimilação rápida de regras (Bypass imediato)
+    let event = Event::new(
+        "sess-1",
+        "agent-1",
+        strata_core::events::EventPayload::ObservationReceived(strata_core::events::ObservationReceived {
+            session_id: "sess-1".to_string(),
+            source: "user".to_string(),
+            content: serde_json::json!("Refactoring database schema"),
+            observation_type: "directive".to_string(),
+            timestamp: Utc::now(),
+        }),
+    );
+    let embedding = vec![0.1; 64];
+    let event_importance = 0.80; // Entre 0.75 e 0.90
+
+    // Buffer estável (volatilidade 0.0): importância 0.80 < 0.90 -> retido no buffer
+    let mut buffer_stable = SubconsciousBuffer::with_default_config().with_volatility(0.0);
+    let decision_stable = buffer_stable.ingest(event.clone(), embedding.clone(), event_importance);
+    assert!(
+        matches!(decision_stable, GatingDecision::HoldInBuffer { .. }),
+        "Em ambiente estável, evento de importância 0.80 deve ser retido no buffer (bypass é 0.90)"
+    );
+
+    // Buffer volátil (volatilidade 0.8): importância 0.80 >= 0.75 -> bypass imediato!
+    let mut buffer_volatile = SubconsciousBuffer::with_default_config().with_volatility(0.8);
+    let decision_volatile = buffer_volatile.ingest(event, embedding, event_importance);
+    assert!(
+        matches!(decision_volatile, GatingDecision::BypassImmediate { .. }),
+        "Em ambiente volátil, evento de importância 0.80 deve bypassar imediatamente (bypass adaptado é 0.75)"
+    );
+
+    // 3. Aceleração do Decaimento Periférico sob Alta Volatilidade
+    let calc_stable = DecayCalculator::with_default_config().with_volatility(0.0);
+    let calc_volatile = DecayCalculator::with_default_config().with_volatility(0.8);
+
+    let now = Utc::now();
+    let created_24h_ago = now - Duration::hours(24);
+    let created_48h_ago = now - Duration::hours(48);
+
+    // Após 24h: retenção sob volatilidade é estritamente menor que estável
+    let metrics_24h_stable = calc_stable.evaluate_decay_with_tier(
+        MemoryTier::Peripheral,
+        0.5,
+        1.0,
+        created_24h_ago,
+        &[],
+        now,
+    );
+    let metrics_24h_volatile = calc_volatile.evaluate_decay_with_tier(
+        MemoryTier::Peripheral,
+        0.5,
+        1.0,
+        created_24h_ago,
+        &[],
+        now,
+    );
+
+    assert!(
+        metrics_24h_volatile.retention < metrics_24h_stable.retention,
+        "Retenção sob volatilidade ({}) deve ser menor que estável ({})",
+        metrics_24h_volatile.retention,
+        metrics_24h_stable.retention
+    );
+
+    // Após 48h: sob alta volatilidade a memória antiga já expirou para poda rápida,
+    // enquanto no modo estável ela ainda permanece viva
+    let metrics_48h_stable = calc_stable.evaluate_decay_with_tier(
+        MemoryTier::Peripheral,
+        0.5,
+        1.0,
+        created_48h_ago,
+        &[],
+        now,
+    );
+    let metrics_48h_volatile = calc_volatile.evaluate_decay_with_tier(
+        MemoryTier::Peripheral,
+        0.5,
+        1.0,
+        created_48h_ago,
+        &[],
+        now,
+    );
+
+    assert!(
+        !metrics_48h_stable.is_expired,
+        "No modo estável, fato periférico com 48h ainda não deve ter expirado (retention ~ 0.135 > 0.05)"
+    );
+    assert!(
+        metrics_48h_volatile.is_expired,
+        "No modo volátil, fato periférico antigo de 48h deve expirar aceleradamente para descarte rápido (retention ~ 0.035 < 0.09)"
+    );
+
+    // 4. Ciclo de Homeostase no MetaplasticityState
+    let mut state = MetaplasticityState::default();
+    assert_eq!(state.volatility, 0.0);
+
+    // Registra turbulências ambientais (ex: refatorações frequentes)
+    state.record_environmental_turbulence(1.0);
+    assert!(state.volatility > 0.0);
+    let vol_after_events = state.volatility;
+
+    // Conforme o tempo passa sem alterações, relaxa suavemente de volta à homeostase
+    state.decay_towards_homeostasis(3600.0);
+    assert!(state.volatility < vol_after_events);
+    state.decay_towards_homeostasis(36000.0);
+    assert_eq!(state.volatility, 0.0);
+}
+
