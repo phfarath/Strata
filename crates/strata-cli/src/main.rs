@@ -42,6 +42,7 @@ use strata_cli::{
         worker::{run_worker, WorkerArgs},
         train::{run_train, TrainArgs},
         transfer::{run_transfer, TransferArgs},
+        watch::{run_watch, WatchArgs},
         workspace::{run_workspace, WorkspaceArgs},
     },
     mcp::server::McpServer,
@@ -330,6 +331,10 @@ enum Commands {
         alias = "sync-anchors"
     )]
     Reconcile(ReconcileArgs),
+
+    /// Watch workspace files in real-time for AST code drift and invalidate JTMS beliefs
+    #[command(name = "watch", alias = "drift-watch")]
+    Watch(WatchArgs),
 
     /// Agent-to-Agent (A2A) stigmergic coordination and temporal resource leases
     #[command(name = "a2a", alias = "stigmergy", alias = "leases")]
@@ -766,6 +771,10 @@ async fn main() -> Result<()> {
         Commands::Reconcile(args) => {
             let store = engine.store_arc();
             run_reconcile(args, store).await?;
+        }
+
+        Commands::Watch(args) => {
+            run_watch(args, engine.store_arc()).await?;
         }
 
         Commands::A2a(args) => {
