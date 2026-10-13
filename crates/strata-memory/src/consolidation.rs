@@ -106,6 +106,16 @@ impl Consolidator {
         Ok(records)
     }
 
+    /// Stable signature for a tool failure: tool name plus normalized error message.
+    pub fn failure_signature(tool_name: &str, error_msg: &str) -> String {
+        let normalized_error = normalize_error_message(error_msg);
+        let mut hasher = DefaultHasher::new();
+        tool_name.hash(&mut hasher);
+        normalized_error.hash(&mut hasher);
+        let sig_hash = hasher.finish();
+        format!("fail:{tool_name}:{sig_hash:016x}")
+    }
+
     /// Record a tool failure and consolidate it into the failure_patterns store.
     pub fn record_tool_failure(
         &self,
@@ -115,13 +125,7 @@ impl Consolidator {
         context: &str,
         scope: Option<&Scope>,
     ) -> Result<FailurePattern, StrataError> {
-        // Build normalized signature
-        let normalized_error = normalize_error_message(error_msg);
-        let mut hasher = DefaultHasher::new();
-        tool_name.hash(&mut hasher);
-        normalized_error.hash(&mut hasher);
-        let sig_hash = hasher.finish();
-        let signature = format!("fail:{tool_name}:{sig_hash:016x}");
+        let signature = Self::failure_signature(tool_name, error_msg);
 
         let pattern_name = format!("ToolFailure_{tool_name}");
         let description = format!("Tool '{tool_name}' failed: {error_msg}");
