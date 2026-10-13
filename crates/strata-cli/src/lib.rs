@@ -70,6 +70,8 @@ mod tests {
             ),
             params: Some("--package strata-xyz".to_string()),
             context: Some("build_step".to_string()),
+            agent: None,
+            task: None,
         };
         handle_hook(post_tool, Arc::clone(&engine))
             .await

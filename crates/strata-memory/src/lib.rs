@@ -52,7 +52,7 @@ pub use compiler::{
 };
 pub use consolidation::{Consolidator, NeuroSymbolicConsolidator};
 pub use decay::{DecayCalculator, PruneReport};
-pub use futility::{FutilityAccumulator, Signal as FutilitySignal, Verdict as FutilityVerdict};
+pub use futility::{record_shadow_failure, record_shadow_success, FutilityAccumulator, FutilityTraceRow, Signal as FutilitySignal, Verdict as FutilityVerdict};
 pub use embedding::{
     bytes_to_embedding, cosine_similarity, embedding_to_bytes, EmbeddingProvider,
     FastEmbedProvider, MockEmbeddingProvider,
