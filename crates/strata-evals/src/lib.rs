@@ -30,6 +30,7 @@ pub async fn run_all_scenarios() -> Result<()> {
     run_a2a_swarm_stress_benchmark_scenario().await?;
     run_pluggable_reasoning_cascade_scenario().await?;
     run_consolidation_ab_benchmark_scenario().await?;
+    run_agent_loop_futility_baseline_scenario().await?;
 
     println!("\n========================================================");
     println!("🎉 ALL EVAL SCENARIOS PASSED (20/20)");
@@ -193,5 +194,12 @@ mod tests {
         run_consolidation_ab_benchmark_scenario()
             .await
             .expect("Consolidation A/B benchmark scenario failed");
+    }
+
+    #[tokio::test]
+    async fn test_eval_agent_loop_futility_baseline() {
+        run_agent_loop_futility_baseline_scenario()
+            .await
+            .expect("Agent loop futility baseline scenario failed");
     }
 }
