@@ -71,7 +71,7 @@ pub use spreading_activation::{
     EdgeKind, GraphEdge, GraphNode, KnowledgeGraph, SpreadingActivationConfig,
     SpreadingActivationEngine,
 };
-pub use store::SqliteStore;
+pub use store::{MemoryEdgeRecord, SqliteStore};
 pub use strata_core::schemas::{
     CodeAnchor, ContextBudgetConfig, ExportFormat, FeedbackEvent, FeedbackRating, HostTargetConfig,
     ImplicitSignal, KtoSample, MemoryFeedback, PreferencePair, SemanticFact, SftSample, SignalKind,

@@ -55,6 +55,30 @@ impl GraphNode {
             _ => None,
         }
     }
+
+    /// Formats a persistent, unique string identifier for SQLite storage and tripartite modulation.
+    pub fn canonical_id(&self) -> String {
+        match self {
+            GraphNode::Memory(id) => format!("mem:{}", id),
+            GraphNode::Fact(id) => format!("fact:{}", id),
+            GraphNode::Symbol(s) => format!("sym:{}", s),
+            GraphNode::File(f) => format!("file:{}", f),
+            GraphNode::Concept(c) => format!("concept:{}", c),
+        }
+    }
+
+    /// Parses a canonical string identifier back into a GraphNode.
+    pub fn parse_canonical(s: &str) -> Option<Self> {
+        let (prefix, rest) = s.split_once(':')?;
+        match prefix {
+            "mem" => Uuid::parse_str(rest).ok().map(GraphNode::Memory),
+            "fact" => Uuid::parse_str(rest).ok().map(GraphNode::Fact),
+            "sym" => Some(GraphNode::Symbol(rest.to_string())),
+            "file" => Some(GraphNode::File(rest.to_string())),
+            "concept" => Some(GraphNode::Concept(rest.to_string())),
+            _ => None,
+        }
+    }
 }
 
 /// Semantic relationship categories connecting nodes in the Knowledge Graph.
@@ -83,6 +107,29 @@ impl EdgeKind {
             EdgeKind::Calls => 0.75,
             EdgeKind::CoOccurred => 0.60,
             EdgeKind::SharedTag => 0.50,
+        }
+    }
+
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            EdgeKind::Supports => "Supports",
+            EdgeKind::ReferencesSymbol => "ReferencesSymbol",
+            EdgeKind::MentionsFile => "MentionsFile",
+            EdgeKind::Calls => "Calls",
+            EdgeKind::CoOccurred => "CoOccurred",
+            EdgeKind::SharedTag => "SharedTag",
+        }
+    }
+
+    pub fn from_str_kind(s: &str) -> Option<Self> {
+        match s {
+            "Supports" => Some(EdgeKind::Supports),
+            "ReferencesSymbol" => Some(EdgeKind::ReferencesSymbol),
+            "MentionsFile" => Some(EdgeKind::MentionsFile),
+            "Calls" => Some(EdgeKind::Calls),
+            "CoOccurred" => Some(EdgeKind::CoOccurred),
+            "SharedTag" => Some(EdgeKind::SharedTag),
+            _ => None,
         }
     }
 }
@@ -165,6 +212,25 @@ impl KnowledgeGraph {
         self.add_directed_edge(a.clone(), b.clone(), weight, kind);
         // Back-link has slightly attenuated energy diffusion (85% of forward weight)
         self.add_directed_edge(b, a, weight * 0.85, kind);
+    }
+
+    /// Sets or adjusts synaptic conductance/weight for an existing directed edge.
+    /// Clamps weight strictly within [0.05, 1.00].
+    pub fn set_edge_weight(&mut self, from: &GraphNode, to: &GraphNode, kind: EdgeKind, weight: f32) -> bool {
+        if let Some(edges) = self.adj.get_mut(from) {
+            if let Some(edge) = edges.iter_mut().find(|e| &e.target == to && e.kind == kind) {
+                edge.weight = weight.clamp(0.05, 1.0);
+                return true;
+            }
+        }
+        false
+    }
+
+    /// Retrieves current synaptic conductance/weight for a directed edge.
+    pub fn get_edge_weight(&self, from: &GraphNode, to: &GraphNode, kind: EdgeKind) -> Option<f32> {
+        self.adj.get(from).and_then(|edges| {
+            edges.iter().find(|e| &e.target == to && e.kind == kind).map(|e| e.weight)
+        })
     }
 
     pub fn neighbors(&self, node: &GraphNode) -> &[GraphEdge] {
@@ -418,6 +484,19 @@ impl SpreadingActivationEngine {
                     EdgeKind::MentionsFile.default_weight(),
                     EdgeKind::MentionsFile,
                 );
+            }
+        }
+
+        // 4. Overlay learned synaptic weights from tripartite modulation (SQLite memory_edges)
+        if let Ok(learned_edges) = store.get_all_memory_edges() {
+            for edge_row in learned_edges {
+                if let (Some(source_node), Some(target_node), Some(kind)) = (
+                    GraphNode::parse_canonical(&edge_row.source_id),
+                    GraphNode::parse_canonical(&edge_row.target_id),
+                    EdgeKind::from_str_kind(&edge_row.edge_kind),
+                ) {
+                    graph.set_edge_weight(&source_node, &target_node, kind, edge_row.weight);
+                }
             }
         }
 
