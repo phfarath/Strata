@@ -15,6 +15,7 @@ pub mod leases;
 pub mod metaplasticity;
 pub mod pipeline;
 pub mod procedural_mining;
+pub mod pyramid;
 pub mod retrieval;
 pub mod spreading_activation;
 pub mod store;
@@ -71,6 +72,7 @@ pub use metaplasticity::{
 };
 pub use pipeline::{ConsolidationPipeline, ConsolidationResult, PipelineConfig};
 pub use procedural_mining::TrajectoryMiner;
+pub use pyramid::{DrillDownTree, EpisodicPyramidEngine, PyramidConfig};
 pub use retrieval::{HybridRanker, HybridRankerConfig};
 pub use spreading_activation::{
     EdgeKind, GraphEdge, GraphNode, KnowledgeGraph, SpreadingActivationConfig,
