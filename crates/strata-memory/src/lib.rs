@@ -8,6 +8,7 @@ pub mod consolidation;
 pub mod decay;
 pub mod embedding;
 pub mod enricher;
+pub mod futility;
 pub mod ipc;
 pub mod jtms;
 pub mod leases;
@@ -51,6 +52,7 @@ pub use compiler::{
 };
 pub use consolidation::{Consolidator, NeuroSymbolicConsolidator};
 pub use decay::{DecayCalculator, PruneReport};
+pub use futility::{FutilityAccumulator, Signal as FutilitySignal, Verdict as FutilityVerdict};
 pub use embedding::{
     bytes_to_embedding, cosine_similarity, embedding_to_bytes, EmbeddingProvider,
     FastEmbedProvider, MockEmbeddingProvider,
