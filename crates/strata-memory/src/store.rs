@@ -25,6 +25,18 @@ use crate::call_graph::{CallEdge, CallType};
 use crate::community::ArchitectureGraphSummary;
 use crate::embedding::{bytes_to_embedding, embedding_to_bytes};
 
+/// A modulated synaptic edge between two graph nodes in the Knowledge Graph.
+#[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
+pub struct MemoryEdgeRecord {
+    pub source_id: String,
+    pub target_id: String,
+    pub edge_kind: String,
+    pub weight: f32,
+    pub reinforcements: u32,
+    pub depressions: u32,
+    pub last_feedback_at: DateTime<Utc>,
+}
+
 pub struct SqliteStore {
     conn: Arc<Mutex<Connection>>,
 }
@@ -675,6 +687,21 @@ impl SqliteStore {
             CREATE INDEX IF NOT EXISTS idx_episodes_session ON episodes(session_id);
             CREATE INDEX IF NOT EXISTS idx_episodes_agent ON episodes(agent_id);
             CREATE INDEX IF NOT EXISTS idx_episodes_consolidated ON episodes(consolidated);
+
+            -- Tripartite Synapse Modulated Edges Table
+            CREATE TABLE IF NOT EXISTS memory_edges (
+                source_id TEXT NOT NULL,
+                target_id TEXT NOT NULL,
+                edge_kind TEXT NOT NULL,
+                weight REAL NOT NULL,
+                reinforcements INTEGER NOT NULL DEFAULT 0,
+                depressions INTEGER NOT NULL DEFAULT 0,
+                last_feedback_at TEXT NOT NULL,
+                PRIMARY KEY (source_id, target_id, edge_kind)
+            );
+
+            CREATE INDEX IF NOT EXISTS idx_memory_edges_source ON memory_edges(source_id);
+            CREATE INDEX IF NOT EXISTS idx_memory_edges_target ON memory_edges(target_id);
             ",
         )
         .map_err(|e| StrataError::Database(format!("Failed to execute schema migration: {e}")))?;
@@ -3589,7 +3616,196 @@ impl SqliteStore {
             ],
         );
 
+        drop(conn);
+
+        // 7. Modulate incident synaptic edges (Tripartite Synapse outcome plasticity)
+        let is_positive = feedback.rating.as_str() == "positive";
+        let _ = self.modulate_incident_edges_for_memory(
+            &feedback.memory_id,
+            is_positive,
+            effective_score as f32,
+        );
+
         Ok(())
+    }
+
+    /// Records feedback on a directed associative edge (source_id -> target_id) with soft-saturation LTP or exponential LTD.
+    pub fn record_edge_feedback(
+        &self,
+        source_id: &str,
+        target_id: &str,
+        edge_kind: &str,
+        positive: bool,
+        score: f32,
+    ) -> Result<f32, StrataError> {
+        let conn = self
+            .conn
+            .lock()
+            .map_err(|_| StrataError::Database("Lock poisoned on SQLite connection".to_string()))?;
+        let now_str = Utc::now().to_rfc3339();
+
+        let existing: Option<(f32, u32, u32)> = conn
+            .query_row(
+                "SELECT weight, reinforcements, depressions FROM memory_edges WHERE source_id = ?1 AND target_id = ?2 AND edge_kind = ?3",
+                params![source_id, target_id, edge_kind],
+                |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)),
+            )
+            .optional()
+            .map_err(|e| StrataError::Database(e.to_string()))?;
+
+        let (current_w, mut r_cnt, mut d_cnt) = match existing {
+            Some((w, r, d)) => (w, r, d),
+            None => {
+                let default_w = crate::spreading_activation::EdgeKind::from_str_kind(edge_kind)
+                    .map(|k| k.default_weight())
+                    .unwrap_or(0.70);
+                (default_w, 0, 0)
+            }
+        };
+
+        let effective_score = if score <= 0.0 { 1.0 } else { score.min(1.0) };
+        let new_w = if positive {
+            r_cnt += 1;
+            (current_w + 0.15 * effective_score * (1.0 - current_w)).clamp(0.05, 1.0)
+        } else {
+            d_cnt += 1;
+            (current_w - 0.20 * effective_score * current_w).clamp(0.05, 1.0)
+        };
+
+        conn.execute(
+            "INSERT INTO memory_edges (source_id, target_id, edge_kind, weight, reinforcements, depressions, last_feedback_at)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)
+             ON CONFLICT(source_id, target_id, edge_kind) DO UPDATE SET
+                 weight = excluded.weight,
+                 reinforcements = excluded.reinforcements,
+                 depressions = excluded.depressions,
+                 last_feedback_at = excluded.last_feedback_at",
+            params![source_id, target_id, edge_kind, new_w, r_cnt, d_cnt, now_str],
+        )
+        .map_err(|e| StrataError::Database(format!("Failed to record edge feedback: {e}")))?;
+
+        Ok(new_w)
+    }
+
+    /// Retrieves all modulated memory edges stored in SQLite.
+    pub fn get_all_memory_edges(&self) -> Result<Vec<MemoryEdgeRecord>, StrataError> {
+        let conn = self
+            .conn
+            .lock()
+            .map_err(|_| StrataError::Database("Lock poisoned on SQLite connection".to_string()))?;
+
+        let mut stmt = conn
+            .prepare(
+                "SELECT source_id, target_id, edge_kind, weight, reinforcements, depressions, last_feedback_at
+                 FROM memory_edges",
+            )
+            .map_err(|e| StrataError::Database(e.to_string()))?;
+
+        let rows = stmt
+            .query_map([], |row| {
+                let last_feedback_str: String = row.get(6)?;
+                let last_feedback_at = DateTime::parse_from_rfc3339(&last_feedback_str)
+                    .map(|dt| dt.with_timezone(&Utc))
+                    .unwrap_or_else(|_| Utc::now());
+                Ok(MemoryEdgeRecord {
+                    source_id: row.get(0)?,
+                    target_id: row.get(1)?,
+                    edge_kind: row.get(2)?,
+                    weight: row.get(3)?,
+                    reinforcements: row.get(4)?,
+                    depressions: row.get(5)?,
+                    last_feedback_at,
+                })
+            })
+            .map_err(|e| StrataError::Database(e.to_string()))?;
+
+        let mut results = Vec::new();
+        for r in rows {
+            results.push(r.map_err(|e| StrataError::Database(e.to_string()))?);
+        }
+        Ok(results)
+    }
+
+    /// Modulates incident edges (incoming from tags, symbols, files) for a memory upon feedback.
+    pub fn modulate_incident_edges_for_memory(
+        &self,
+        memory_id: &Uuid,
+        positive: bool,
+        score: f32,
+    ) -> Result<usize, StrataError> {
+        let mem = match self.get_memory(memory_id)? {
+            Some(m) => m,
+            None => return Ok(0),
+        };
+        let target_key = crate::spreading_activation::GraphNode::memory(*memory_id).canonical_id();
+        let mut count = 0;
+
+        // Modulate tags / concepts
+        for tag in &mem.tags {
+            let concept_key = crate::spreading_activation::GraphNode::concept(tag).canonical_id();
+            let _ = self.record_edge_feedback(
+                &concept_key,
+                &target_key,
+                crate::spreading_activation::EdgeKind::SharedTag.as_str(),
+                positive,
+                score,
+            )?;
+            let _ = self.record_edge_feedback(
+                &target_key,
+                &concept_key,
+                crate::spreading_activation::EdgeKind::SharedTag.as_str(),
+                positive,
+                score,
+            )?;
+            count += 2;
+        }
+
+        // Modulate metadata files & symbols
+        if let Some(obj) = mem.metadata.as_object() {
+            if let Some(fps) = obj.get("file_paths").and_then(|v| v.as_array()) {
+                for fp in fps.iter().filter_map(|v| v.as_str()) {
+                    let file_key = crate::spreading_activation::GraphNode::file(fp).canonical_id();
+                    let _ = self.record_edge_feedback(
+                        &file_key,
+                        &target_key,
+                        crate::spreading_activation::EdgeKind::MentionsFile.as_str(),
+                        positive,
+                        score,
+                    )?;
+                    let _ = self.record_edge_feedback(
+                        &target_key,
+                        &file_key,
+                        crate::spreading_activation::EdgeKind::MentionsFile.as_str(),
+                        positive,
+                        score,
+                    )?;
+                    count += 2;
+                }
+            }
+
+            if let Some(syms) = obj.get("symbols").and_then(|v| v.as_array()) {
+                for sym in syms.iter().filter_map(|v| v.as_str()) {
+                    let sym_key = crate::spreading_activation::GraphNode::symbol(sym).canonical_id();
+                    let _ = self.record_edge_feedback(
+                        &sym_key,
+                        &target_key,
+                        crate::spreading_activation::EdgeKind::ReferencesSymbol.as_str(),
+                        positive,
+                        score,
+                    )?;
+                    let _ = self.record_edge_feedback(
+                        &target_key,
+                        &sym_key,
+                        crate::spreading_activation::EdgeKind::ReferencesSymbol.as_str(),
+                        positive,
+                        score,
+                    )?;
+                    count += 2;
+                }
+            }
+        }
+
+        Ok(count)
     }
 
     /// Retrieve value from sync_metadata table.

@@ -3331,3 +3331,125 @@ fn test_consolidate_episodes_with_jtms_conflict_resolution() {
     let result2 = store.consolidate_episodes(Some("sess-migration")).expect("consolidate 2");
     assert_eq!(result2.episodes_processed, 0);
 }
+
+#[tokio::test]
+async fn test_tripartite_synapse_outcome_plasticity() {
+    use crate::spreading_activation::{EdgeKind, GraphNode, SpreadingActivationEngine};
+    use crate::store::SqliteStore;
+    use strata_core::state::{MemoryRecord, MemoryType, Scope};
+    use std::sync::Arc;
+
+    let store = Arc::new(SqliteStore::open_in_memory().expect("open sqlite"));
+
+    // 1. Cria nós: Arquivo âncora e duas memórias competidoras associadas ao mesmo arquivo
+    let anchor_file = "src/security/firewall.rs";
+    let file_node = GraphNode::file(anchor_file);
+
+    let mut mem_good = MemoryRecord::new(
+        MemoryType::Semantic,
+        "Allow rule for TCP port 443 must precede drop rule",
+        Scope::Project("firewall".to_string()),
+    );
+    mem_good.metadata = serde_json::json!({ "file_paths": [anchor_file] });
+    store.insert_or_update_memory(&mem_good).unwrap();
+
+    let mut mem_bad = MemoryRecord::new(
+        MemoryType::Semantic,
+        "Disable security firewall completely to bypass errors",
+        Scope::Project("firewall".to_string()),
+    );
+    mem_bad.metadata = serde_json::json!({ "file_paths": [anchor_file] });
+    store.insert_or_update_memory(&mem_bad).unwrap();
+
+    let engine = SpreadingActivationEngine::with_default_config();
+
+    // 2. Propagação inicial a partir do arquivo âncora: ambas memórias devem receber energias próximas
+    let graph_initial = engine.build_graph_from_store(&store, None).unwrap();
+    let seeds = vec![(file_node.clone(), 1.0)];
+    let act_initial = engine.propagate(&graph_initial, &seeds);
+
+    let e_good_0 = *act_initial.get(&GraphNode::memory(mem_good.id)).unwrap_or(&0.0);
+    let e_bad_0 = *act_initial.get(&GraphNode::memory(mem_bad.id)).unwrap_or(&0.0);
+    assert!(e_good_0 > 0.3, "Memória boa deve ser ativada inicialmente");
+    assert!(e_bad_0 > 0.3, "Memória ruim deve ser ativada inicialmente");
+
+    // 3. Aplica Depressão de Longa Duração (LTD) na memória ruim (desfecho negativo / falha)
+    store.record_edge_feedback(
+        &file_node.canonical_id(),
+        &GraphNode::memory(mem_bad.id).canonical_id(),
+        EdgeKind::MentionsFile.as_str(),
+        false, // negative
+        1.0,
+    ).unwrap();
+
+    // 4. Aplica Potenciação de Longa Duração (LTP) na memória boa (sucesso / reforço)
+    store.record_edge_feedback(
+        &file_node.canonical_id(),
+        &GraphNode::memory(mem_good.id).canonical_id(),
+        EdgeKind::MentionsFile.as_str(),
+        true, // positive
+        1.0,
+    ).unwrap();
+
+    // 5. Re-constrói o grafo a partir do store e re-executa a difusão
+    let graph_plastic = engine.build_graph_from_store(&store, None).unwrap();
+    let act_plastic = engine.propagate(&graph_plastic, &seeds);
+
+    let e_good_1 = *act_plastic.get(&GraphNode::memory(mem_good.id)).unwrap_or(&0.0);
+    let e_bad_1 = *act_plastic.get(&GraphNode::memory(mem_bad.id)).unwrap_or(&0.0);
+
+    // INVARIANTES DA SINAPSE TRIPARTITE:
+    // A memória reforçada deve ter ganho condutância (E_good_1 > E_good_0)
+    assert!(
+        e_good_1 > e_good_0,
+        "LTP falhou: energia boa após reforço ({e_good_1}) deve ser maior que inicial ({e_good_0})"
+    );
+    // A memória deprimida deve ter perdido condutância (E_bad_1 < E_bad_0)
+    assert!(
+        e_bad_1 < e_bad_0,
+        "LTD falhou: energia ruim após depressão ({e_bad_1}) deve ser menor que inicial ({e_bad_0})"
+    );
+    // A rota boa deve superar a ruim com folga (>25% de separação em um único pulso)
+    assert!(
+        e_good_1 > e_bad_1 * 1.25,
+        "Divergência sináptica insuficiente: good={e_good_1}, bad={e_bad_1}"
+    );
+}
+
+#[tokio::test]
+async fn test_record_memory_feedback_modulates_incident_edges() {
+    use crate::spreading_activation::{EdgeKind, GraphNode};
+    use crate::store::SqliteStore;
+    use strata_core::schemas::MemoryFeedback;
+    use strata_core::state::{MemoryRecord, MemoryType, Scope};
+    use std::sync::Arc;
+
+    let store = Arc::new(SqliteStore::open_in_memory().expect("open sqlite"));
+    let mut mem = MemoryRecord::new(
+        MemoryType::Semantic,
+        "Use bounded frames in named pipes to prevent buffer bloat",
+        Scope::Global,
+    );
+    mem.tags = vec!["networking".to_string(), "ipc".to_string()];
+    mem.metadata = serde_json::json!({ "file_paths": ["src/ipc/pipe.rs"] });
+    store.insert_or_update_memory(&mem).unwrap();
+
+    // Record positive feedback via store
+    let fb = MemoryFeedback {
+        memory_id: mem.id,
+        rating: "positive".to_string(),
+        score: Some(1.0),
+        comment: Some("Prevented a crash in production".to_string()),
+        created_at: chrono::Utc::now(),
+    };
+    store.record_memory_feedback(&fb).unwrap();
+
+    // Verify memory_edges got populated
+    let edges = store.get_all_memory_edges().unwrap();
+    assert!(!edges.is_empty(), "Incident edges should be modulated on memory feedback");
+    let file_key = GraphNode::file("src/ipc/pipe.rs").canonical_id();
+    let mem_key = GraphNode::memory(mem.id).canonical_id();
+    let pipe_edge = edges.iter().find(|e| e.source_id == file_key && e.target_id == mem_key);
+    assert!(pipe_edge.is_some(), "Pipe file -> mem edge should be present in memory_edges");
+    assert!(pipe_edge.unwrap().weight > EdgeKind::MentionsFile.default_weight());
+}
