@@ -28,10 +28,7 @@ pub struct A2aSwarmStressBenchmark;
 
 impl A2aSwarmStressBenchmark {
     pub async fn run_benchmark() -> Result<SwarmStressBenchmarkResult, StrataError> {
-        let temp_dir = std::env::temp_dir().join(format!(
-            "strata_swarm_stress_{}",
-            Utc::now().timestamp_nanos_opt().unwrap_or(0)
-        ));
+        let temp_dir = std::env::temp_dir().join(format!("strata_swarm_stress_{}", Utc::now().timestamp_nanos_opt().unwrap_or(0)));
         let _ = std::fs::create_dir_all(&temp_dir);
         let db_path = temp_dir.join("swarm_stress.db");
         let _ = std::fs::remove_file(&db_path);
@@ -53,7 +50,7 @@ impl A2aSwarmStressBenchmark {
         for i in 0..num_tasks {
             let task_id = format!("stress-task-{:02}", i);
             let mut record = TaskRecord::new(&task_id, format!("Stress task #{}", i));
-
+            
             // Assign contested resources to induce lease arbitration
             if i < 6 {
                 record.required_resources = vec!["res:crate:strata-core".to_string()];
@@ -83,12 +80,7 @@ impl A2aSwarmStressBenchmark {
         coordinator.create_task(&zombie_task)?;
 
         // Acquire lock on behalf of zombie agent
-        let _ = coordinator.acquire_lease(
-            "res:zombie-lock",
-            "zombie-agent-died",
-            1,
-            Some("task:stress-zombie-task"),
-        )?;
+        let _ = coordinator.acquire_lease("res:zombie-lock", "zombie-agent-died", 1, Some("task:stress-zombie-task"))?;
 
         let start_time = Instant::now();
 
@@ -143,8 +135,7 @@ impl A2aSwarmStressBenchmark {
                                 status: Some(TaskStatus::Completed),
                                 ..Default::default()
                             };
-                            let completed_count =
-                                coord.list_tasks(&filter).unwrap_or_default().len();
+                            let completed_count = coord.list_tasks(&filter).unwrap_or_default().len();
                             if completed_count > num_tasks {
                                 break;
                             }
@@ -189,9 +180,7 @@ impl A2aSwarmStressBenchmark {
 
         // 5. Verification & Invariant Checks
         let zombie_record = coordinator.get_task(zombie_task_id)?;
-        let zombie_completed = zombie_record
-            .map(|t| t.status == TaskStatus::Completed)
-            .unwrap_or(false);
+        let zombie_completed = zombie_record.map(|t| t.status == TaskStatus::Completed).unwrap_or(false);
 
         let filter_done = TaskFilter {
             status: Some(TaskStatus::Completed),
@@ -227,63 +216,21 @@ pub async fn run_a2a_swarm_stress_benchmark_scenario() -> Result<()> {
 
     let result = A2aSwarmStressBenchmark::run_benchmark().await?;
 
-    println!(
-        "🤖 Concurrent Virtual Agents:        {}",
-        result.virtual_agents_count
-    );
-    println!(
-        "📋 Total Tasks Scheduled:            {}",
-        result.total_tasks_scheduled
-    );
-    println!(
-        "✅ Total Tasks Completed:            {}",
-        result.total_tasks_completed
-    );
-    println!(
-        "🔒 Lease Contention Collisions:      {}",
-        result.lease_collisions_observed
-    );
-    println!(
-        "♻️ Zombie Tasks Reclaimed:           {}",
-        result.zombie_tasks_reclaimed
-    );
-    println!(
-        "⏱ Benchmark Latency:                 {:.2} ms",
-        result.duration_ms
-    );
-    println!(
-        "🚀 Work-Stealing Throughput:         {:.1} tasks/sec",
-        result.throughput_tasks_per_sec
-    );
-    println!(
-        "🛡 Zero Deadlocks Verified:           {}",
-        result.zero_deadlocks_verified
-    );
-    println!(
-        "🔓 All Locks Released:               {}",
-        result.all_leases_released_verified
-    );
-    println!(
-        "💎 Data Consistency Verified:        {}",
-        result.data_consistency_verified
-    );
+    println!("🤖 Concurrent Virtual Agents:        {}", result.virtual_agents_count);
+    println!("📋 Total Tasks Scheduled:            {}", result.total_tasks_scheduled);
+    println!("✅ Total Tasks Completed:            {}", result.total_tasks_completed);
+    println!("🔒 Lease Contention Collisions:      {}", result.lease_collisions_observed);
+    println!("♻️ Zombie Tasks Reclaimed:           {}", result.zombie_tasks_reclaimed);
+    println!("⏱ Benchmark Latency:                 {:.2} ms", result.duration_ms);
+    println!("🚀 Work-Stealing Throughput:         {:.1} tasks/sec", result.throughput_tasks_per_sec);
+    println!("🛡 Zero Deadlocks Verified:           {}", result.zero_deadlocks_verified);
+    println!("🔓 All Locks Released:               {}", result.all_leases_released_verified);
+    println!("💎 Data Consistency Verified:        {}", result.data_consistency_verified);
 
-    assert!(
-        result.zero_deadlocks_verified,
-        "Swarm execution must not deadlock"
-    );
-    assert!(
-        result.data_consistency_verified,
-        "All tasks must reach completed status"
-    );
-    assert!(
-        result.all_leases_released_verified,
-        "All temporal leases must be released"
-    );
-    assert_eq!(
-        result.zombie_tasks_reclaimed, 1,
-        "Zombie orphan task must be reclaimed and finished"
-    );
+    assert!(result.zero_deadlocks_verified, "Swarm execution must not deadlock");
+    assert!(result.data_consistency_verified, "All tasks must reach completed status");
+    assert!(result.all_leases_released_verified, "All temporal leases must be released");
+    assert_eq!(result.zombie_tasks_reclaimed, 1, "Zombie orphan task must be reclaimed and finished");
 
     Ok(())
 }
