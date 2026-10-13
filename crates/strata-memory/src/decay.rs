@@ -23,6 +23,23 @@ impl DecayCalculator {
         }
     }
 
+    /// Return a new `DecayCalculator` with base decay stability (S_0) and prune threshold
+    /// dynamically adapted to environmental volatility via metaplasticity dynamics.
+    pub fn with_volatility(&self, volatility: f32) -> Self {
+        let mut adapted_config = self.config.clone();
+        adapted_config.s0 = crate::metaplasticity::calculate_adapted_decay_stability(
+            self.config.s0,
+            volatility,
+        );
+        adapted_config.prune_threshold = crate::metaplasticity::calculate_adapted_prune_threshold(
+            self.config.prune_threshold,
+            volatility,
+        );
+        Self {
+            config: adapted_config,
+        }
+    }
+
     /// Calculate ACT-R Base-Level Activation:
     /// A_m = alpha * ln(sum_{k=1}^n t_k^(-d)) + beta * I_m + gamma * C_m
     ///
