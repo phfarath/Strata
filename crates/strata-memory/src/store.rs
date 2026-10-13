@@ -258,6 +258,20 @@ impl SqliteStore {
                 PRIMARY KEY (agent_id, task_key)
             );
 
+            -- Raw signal/verdict history, used to calibrate the futility accumulator
+            CREATE TABLE IF NOT EXISTS futility_trace (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                agent_id TEXT NOT NULL,
+                task_key TEXT NOT NULL,
+                signal TEXT NOT NULL,
+                tool TEXT NOT NULL,
+                signature TEXT NOT NULL,
+                verdict TEXT NOT NULL,
+                evidence INTEGER NOT NULL,
+                ts INTEGER NOT NULL
+            );
+            CREATE INDEX IF NOT EXISTS idx_futility_trace_key ON futility_trace(agent_id, task_key, id);
+
             -- Failure patterns full text search
             CREATE VIRTUAL TABLE IF NOT EXISTS failure_patterns_fts USING fts5(
                 signature UNINDEXED,
@@ -1595,6 +1609,70 @@ impl SqliteStore {
         )
         .map_err(|e| StrataError::Database(e.to_string()))?;
         Ok(())
+    }
+    /// Appends one row to the futility trace.
+    pub fn append_futility_trace(
+        &self,
+        agent_id: &str,
+        task_key: &str,
+        row: &crate::futility::FutilityTraceRow,
+    ) -> Result<(), StrataError> {
+        let conn = self
+            .conn
+            .lock()
+            .map_err(|_| StrataError::Database("Lock poisoned on SQLite connection".to_string()))?;
+        conn.execute(
+            "INSERT INTO futility_trace
+                (agent_id, task_key, signal, tool, signature, verdict, evidence, ts)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)",
+            params![
+                agent_id,
+                task_key,
+                row.signal,
+                row.tool,
+                row.signature,
+                row.verdict,
+                row.evidence,
+                row.ts
+            ],
+        )
+        .map_err(|e| StrataError::Database(e.to_string()))?;
+        Ok(())
+    }
+
+    /// Returns the most recent `limit` trace rows for (agent, task), oldest first.
+    pub fn list_futility_trace(
+        &self,
+        agent_id: &str,
+        task_key: &str,
+        limit: usize,
+    ) -> Result<Vec<crate::futility::FutilityTraceRow>, StrataError> {
+        let conn = self
+            .conn
+            .lock()
+            .map_err(|_| StrataError::Database("Lock poisoned on SQLite connection".to_string()))?;
+        let mut stmt = conn
+            .prepare(
+                "SELECT signal, tool, signature, verdict, evidence, ts FROM futility_trace
+                 WHERE agent_id = ?1 AND task_key = ?2 ORDER BY id DESC LIMIT ?3",
+            )
+            .map_err(|e| StrataError::Database(e.to_string()))?;
+        let mut rows = stmt
+            .query_map(params![agent_id, task_key, limit as i64], |r| {
+                Ok(crate::futility::FutilityTraceRow {
+                    signal: r.get(0)?,
+                    tool: r.get(1)?,
+                    signature: r.get(2)?,
+                    verdict: r.get(3)?,
+                    evidence: r.get(4)?,
+                    ts: r.get(5)?,
+                })
+            })
+            .map_err(|e| StrataError::Database(e.to_string()))?
+            .collect::<Result<Vec<_>, _>>()
+            .map_err(|e| StrataError::Database(e.to_string()))?;
+        rows.reverse();
+        Ok(rows)
     }
     pub fn get_failure_pattern_by_signature(
         &self,

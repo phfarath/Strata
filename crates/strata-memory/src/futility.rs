@@ -1,5 +1,7 @@
+use crate::store::SqliteStore;
 use serde::{Deserialize, Serialize};
 use std::collections::VecDeque;
+use strata_core::errors::StrataError;
 
 /// Evidence units are integers so the accumulator is exactly reproducible (no float drift).
 const NOVEL_FAILURE_EVIDENCE: u32 = 7;
@@ -88,6 +90,99 @@ impl FutilityAccumulator {
     }
 }
 
+/// Idle time after which an agent's accumulated evidence is discarded.
+pub const IDLE_TTL_SECS: i64 = 1800;
+
+/// One recorded observation, kept so verdicts can be audited and thresholds calibrated.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct FutilityTraceRow {
+    /// "failure", "success" or "neutral".
+    pub signal: String,
+    pub tool: String,
+    pub signature: String,
+    pub verdict: String,
+    pub evidence: u32,
+    pub ts: i64,
+}
+
+fn verdict_name(v: Verdict) -> &'static str {
+    match v {
+        Verdict::Continue => "continue",
+        Verdict::Futile => "futile",
+        Verdict::StillFutile => "still_futile",
+    }
+}
+
+/// Shadow mode: feeds a failure into the persisted accumulator and records the verdict.
+/// The verdict is only stored, never surfaced to the agent.
+pub fn record_shadow_failure(
+    store: &SqliteStore,
+    agent_id: &str,
+    task_key: &str,
+    tool: &str,
+    signature: &str,
+    now: i64,
+) -> Result<Verdict, StrataError> {
+    let mut acc = store.load_futility_state(agent_id, task_key, now, IDLE_TTL_SECS)?;
+    let verdict = acc.observe(Signal::Failure(signature.to_string()));
+    store.save_futility_state(agent_id, task_key, &acc, now)?;
+    store.append_futility_trace(
+        agent_id,
+        task_key,
+        &FutilityTraceRow {
+            signal: "failure".into(),
+            tool: tool.into(),
+            signature: signature.into(),
+            verdict: verdict_name(verdict).into(),
+            evidence: acc.evidence(),
+            ts: now,
+        },
+    )?;
+    Ok(verdict)
+}
+
+/// Shadow mode for a command that exited 0. It only counts as a recovery (and resets the
+/// evidence) when the same `tool` was the last thing to fail for this (agent, task);
+/// any other success is logged as neutral so unrelated successful calls cannot hide a loop.
+pub fn record_shadow_success(
+    store: &SqliteStore,
+    agent_id: &str,
+    task_key: &str,
+    tool: &str,
+    now: i64,
+) -> Result<Verdict, StrataError> {
+    let recent = store.list_futility_trace(agent_id, task_key, 50)?;
+    let recovered = recent
+        .iter()
+        .rev()
+        .find(|r| r.signal == "failure")
+        .is_some_and(|r| r.tool == tool);
+
+    let mut acc = store.load_futility_state(agent_id, task_key, now, IDLE_TTL_SECS)?;
+    let (signal, verdict) = if recovered {
+        ("success", acc.observe(Signal::Success))
+    } else if acc.latched {
+        ("neutral", Verdict::StillFutile)
+    } else {
+        ("neutral", Verdict::Continue)
+    };
+    if recovered {
+        store.save_futility_state(agent_id, task_key, &acc, now)?;
+    }
+    store.append_futility_trace(
+        agent_id,
+        task_key,
+        &FutilityTraceRow {
+            signal: signal.into(),
+            tool: tool.into(),
+            signature: String::new(),
+            verdict: verdict_name(verdict).into(),
+            evidence: acc.evidence(),
+            ts: now,
+        },
+    )?;
+    Ok(verdict)
+}
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -241,5 +336,85 @@ mod tests {
                 .evidence(),
             0
         );
+    }
+
+    #[test]
+    fn shadow_failures_persist_across_calls_and_trip_once() {
+        let store = SqliteStore::open_in_memory().unwrap();
+        let mut verdicts = Vec::new();
+        for i in 0..6 {
+            verdicts
+                .push(record_shadow_failure(&store, "a", "t", "cargo", "sig", 100 + i).unwrap());
+        }
+        assert_eq!(
+            verdicts.iter().filter(|v| **v == Verdict::Futile).count(),
+            1
+        );
+        assert_eq!(
+            verdicts[3],
+            Verdict::Futile,
+            "identical failures trip on the 4th"
+        );
+
+        let trace = store.list_futility_trace("a", "t", 50).unwrap();
+        assert_eq!(trace.len(), 6);
+        assert_eq!(trace[3].verdict, "futile");
+        assert_eq!(trace[0].verdict, "continue");
+        assert_eq!(trace[0].signal, "failure");
+    }
+
+    #[test]
+    fn shadow_success_of_failed_tool_resets_but_other_success_is_neutral() {
+        let store = SqliteStore::open_in_memory().unwrap();
+        for i in 0..3 {
+            record_shadow_failure(&store, "a", "t", "cargo test", "sig", i).unwrap();
+        }
+        let before = store
+            .load_futility_state("a", "t", 10, IDLE_TTL_SECS)
+            .unwrap()
+            .evidence();
+        assert!(before > 0);
+
+        record_shadow_success(&store, "a", "t", "ls", 11).unwrap();
+        let after_ls = store
+            .load_futility_state("a", "t", 12, IDLE_TTL_SECS)
+            .unwrap()
+            .evidence();
+        assert_eq!(
+            after_ls, before,
+            "unrelated success must not reset evidence"
+        );
+
+        record_shadow_success(&store, "a", "t", "cargo test", 13).unwrap();
+        let after_fix = store
+            .load_futility_state("a", "t", 14, IDLE_TTL_SECS)
+            .unwrap()
+            .evidence();
+        assert_eq!(after_fix, 0, "same command passing is a recovery");
+
+        let signals: Vec<String> = store
+            .list_futility_trace("a", "t", 50)
+            .unwrap()
+            .into_iter()
+            .map(|r| r.signal)
+            .collect();
+        assert_eq!(
+            signals,
+            ["failure", "failure", "failure", "neutral", "success"]
+        );
+    }
+
+    #[test]
+    fn trace_is_isolated_per_agent_and_task_and_limited() {
+        let store = SqliteStore::open_in_memory().unwrap();
+        for i in 0..5 {
+            record_shadow_failure(&store, "a", "t", "x", "s", i).unwrap();
+        }
+        record_shadow_failure(&store, "b", "t", "x", "s", 9).unwrap();
+        assert_eq!(store.list_futility_trace("b", "t", 50).unwrap().len(), 1);
+        let last_two = store.list_futility_trace("a", "t", 2).unwrap();
+        assert_eq!(last_two.len(), 2);
+        assert!(last_two[0].ts < last_two[1].ts, "oldest first");
+        assert_eq!(last_two[1].ts, 4);
     }
 }
