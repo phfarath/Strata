@@ -124,7 +124,8 @@ pub fn process_data(msg: &str) {
         .unwrap();
 
         // Test running callgraph on a single file
-        let res_file = run_callgraph(file_a.to_str().unwrap(), None, "all", true, 10).await;
+        let res_file =
+            run_callgraph(file_a.to_str().unwrap(), None, "all", true, 10, false, None).await;
         assert!(res_file.is_ok());
 
         // Test running callgraph on the whole directory
@@ -134,9 +135,106 @@ pub fn process_data(msg: &str) {
             "callers",
             true,
             10,
+            false,
+            None,
         )
         .await;
         assert!(res_dir.is_ok());
+
+        let _ = std::fs::remove_dir_all(&temp_dir);
+    }
+
+    #[tokio::test]
+    async fn test_cli_heuristic_index_workspace_and_mcp_tool() {
+        use crate::mcp::server::McpServer;
+        use strata_memory::SqliteMemoryEngine;
+
+        let temp_dir = std::env::temp_dir().join(format!(
+            "strata_cli_heuristic_index_test_{}",
+            uuid::Uuid::new_v4()
+        ));
+        let src_dir = temp_dir.join("src");
+        std::fs::create_dir_all(&src_dir).unwrap();
+
+        let auth_file = src_dir.join("auth.ts");
+        let user_file = src_dir.join("user.ts");
+
+        std::fs::write(
+            &user_file,
+            r#"
+export function validateUser(name: string): boolean {
+    return name.length > 0;
+}
+"#,
+        )
+        .unwrap();
+
+        std::fs::write(
+            &auth_file,
+            r#"
+import { validateUser } from "./user";
+
+export function login(username: string): boolean {
+    return validateUser(username);
+}
+"#,
+        )
+        .unwrap();
+
+        let engine = Arc::new(SqliteMemoryEngine::open_in_memory(None).unwrap());
+        let store = engine.store_arc();
+
+        // 1. Test CLI run_callgraph with --index
+        let res_index = run_callgraph(
+            temp_dir.to_str().unwrap(),
+            None,
+            "all",
+            true,
+            50,
+            true,
+            Some(Arc::clone(&store)),
+        )
+        .await;
+        assert!(res_index.is_ok(), "CLI workspace indexing must succeed");
+
+        // Verify call edges persisted in SQLite
+        let edges = store.get_call_edges_for_file("src/auth.ts").unwrap();
+        assert!(!edges.is_empty(), "Call edges must be persisted to SQLite");
+        let call_to_validate = edges.iter().find(|e| e.callee_symbol == "validateUser");
+        assert!(call_to_validate.is_some());
+        assert_eq!(
+            call_to_validate.unwrap().callee_file_hint.as_deref(),
+            Some("src/user.ts")
+        );
+
+        // Verify knowledge graph edges persisted
+        let kg_count = store.get_memory_edges_count().unwrap();
+        assert!(kg_count > 0, "Knowledge Graph memory edges must be persisted");
+
+        // 2. Test MCP tool definition and execution
+        let defs = McpServer::tool_definitions();
+        assert!(
+            defs.iter().any(|d| d.name == "memory_index_workspace"),
+            "memory_index_workspace must be listed in MCP tool definitions"
+        );
+
+        let server = McpServer::new_with_engine(Arc::clone(&engine));
+        let mcp_res = server
+            .execute_tool(
+                "memory_index_workspace",
+                serde_json::json!({
+                    "path": temp_dir.to_str().unwrap()
+                }),
+            )
+            .await;
+
+        assert!(
+            mcp_res.is_error != Some(true),
+            "MCP memory_index_workspace execution must succeed"
+        );
+        let output_text = &mcp_res.content[0].text;
+        assert!(output_text.contains("Workspace Heuristic Indexing Complete"));
+        assert!(output_text.contains("Files scanned: 2"));
 
         let _ = std::fs::remove_dir_all(&temp_dir);
     }

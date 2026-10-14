@@ -1,8 +1,11 @@
 use serde_json::json;
 use std::path::{Path, PathBuf};
+use std::sync::Arc;
 
 use strata_core::errors::StrataError;
-use strata_memory::{CallEdge, CallGraph, CallGraphAnalyzer, CallType, LanguageKind};
+use strata_memory::{
+    CallEdge, CallGraph, CallGraphAnalyzer, CallType, HeuristicIndexer, LanguageKind, SqliteStore,
+};
 
 fn collect_source_files(dir: &Path, files: &mut Vec<PathBuf>) {
     if let Ok(entries) = std::fs::read_dir(dir) {
@@ -36,8 +39,39 @@ pub async fn run_callgraph(
     direction: &str,
     json_output: bool,
     limit: usize,
+    index: bool,
+    store: Option<Arc<SqliteStore>>,
 ) -> Result<(), StrataError> {
     let path = Path::new(target_path);
+
+    if index {
+        let store_ref = store.as_deref().ok_or_else(|| {
+            StrataError::Validation(
+                "SQLite store is required for workspace indexing (--index)".to_string(),
+            )
+        })?;
+        let indexer = HeuristicIndexer::new();
+        let report = indexer.index_directory(path, store_ref)?;
+
+        if json_output {
+            println!("{}", serde_json::to_string_pretty(&report)?);
+            return Ok(());
+        }
+
+        println!("══════════════════════════════════════════════════════════════════════════");
+        println!(" 🧠 STRATA DEEP HEURISTIC AST & CALL GRAPH INDEXER");
+        println!("══════════════════════════════════════════════════════════════════════════");
+        println!(" Target Workspace:            {}", target_path);
+        println!(" Source Files Scanned:        {}", report.files_scanned);
+        println!(" AST Symbols Indexed:         {}", report.symbols_indexed);
+        println!(" Total Call Edges Detected:   {}", report.call_edges_total);
+        println!(" Cross-File Edges Resolved:   {}", report.cross_file_edges_resolved);
+        println!(" Knowledge Graph Edges (KG):  {}", report.kg_edges_generated);
+        println!(" Status:                      ✅ Successfully indexed and persisted to SQLite");
+        println!("══════════════════════════════════════════════════════════════════════════");
+        return Ok(());
+    }
+
     let analyzer = CallGraphAnalyzer::new();
     let mut all_edges: Vec<CallEdge> = Vec::new();
 
@@ -52,14 +86,28 @@ pub async fn run_callgraph(
         let mut files = Vec::new();
         collect_source_files(path, &mut files);
 
-        for p in files {
+        let mut file_contents = Vec::new();
+        for p in &files {
             let p_str = p.to_string_lossy();
             let lang = LanguageKind::from_file_path(&p_str);
             if lang != LanguageKind::Unknown {
-                if let Ok(content) = std::fs::read_to_string(&p) {
-                    if let Ok(edges) = analyzer.analyze_source(&content, lang, &p_str) {
-                        all_edges.extend(edges);
-                    }
+                if let Ok(content) = std::fs::read_to_string(p) {
+                    file_contents.push((p.to_string_lossy().to_string(), content));
+                }
+            }
+        }
+
+        let slices: Vec<(&str, &str)> = file_contents
+            .iter()
+            .map(|(p, c)| (p.as_str(), c.as_str()))
+            .collect();
+        if let Ok(edges) = analyzer.analyze_workspace_files(&slices) {
+            all_edges.extend(edges);
+        } else {
+            for (p_str, content) in &file_contents {
+                let lang = LanguageKind::from_file_path(p_str);
+                if let Ok(edges) = analyzer.analyze_source(content, lang, p_str) {
+                    all_edges.extend(edges);
                 }
             }
         }

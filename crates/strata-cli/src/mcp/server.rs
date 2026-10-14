@@ -353,6 +353,19 @@ impl McpServer {
                 }),
             },
             ToolDefinition {
+                name: "memory_index_workspace".to_string(),
+                description: "Deep Heuristic AST & Call Graph Indexer. Recursively scans workspace source files, extracts AST symbols and call edges, resolves cross-file caller-callee bindings, and persists both call edges and associative Knowledge Graph edges into SQLite.".to_string(),
+                input_schema: serde_json::json!({
+                    "type": "object",
+                    "properties": {
+                        "path": {
+                            "type": "string",
+                            "description": "Root workspace directory or source file to index (default: '.')"
+                        }
+                    }
+                }),
+            },
+            ToolDefinition {
                 name: "strata_workspace_detect".to_string(),
                 description: "Detect monorepo workspace boundaries, member packages/crates, internal dependencies, and isolate file search scopes.".to_string(),
                 input_schema: serde_json::json!({
@@ -1280,6 +1293,38 @@ impl McpServer {
                         CallToolResult::structured(summary.to_string(), val)
                     }
                     Err(e) => CallToolResult::error(format!("Call graph analysis error: {e}")),
+                }
+            }
+            "memory_index_workspace" | "index_workspace" | "strata_index_workspace" => {
+                let sqlite = match &self.sqlite_engine {
+                    Some(s) => s,
+                    None => {
+                        return CallToolResult::error(
+                            "Workspace indexing requires a local SQLite storage engine",
+                        )
+                    }
+                };
+
+                let path_str = args.get("path").and_then(|v| v.as_str()).unwrap_or(".");
+                let path = std::path::Path::new(path_str);
+                let store = sqlite.store();
+                let indexer = strata_memory::HeuristicIndexer::new();
+
+                match indexer.index_directory(path, store) {
+                    Ok(report) => {
+                        let summary = format!(
+                            "Workspace Heuristic Indexing Complete:\n- Files scanned: {}\n- AST symbols indexed: {}\n- Total call edges: {}\n- Cross-file edges resolved: {}\n- Knowledge graph edges generated: {}",
+                            report.files_scanned,
+                            report.symbols_indexed,
+                            report.call_edges_total,
+                            report.cross_file_edges_resolved,
+                            report.kg_edges_generated
+                        );
+                        let structured =
+                            serde_json::to_value(&report).unwrap_or(serde_json::json!({}));
+                        CallToolResult::structured(summary, structured)
+                    }
+                    Err(e) => CallToolResult::error(format!("Failed to index workspace: {e}")),
                 }
             }
             "strata_workspace_detect" | "workspace_detect" => {
