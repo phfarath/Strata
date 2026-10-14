@@ -196,6 +196,10 @@ impl EpisodeStep {
     }
 }
 
+fn default_tier() -> u8 {
+    1
+}
+
 /// A structured episodic execution trace capturing agent trajectory, state snapshots, and outcomes.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct EpisodeRecord {
@@ -210,6 +214,12 @@ pub struct EpisodeRecord {
     pub state_snapshot: Option<serde_json::Value>,
     pub causal_provenance: Option<String>,
     pub consolidated: bool,
+    #[serde(default = "default_tier")]
+    pub tier: u8, // 1 = Leaf Episode, 2 = Milestone Rollup, 3 = Epoch Rollup
+    #[serde(default)]
+    pub parent_id: Option<Uuid>,
+    #[serde(default)]
+    pub child_ids: Vec<Uuid>,
     pub created_at: i64,
 }
 
@@ -231,6 +241,9 @@ impl EpisodeRecord {
             state_snapshot: None,
             causal_provenance: None,
             consolidated: false,
+            tier: default_tier(),
+            parent_id: None,
+            child_ids: Vec::new(),
             created_at: Utc::now().timestamp(),
         }
     }
@@ -273,6 +286,34 @@ impl EpisodeRecord {
     pub fn with_provenance(mut self, prov: impl Into<String>) -> Self {
         self.causal_provenance = Some(prov.into());
         self
+    }
+
+    pub fn with_tier(mut self, tier: u8) -> Self {
+        self.tier = tier;
+        self
+    }
+
+    pub fn with_parent_id(mut self, parent_id: Uuid) -> Self {
+        self.parent_id = Some(parent_id);
+        self
+    }
+
+    pub fn with_child_id(mut self, child_id: Uuid) -> Self {
+        self.child_ids.push(child_id);
+        self
+    }
+
+    pub fn with_child_ids(mut self, child_ids: impl IntoIterator<Item = Uuid>) -> Self {
+        self.child_ids.extend(child_ids);
+        self
+    }
+
+    pub fn is_rollup(&self) -> bool {
+        self.tier > 1
+    }
+
+    pub fn is_leaf(&self) -> bool {
+        self.tier == 1
     }
 }
 

@@ -9,7 +9,9 @@ use strata_core::{
     state::{MemoryRecord, MemoryType, Scope},
     traits::MemoryEngine,
 };
-use strata_memory::{SqliteMemoryEngine, StigmergyCoordinator};
+use strata_memory::{
+    EpisodicPyramidEngine, PyramidConfig, SqliteMemoryEngine, StigmergyCoordinator,
+};
 
 use super::protocol::*;
 
@@ -623,6 +625,33 @@ impl McpServer {
                             "description": "Optional session ID to consolidate (omitted = consolidate all pending episodes)"
                         }
                     }
+                }),
+            },
+            ToolDefinition {
+                name: "memory_episode_pyramid".to_string(),
+                description: "Hierarchical Episodic Memory Pyramid operations: 'rollup' (aggregates Tier 1 traces into Tier 2 milestones), 'zoom_out' (retrieves top-level Tier 2 milestone rollups), 'drill_down' (reconstructs hierarchical execution tree for a specific rollup), or 'tree' (inspects full hierarchy across rollups).".to_string(),
+                input_schema: serde_json::json!({
+                    "type": "object",
+                    "properties": {
+                        "action": {
+                            "type": "string",
+                            "enum": ["rollup", "zoom_out", "drill_down", "tree"],
+                            "description": "Pyramid operation to perform: 'rollup', 'zoom_out', 'drill_down', or 'tree'"
+                        },
+                        "session_id": {
+                            "type": "string",
+                            "description": "Optional session ID filter"
+                        },
+                        "rollup_id": {
+                            "type": "string",
+                            "description": "UUID of the rollup episode (required for 'drill_down')"
+                        },
+                        "limit": {
+                            "type": "integer",
+                            "description": "Maximum rollups to return for 'zoom_out' or 'tree' (default: 20)"
+                        }
+                    },
+                    "required": ["action"]
                 }),
             },
         ];
@@ -1826,6 +1855,121 @@ impl McpServer {
                     Err(e) => {
                         CallToolResult::error(format!("Hippocampal consolidation error: {e}"))
                     }
+                }
+            }
+            "memory_episode_pyramid" => {
+                let sqlite = match &self.sqlite_engine {
+                    Some(s) => s,
+                    None => {
+                        return CallToolResult::error(
+                            "Hierarchical episodic pyramid operations require a local SQLite storage engine",
+                        )
+                    }
+                };
+
+                let action = match args.get("action").and_then(|v| v.as_str()) {
+                    Some(a) => a,
+                    None => return CallToolResult::error("Missing required parameter: action"),
+                };
+
+                match action {
+                    "rollup" => {
+                        let session_id = args.get("session_id").and_then(|v| v.as_str());
+                        let config = PyramidConfig::default();
+                        match EpisodicPyramidEngine::aggregate_session_rollups(
+                            sqlite.store(),
+                            session_id,
+                            &config,
+                            None,
+                        ) {
+                            Ok(rollups) => {
+                                let text = format!(
+                                    "Episodic pyramid rollup completed: {} milestone rollups generated.",
+                                    rollups.len()
+                                );
+                                CallToolResult::structured(
+                                    text,
+                                    serde_json::to_value(&rollups).unwrap_or_default(),
+                                )
+                            }
+                            Err(e) => CallToolResult::error(format!("Rollup error: {e}")),
+                        }
+                    }
+                    "zoom_out" => {
+                        let session_id = args.get("session_id").and_then(|v| v.as_str());
+                        let limit = args.get("limit").and_then(|v| v.as_u64()).unwrap_or(20) as usize;
+                        match EpisodicPyramidEngine::zoom_out(sqlite.store(), session_id, limit) {
+                            Ok(rollups) => {
+                                let text = format!(
+                                    "Zoomed out: {} Tier 2 milestone rollups found.",
+                                    rollups.len()
+                                );
+                                CallToolResult::structured(
+                                    text,
+                                    serde_json::to_value(&rollups).unwrap_or_default(),
+                                )
+                            }
+                            Err(e) => CallToolResult::error(format!("Zoom out error: {e}")),
+                        }
+                    }
+                    "drill_down" => {
+                        let id_str = match args.get("rollup_id").and_then(|v| v.as_str()) {
+                            Some(s) => s,
+                            None => {
+                                return CallToolResult::error(
+                                    "Missing required parameter for drill_down: rollup_id",
+                                )
+                            }
+                        };
+                        let uuid = match Uuid::parse_str(id_str) {
+                            Ok(u) => u,
+                            Err(e) => return CallToolResult::error(format!("Invalid UUID: {e}")),
+                        };
+                        match EpisodicPyramidEngine::drill_down(sqlite.store(), &uuid) {
+                            Ok(Some(tree)) => {
+                                let text = tree.render_ascii();
+                                CallToolResult::structured(
+                                    text,
+                                    serde_json::to_value(&tree).unwrap_or_default(),
+                                )
+                            }
+                            Ok(None) => {
+                                CallToolResult::error(format!("Rollup with ID '{id_str}' not found"))
+                            }
+                            Err(e) => CallToolResult::error(format!("Drill down error: {e}")),
+                        }
+                    }
+                    "tree" => {
+                        let session_id = args.get("session_id").and_then(|v| v.as_str());
+                        let limit = args.get("limit").and_then(|v| v.as_u64()).unwrap_or(20) as usize;
+                        match EpisodicPyramidEngine::zoom_out(sqlite.store(), session_id, limit) {
+                            Ok(rollups) => {
+                                let mut trees = Vec::new();
+                                for r in &rollups {
+                                    if let Ok(Some(tree)) =
+                                        EpisodicPyramidEngine::drill_down(sqlite.store(), &r.id)
+                                    {
+                                        trees.push(tree);
+                                    }
+                                }
+                                let mut text = String::new();
+                                for t in &trees {
+                                    text.push_str(&t.render_ascii());
+                                }
+                                if text.is_empty() {
+                                    text = "No Tier 2 rollups found.".to_string();
+                                }
+                                CallToolResult::structured(
+                                    text,
+                                    serde_json::to_value(&trees).unwrap_or_default(),
+                                )
+                            }
+                            Err(e) => CallToolResult::error(format!("Tree error: {e}")),
+                        }
+                    }
+                    other => CallToolResult::error(format!(
+                        "Unsupported action '{other}'. Supported: rollup, zoom_out, drill_down, tree"
+                    )),
                 }
             }
             name if name.starts_with("task_") || name.starts_with("a2a_") => {

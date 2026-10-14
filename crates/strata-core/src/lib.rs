@@ -357,4 +357,69 @@ mod tests {
         assert_eq!(replay.episode_id, de_replay.episode_id);
         assert_eq!(de_replay.simulated_reward, 0.9);
     }
+
+    #[test]
+    fn test_hierarchical_episode_record() {
+        // 1. Default leaf episode
+        let leaf1 = EpisodeRecord::new("sess-h1", "agent-worker", "Executed step 1");
+        assert_eq!(leaf1.tier, 1);
+        assert!(leaf1.is_leaf());
+        assert!(!leaf1.is_rollup());
+        assert_eq!(leaf1.parent_id, None);
+        assert!(leaf1.child_ids.is_empty());
+
+        let leaf2 = EpisodeRecord::new("sess-h1", "agent-worker", "Executed step 2");
+
+        // 2. Milestone Rollup (Tier 2)
+        let rollup = EpisodeRecord::new("sess-h1", "agent-worker", "Completed milestone 1")
+            .with_tier(2)
+            .with_child_ids(vec![leaf1.id, leaf2.id]);
+        assert_eq!(rollup.tier, 2);
+        assert!(rollup.is_rollup());
+        assert!(!rollup.is_leaf());
+        assert_eq!(rollup.child_ids.len(), 2);
+        assert_eq!(rollup.child_ids[0], leaf1.id);
+        assert_eq!(rollup.child_ids[1], leaf2.id);
+
+        // 3. Epoch Rollup (Tier 3)
+        let epoch_id = Uuid::new_v4();
+        let rollup_with_parent = rollup.clone().with_parent_id(epoch_id);
+        assert_eq!(rollup_with_parent.parent_id, Some(epoch_id));
+
+        let epoch = EpisodeRecord::new("sess-h1", "agent-worker", "Completed epoch 1")
+            .with_tier(3)
+            .with_child_id(rollup.id);
+        assert_eq!(epoch.tier, 3);
+        assert!(epoch.is_rollup());
+        assert_eq!(epoch.child_ids, vec![rollup.id]);
+
+        // 4. Serde roundtrip for rollup
+        let rollup_json = serde_json::to_string(&rollup_with_parent).expect("serialize rollup");
+        let de_rollup: EpisodeRecord = serde_json::from_str(&rollup_json).expect("deserialize rollup");
+        assert_eq!(de_rollup.tier, 2);
+        assert_eq!(de_rollup.parent_id, Some(epoch_id));
+        assert_eq!(de_rollup.child_ids, vec![leaf1.id, leaf2.id]);
+
+        // 5. Backwards compatibility: JSON without tier, parent_id, child_ids
+        let legacy_json = serde_json::json!({
+            "id": Uuid::new_v4(),
+            "session_id": "sess-legacy",
+            "agent_id": "agent-007",
+            "task_id": null,
+            "summary": "Legacy episode",
+            "event_trace": [],
+            "outcomes": [],
+            "salience_score": 0.5,
+            "state_snapshot": null,
+            "causal_provenance": null,
+            "consolidated": false,
+            "created_at": 1700000000
+        }).to_string();
+
+        let de_legacy: EpisodeRecord = serde_json::from_str(&legacy_json).expect("deserialize legacy episode");
+        assert_eq!(de_legacy.tier, 1);
+        assert!(de_legacy.is_leaf());
+        assert_eq!(de_legacy.parent_id, None);
+        assert_eq!(de_legacy.child_ids, Vec::<Uuid>::new());
+    }
 }

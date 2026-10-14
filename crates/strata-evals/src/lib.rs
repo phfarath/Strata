@@ -31,9 +31,10 @@ pub async fn run_all_scenarios() -> Result<()> {
     run_pluggable_reasoning_cascade_scenario().await?;
     run_consolidation_ab_benchmark_scenario().await?;
     run_agent_loop_futility_baseline_scenario().await?;
+    run_hierarchical_episodic_pyramid_eval().await?;
 
     println!("\n========================================================");
-    println!("🎉 ALL EVAL SCENARIOS PASSED (20/20)");
+    println!("🎉 ALL EVAL SCENARIOS PASSED (21/21)");
     println!("========================================================\n");
 
     Ok(())
@@ -201,5 +202,16 @@ mod tests {
         run_agent_loop_futility_baseline_scenario()
             .await
             .expect("Agent loop futility baseline scenario failed");
+    }
+
+    #[tokio::test]
+    async fn test_eval_hierarchical_episodic_pyramid() {
+        let res = run_hierarchical_episodic_pyramid_eval()
+            .await
+            .expect("Hierarchical episodic pyramid eval failed");
+        assert!(res.compression_ratio >= 0.70);
+        assert_eq!(res.drill_down_accuracy, 1.0);
+        assert!(res.is_deterministic);
+        assert_eq!(res.clusters_count, 3);
     }
 }
