@@ -41,6 +41,7 @@ toml = { workspace = true }
 rand = { workspace = true }
 hex = { workspace = true }
 axum = { workspace = true }
+notify = { workspace = true }
 
 [package.metadata.binstall]
 pkg-url = "{ repo }/releases/download/v{ version }/strata-v{ version }-{ target }.{ archive-format }"

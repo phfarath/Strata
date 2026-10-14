@@ -691,7 +691,9 @@ impl TruthMaintenanceSystem {
             for dep_id in dependent_ids {
                 if visited.insert(dep_id) {
                     if let Some(mut dep_fact) = store.get_semantic_fact(&dep_id)? {
-                        if dep_fact.status == FactStatus::Active {
+                        if dep_fact.status == FactStatus::Active
+                            || dep_fact.status == FactStatus::Suspicious
+                        {
                             dep_fact.mark_stale();
                             store.insert_or_update_semantic_fact(&dep_fact)?;
 

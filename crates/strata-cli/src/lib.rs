@@ -1460,4 +1460,235 @@ pub fn process_data(msg: &str) {
         assert_eq!(stats_reclaim.tasks_succeeded, 1);
         assert_eq!(coordinator.get_task("w-orphan").unwrap().unwrap().status, TaskStatus::Completed);
     }
+
+    #[tokio::test]
+    async fn test_realtime_drift_watcher_jtms_invalidation_cascade() {
+        use crate::commands::watch::{run_watch, WatchArgs};
+        use strata_core::schemas::{FactStatus, SemanticFact};
+        use strata_core::state::Scope;
+        use strata_memory::{AstParser, CodeAnchorEngine, SqliteStore};
+
+        // Create temporary workspace directory with src/auth.rs
+        let temp_dir = std::env::temp_dir().join(format!("strata_watch_test_{}", uuid::Uuid::new_v4()));
+        let src_dir = temp_dir.join("src");
+        std::fs::create_dir_all(&src_dir).expect("create src dir");
+        let auth_file = src_dir.join("auth.rs");
+
+        let initial_code = r#"
+pub fn verify_token(token: &str) -> bool {
+    !token.is_empty() && token.starts_with("Bearer ")
+}
+"#;
+        std::fs::write(&auth_file, initial_code).expect("write auth.rs");
+
+        let store = Arc::new(SqliteStore::open_in_memory().expect("open store"));
+        let engine = CodeAnchorEngine::new();
+        let parser = AstParser::new();
+
+        // Parse symbol and create code anchor for verify_token
+        let rel_path = "src/auth.rs";
+        let symbols = parser.parse_file(rel_path, initial_code).expect("parse auth.rs");
+        assert_eq!(symbols.len(), 1);
+        assert_eq!(symbols[0].symbol_path, "verify_token");
+
+        let anchor = engine.create_anchor(rel_path, &symbols[0], Some("commit-initial"));
+        let initial_merkle_root = CodeAnchorEngine::compute_merkle_tree_hash(&symbols);
+        assert!(!initial_merkle_root.is_empty());
+
+        // 1. Grave no SqliteStore um SemanticFact ancorado a verify_token com um CodeAnchor
+        let fact1 = SemanticFact::new(
+            "Tokens must start with Bearer prefix",
+            "auth",
+            Scope::Global,
+        )
+        .with_code_anchor(anchor);
+        store.insert_or_update_semantic_fact(&fact1).expect("insert fact1");
+
+        // 2. Grave um segundo SemanticFact dependente (depends_on: [fact_1])
+        let mut fact2 = SemanticFact::new(
+            "API gateway authorizes requests using verify_token",
+            "gateway",
+            Scope::Global,
+        );
+        fact2.depends_on = vec![fact1.id];
+        store.insert_or_update_semantic_fact(&fact2).expect("insert fact2");
+
+        // Verifique que ambos estão inicialmente ativos
+        let loaded_fact1 = store.get_semantic_fact(&fact1.id).expect("get fact1").expect("found");
+        let loaded_fact2 = store.get_semantic_fact(&fact2.id).expect("get fact2").expect("found");
+        assert_eq!(loaded_fact1.status, FactStatus::Active);
+        assert_eq!(loaded_fact2.status, FactStatus::Active);
+
+        // Altere o arquivo src/auth.rs modificando o corpo ou assinatura da função
+        let modified_code = r#"
+pub fn verify_token(token: &str) -> bool {
+    // Modified signature / body to validate JWT claims format
+    token.len() > 32 && token.starts_with("eyJ")
+}
+"#;
+        std::fs::write(&auth_file, modified_code).expect("write modified auth.rs");
+
+        // Execute o ciclo de drift watch (args.once = true)
+        let watch_args = WatchArgs {
+            workspace: temp_dir.clone(),
+            debounce_ms: 100,
+            once: true,
+            json: false,
+        };
+
+        run_watch(watch_args, store.clone()).await.expect("run_watch failed");
+
+        // Verifique:
+        // 1. O fato original foi marcado como FactStatus::Stale
+        let updated_fact1 = store.get_semantic_fact(&fact1.id).expect("get fact1").expect("found");
+        assert_eq!(
+            updated_fact1.status,
+            FactStatus::Stale,
+            "Original fact anchored to modified code must transition to Stale"
+        );
+
+        // 2. O fato dependente downstream foi invalidado em cascata para FactStatus::Stale no JTMS
+        let updated_fact2 = store.get_semantic_fact(&fact2.id).expect("get fact2").expect("found");
+        assert_eq!(
+            updated_fact2.status,
+            FactStatus::Stale,
+            "Downstream dependent fact must transition to Stale via JTMS cascade"
+        );
+
+        // Verify JTMS audit trail was recorded
+        let audits = store.get_all_jtms_audits(10).expect("get jtms audits");
+        assert!(
+            audits.iter().any(|a| a.winning_fact_id == fact1.id && a.losing_fact_id == fact2.id),
+            "JTMS audit row must record invalidation of fact2 due to prerequisite fact1"
+        );
+
+        // 3. O Merkle root foi recalculado
+        let modified_symbols = parser.parse_file(rel_path, modified_code).expect("parse modified code");
+        let new_merkle_root = CodeAnchorEngine::compute_merkle_tree_hash(&modified_symbols);
+        assert_ne!(
+            initial_merkle_root, new_merkle_root,
+            "Workspace Merkle root must be recomputed and reflect modified AST"
+        );
+
+        // Cleanup temp dir
+        let _ = std::fs::remove_dir_all(&temp_dir);
+    }
+
+    #[test]
+    fn test_drift_watcher_path_filtering_and_noisy_directories() {
+        use crate::commands::watch::{is_ignored_path, is_supported_source_file};
+        use std::path::Path;
+
+        // Noisy and build directories should be ignored
+        assert!(is_ignored_path(Path::new(".git/HEAD")));
+        assert!(is_ignored_path(Path::new("target/debug/build.rs")));
+        assert!(is_ignored_path(Path::new(".strata/facts.db")));
+        assert!(is_ignored_path(Path::new("node_modules/package/index.js")));
+        assert!(is_ignored_path(Path::new("dist/bundle.js")));
+        assert!(is_ignored_path(Path::new(".cargo/config.toml")));
+
+        // Temporary files should be ignored
+        assert!(is_ignored_path(Path::new("src/auth.rs.tmp")));
+        assert!(is_ignored_path(Path::new("src/auth.rs~")));
+        assert!(is_ignored_path(Path::new("src/.auth.rs.swp")));
+
+        // Supported source files
+        assert!(is_supported_source_file(Path::new("src/auth.rs")));
+        assert!(is_supported_source_file(Path::new("frontend/App.tsx")));
+        assert!(is_supported_source_file(Path::new("frontend/index.ts")));
+        assert!(is_supported_source_file(Path::new("backend/server.js")));
+        assert!(is_supported_source_file(Path::new("scripts/model.py")));
+
+        // Non-code files should not be watched
+        assert!(!is_supported_source_file(Path::new("README.md")));
+        assert!(!is_supported_source_file(Path::new("Cargo.toml")));
+        assert!(!is_supported_source_file(Path::new("package.json")));
+    }
+
+    #[tokio::test]
+    async fn test_drift_watcher_json_output_mode() {
+        use crate::commands::watch::{run_watch, WatchArgs};
+        use strata_memory::SqliteStore;
+
+        let temp_dir = std::env::temp_dir().join(format!("strata_watch_json_test_{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir_all(&temp_dir).expect("create temp dir");
+
+        let store = Arc::new(SqliteStore::open_in_memory().expect("open store"));
+        let watch_args = WatchArgs {
+            workspace: temp_dir.clone(),
+            debounce_ms: 100,
+            once: true,
+            json: true,
+        };
+
+        let res = run_watch(watch_args, store).await;
+        assert!(res.is_ok());
+
+        let _ = std::fs::remove_dir_all(&temp_dir);
+    }
+
+    #[tokio::test]
+    async fn test_realtime_drift_watcher_live_fs_event_debounce() {
+        use crate::commands::watch::{run_watch, WatchArgs};
+        use strata_core::schemas::{FactStatus, SemanticFact};
+        use strata_core::state::Scope;
+        use strata_memory::{AstParser, CodeAnchorEngine, SqliteStore};
+        use std::time::Duration;
+
+        let temp_dir = std::env::temp_dir().join(format!("strata_watch_live_{}", uuid::Uuid::new_v4()));
+        let src_dir = temp_dir.join("src");
+        std::fs::create_dir_all(&src_dir).expect("create src dir");
+        let calc_file = src_dir.join("calc.rs");
+
+        let initial_code = "pub fn add_numbers(a: i32, b: i32) -> i32 { a + b }\n";
+        std::fs::write(&calc_file, initial_code).expect("write calc.rs");
+
+        let store = Arc::new(SqliteStore::open_in_memory().expect("open store"));
+        let engine = CodeAnchorEngine::new();
+        let parser = AstParser::new();
+
+        let rel_path = "src/calc.rs";
+        let symbols = parser.parse_file(rel_path, initial_code).expect("parse calc.rs");
+        let anchor = engine.create_anchor(rel_path, &symbols[0], None);
+
+        let fact = SemanticFact::new("Addition logic", "math", Scope::Global).with_code_anchor(anchor);
+        store.insert_or_update_semantic_fact(&fact).expect("insert fact");
+
+        // Spawn watcher in background with short debounce
+        let watch_dir = temp_dir.clone();
+        let watch_store = store.clone();
+        let handle = tokio::spawn(async move {
+            let watch_args = WatchArgs {
+                workspace: watch_dir,
+                debounce_ms: 100,
+                once: false,
+                json: false,
+            };
+            let _ = run_watch(watch_args, watch_store).await;
+        });
+
+        // Allow watcher thread to start listening
+        tokio::time::sleep(Duration::from_millis(200)).await;
+
+        // Modify the file on disk
+        let modified_code = "pub fn add_numbers(a: i32, b: i32) -> i32 { a.saturating_add(b) }\n";
+        std::fs::write(&calc_file, modified_code).expect("write modified calc.rs");
+
+        // Wait for notify event + debounce
+        let mut transitioned = false;
+        for _ in 0..25 {
+            tokio::time::sleep(Duration::from_millis(100)).await;
+            if let Ok(Some(f)) = store.get_semantic_fact(&fact.id) {
+                if f.status == FactStatus::Stale {
+                    transitioned = true;
+                    break;
+                }
+            }
+        }
+
+        handle.abort();
+        let _ = std::fs::remove_dir_all(&temp_dir);
+
+        assert!(transitioned, "Fact should transition to Stale upon live fs modification event");
+    }
 }

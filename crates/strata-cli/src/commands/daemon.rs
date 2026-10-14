@@ -25,6 +25,12 @@ pub struct DaemonArgs {
 
     #[arg(long, default_value = "default", help = "Workspace identifier")]
     pub workspace: String,
+
+    #[arg(
+        long,
+        help = "Enable real-time AST code drift watcher alongside sync daemon"
+    )]
+    pub watch: bool,
 }
 
 pub async fn run_daemon(args: DaemonArgs, store: Arc<SqliteStore>) -> Result<()> {
@@ -37,7 +43,7 @@ pub async fn run_daemon(args: DaemonArgs, store: Arc<SqliteStore>) -> Result<()>
         .or_else(|| std::env::var("STRATA_SYNC_TOKEN").ok());
 
     let interval_secs = args.interval.max(1);
-    let sync_engine = SyncEngine::new(store, config.clone());
+    let sync_engine = SyncEngine::new(store.clone(), config.clone());
 
     info!(
         "Starting Strata background sync daemon (interval: {}s, workspace: '{}', endpoint: {:?})",
@@ -60,11 +66,33 @@ pub async fn run_daemon(args: DaemonArgs, store: Arc<SqliteStore>) -> Result<()>
         }
     };
 
+    let watcher_task = if args.watch {
+        let watch_store = store.clone();
+        let watch_args = crate::commands::watch::WatchArgs {
+            workspace: std::path::PathBuf::from("."),
+            debounce_ms: 500,
+            once: false,
+            json: false,
+        };
+        info!("Starting background AST drift watcher alongside sync daemon");
+        println!("👀 Real-time AST code drift watcher active (debounce: 500ms)");
+        Some(tokio::spawn(async move {
+            if let Err(e) = crate::commands::watch::run_watch(watch_args, watch_store).await {
+                warn!("Background AST drift watcher stopped: {e}");
+            }
+        }))
+    } else {
+        None
+    };
+
     loop {
         tokio::select! {
             _ = tokio::signal::ctrl_c() => {
                 info!("Received Ctrl+C interrupt signal. Shutting down Strata daemon gracefully...");
                 println!("\nGracefully shutting down Strata daemon...");
+                if let Some(ref task) = watcher_task {
+                    task.abort();
+                }
                 if let Some(srv) = ipc_server {
                     srv.stop();
                 }
