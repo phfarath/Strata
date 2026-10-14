@@ -495,7 +495,9 @@ impl SpreadingActivationEngine {
                     GraphNode::parse_canonical(&edge_row.target_id),
                     EdgeKind::from_str_kind(&edge_row.edge_kind),
                 ) {
-                    graph.set_edge_weight(&source_node, &target_node, kind, edge_row.weight);
+                    if !graph.set_edge_weight(&source_node, &target_node, kind, edge_row.weight) {
+                        graph.add_directed_edge(source_node, target_node, edge_row.weight, kind);
+                    }
                 }
             }
         }

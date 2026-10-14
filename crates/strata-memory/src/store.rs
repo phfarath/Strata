@@ -3724,6 +3724,61 @@ impl SqliteStore {
         Ok(new_w)
     }
 
+    /// Persists a batch of modulated Knowledge Graph memory edges idempotently into SQLite.
+    pub fn save_memory_edges(&self, edges: &[MemoryEdgeRecord]) -> Result<(), StrataError> {
+        let conn = self
+            .conn
+            .lock()
+            .map_err(|_| StrataError::Database("Lock poisoned on SQLite connection".to_string()))?;
+
+        for edge in edges {
+            let now_str = edge.last_feedback_at.to_rfc3339();
+            conn.execute(
+                "INSERT INTO memory_edges (source_id, target_id, edge_kind, weight, reinforcements, depressions, last_feedback_at)
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)
+                 ON CONFLICT(source_id, target_id, edge_kind) DO UPDATE SET
+                     weight = excluded.weight,
+                     last_feedback_at = excluded.last_feedback_at",
+                params![
+                    edge.source_id,
+                    edge.target_id,
+                    edge.edge_kind,
+                    edge.weight,
+                    edge.reinforcements as i64,
+                    edge.depressions as i64,
+                    now_str,
+                ],
+            )
+            .map_err(|e| StrataError::Database(format!("Failed to persist memory edge: {e}")))?;
+        }
+
+        Ok(())
+    }
+
+    /// Returns the total count of memory edges stored in SQLite.
+    pub fn get_memory_edges_count(&self) -> Result<usize, StrataError> {
+        let conn = self
+            .conn
+            .lock()
+            .map_err(|_| StrataError::Database("Lock poisoned on SQLite connection".to_string()))?;
+        let count: i64 = conn
+            .query_row("SELECT COUNT(*) FROM memory_edges", [], |r| r.get(0))
+            .unwrap_or(0);
+        Ok(count as usize)
+    }
+
+    /// Clears all memory edges in SQLite.
+    pub fn clear_memory_edges(&self) -> Result<usize, StrataError> {
+        let conn = self
+            .conn
+            .lock()
+            .map_err(|_| StrataError::Database("Lock poisoned on SQLite connection".to_string()))?;
+        let deleted = conn
+            .execute("DELETE FROM memory_edges", [])
+            .map_err(|e| StrataError::Database(e.to_string()))?;
+        Ok(deleted)
+    }
+
     /// Retrieves all modulated memory edges stored in SQLite.
     pub fn get_all_memory_edges(&self) -> Result<Vec<MemoryEdgeRecord>, StrataError> {
         let conn = self
@@ -4323,6 +4378,20 @@ impl SqliteStore {
         Ok(())
     }
 
+    /// Persists call edges idempotently: clears existing call edges for the files in the batch,
+    /// then inserts the updated edges.
+    pub fn save_call_edges(&self, edges: &[CallEdge]) -> Result<(), StrataError> {
+        let mut files = std::collections::HashSet::new();
+        for edge in edges {
+            files.insert(edge.caller_file.clone());
+        }
+        for file in files {
+            self.clear_call_edges_for_file(&file)?;
+        }
+        self.insert_call_edges(edges)?;
+        Ok(())
+    }
+
     /// Clears all call edges originating from a specific file (used prior to re-indexing).
     pub fn clear_call_edges_for_file(&self, file_path: &str) -> Result<usize, StrataError> {
         let conn = self
@@ -4408,6 +4477,11 @@ impl SqliteStore {
             results.push(r.map_err(|e| StrataError::Database(e.to_string()))?);
         }
         Ok(results)
+    }
+
+    /// Retrieves all call and import edges recorded for a given file (alias for get_file_call_edges).
+    pub fn get_call_edges_for_file(&self, file_path: &str) -> Result<Vec<CallEdge>, StrataError> {
+        self.get_file_call_edges(file_path)
     }
 
     /// Retrieves all call and import edges recorded for a given file.

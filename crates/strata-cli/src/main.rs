@@ -300,6 +300,19 @@ enum Commands {
 
         #[arg(long, help = "Output as raw JSON")]
         json: bool,
+
+        #[arg(long, help = "Deep heuristic index of AST symbols and call edges into SQLite")]
+        index: bool,
+    },
+
+    /// Deep heuristic index of workspace AST symbols and call edges into SQLite
+    #[command(name = "index", alias = "reindex")]
+    Index {
+        #[arg(default_value = ".", help = "Path to workspace directory or file to index")]
+        path: String,
+
+        #[arg(long, help = "Output report as raw JSON")]
+        json: bool,
     },
 
     /// Multi-package monorepo workspace detector and boundary isolator
@@ -472,18 +485,21 @@ async fn main() -> Result<()> {
         return run_key(args).await;
     }
 
-    // Fast-path for CallGraph (analyzes code AST directly on-the-fly)
+    // Fast-path for CallGraph without --index (analyzes code AST directly on-the-fly)
     if let Commands::CallGraph {
         path,
         symbol,
         direction,
         limit,
         json,
+        index,
     } = &cli.command
     {
-        return run_callgraph(path, symbol.as_deref(), direction, *json, *limit)
-            .await
-            .map_err(Into::into);
+        if !*index {
+            return run_callgraph(path, symbol.as_deref(), direction, *json, *limit, false, None)
+                .await
+                .map_err(Into::into);
+        }
     }
 
     // Fast-path for Workspace (detects package boundaries directly on disk)
@@ -520,9 +536,41 @@ async fn main() -> Result<()> {
         | Commands::Key(_)
         | Commands::Login(_)
         | Commands::Logout
-        | Commands::CallGraph { .. }
         | Commands::Workspace(_)
         | Commands::Architecture(_) => unreachable!(),
+
+        Commands::CallGraph {
+            path,
+            symbol,
+            direction,
+            limit,
+            json,
+            index,
+        } => {
+            run_callgraph(
+                &path,
+                symbol.as_deref(),
+                &direction,
+                json,
+                limit,
+                index,
+                Some(engine.store_arc()),
+            )
+            .await?;
+        }
+
+        Commands::Index { path, json } => {
+            run_callgraph(
+                &path,
+                None,
+                "all",
+                json,
+                50,
+                true,
+                Some(engine.store_arc()),
+            )
+            .await?;
+        }
 
         Commands::Mcp { action: None } => {
             let mut server = McpServer::new_with_engine(Arc::clone(&engine));

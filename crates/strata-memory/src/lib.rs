@@ -42,7 +42,10 @@ pub use alignment::PreferenceMiner;
 pub use ast::{
     AstDiffResult, AstParser, CodeAnchorEngine, ExtractedSymbol, LanguageKind, ReconciliationReport,
 };
-pub use call_graph::{CallEdge, CallGraph, CallGraphAnalyzer, CallType};
+pub use call_graph::{
+    CallEdge, CallGraph, CallGraphAnalyzer, CallType, CrossFileResolver, HeuristicIndexReport,
+    HeuristicIndexer,
+};
 pub use clustering::{SpatialCluster, SpatialClusterer, VectorPoint};
 pub use community::{
     ArchitectureCluster, ArchitectureGraphSummary, ClusterDependency, ClusterMember,
