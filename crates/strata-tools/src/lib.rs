@@ -43,14 +43,40 @@ mod tests {
         async fn search(
             &self,
             query: &str,
+            scope: Option<&Scope>,
+            limit: usize,
+        ) -> Result<Vec<MemoryRecord>, StrataError> {
+            self.search_as_of(query, scope, None, None, limit).await
+        }
+
+        async fn search_as_of(
+            &self,
+            query: &str,
             _scope: Option<&Scope>,
+            as_of_time: Option<chrono::DateTime<chrono::Utc>>,
+            as_of_commit: Option<&str>,
             _limit: usize,
         ) -> Result<Vec<MemoryRecord>, StrataError> {
             let recs = self.records.lock().await;
             let filtered: Vec<MemoryRecord> = recs
                 .iter()
                 .filter(|r| {
-                    r.content.contains(query) || r.summary.as_deref().unwrap_or("").contains(query)
+                    if !r.content.contains(query)
+                        && !r.summary.as_deref().unwrap_or("").contains(query)
+                    {
+                        return false;
+                    }
+                    if let Some(t) = as_of_time {
+                        if !r.is_active_at(t) {
+                            return false;
+                        }
+                    }
+                    if let Some(c) = as_of_commit {
+                        if !r.matches_commit(c) {
+                            return false;
+                        }
+                    }
+                    true
                 })
                 .cloned()
                 .collect();
@@ -58,8 +84,36 @@ mod tests {
         }
 
         async fn get(&self, id: &Uuid) -> Result<Option<MemoryRecord>, StrataError> {
+            self.get_as_of(id, None, None).await
+        }
+
+        async fn get_as_of(
+            &self,
+            id: &Uuid,
+            as_of_time: Option<chrono::DateTime<chrono::Utc>>,
+            as_of_commit: Option<&str>,
+        ) -> Result<Option<MemoryRecord>, StrataError> {
             let recs = self.records.lock().await;
-            Ok(recs.iter().find(|r| r.id == *id).cloned())
+            let found = recs
+                .iter()
+                .find(|r| {
+                    if r.id != *id {
+                        return false;
+                    }
+                    if let Some(t) = as_of_time {
+                        if !r.is_active_at(t) {
+                            return false;
+                        }
+                    }
+                    if let Some(c) = as_of_commit {
+                        if !r.matches_commit(c) {
+                            return false;
+                        }
+                    }
+                    true
+                })
+                .cloned();
+            Ok(found)
         }
 
         async fn write(&self, record: &MemoryRecord) -> Result<MemoryHandle, StrataError> {
@@ -362,6 +416,101 @@ mod tests {
         // 4. Digest
         let digest_res = digest_tool.execute(json!({})).await.unwrap();
         assert_eq!(digest_res["summary"], "Total memories: 1");
+    }
+
+    #[tokio::test]
+    async fn test_bitemporal_builtin_memory_tools() {
+        let mem = Arc::new(MockMemoryEngine::new());
+        let search_tool = MemorySearchTool::new(mem.clone());
+        let get_tool = MemoryGetTool::new(mem.clone());
+
+        let t0 = chrono::Utc::now() - chrono::Duration::days(30);
+        let t1 = chrono::Utc::now() - chrono::Duration::days(15);
+        let t_past = chrono::Utc::now() - chrono::Duration::days(20);
+        let t_now = chrono::Utc::now();
+
+        // 1. Record 1: Old architecture rule valid from t0 to t1, commit 'c1'
+        let mut rec1 = MemoryRecord::new(
+            strata_core::state::MemoryType::Semantic,
+            "Use Redis cache for session storage.",
+            Scope::Global,
+        )
+        .with_summary("session_storage_v1");
+        rec1.created_at = t0;
+        rec1.updated_at = t1;
+        rec1.metadata["valid_from"] = json!(t0.to_rfc3339());
+        rec1.metadata["valid_until"] = json!(t1.to_rfc3339());
+        rec1.metadata["git_commit_hash"] = json!("c1");
+        let id1_str = rec1.id.to_string();
+        mem.records.lock().await.push(rec1);
+
+        // 2. Record 2: New architecture rule valid from t1 onwards, commit 'c2'
+        let mut rec2 = MemoryRecord::new(
+            strata_core::state::MemoryType::Semantic,
+            "Use JWT tokens with Redis blacklist for session storage.",
+            Scope::Global,
+        )
+        .with_summary("session_storage_v2");
+        rec2.created_at = t1;
+        rec2.updated_at = t1;
+        rec2.metadata["valid_from"] = json!(t1.to_rfc3339());
+        rec2.metadata["git_commit_hash"] = json!("c2");
+        let id2_str = rec2.id.to_string();
+        mem.records.lock().await.push(rec2);
+
+        // Test 1: Search at t_past (should only return rec1)
+        let search_past = search_tool
+            .execute(json!({
+                "query": "session storage",
+                "as_of_time": t_past.to_rfc3339()
+            }))
+            .await
+            .unwrap();
+        let past_arr = search_past.as_array().unwrap();
+        assert_eq!(past_arr.len(), 1);
+        assert_eq!(past_arr[0]["id"], id1_str);
+
+        // Test 2: Search at t_now (should only return rec2)
+        let search_now = search_tool
+            .execute(json!({
+                "query": "session storage",
+                "as_of_time": t_now.to_rfc3339()
+            }))
+            .await
+            .unwrap();
+        let now_arr = search_now.as_array().unwrap();
+        assert_eq!(now_arr.len(), 1);
+        assert_eq!(now_arr[0]["id"], id2_str);
+
+        // Test 3: Search by commit
+        let search_c1 = search_tool
+            .execute(json!({
+                "query": "session storage",
+                "as_of_commit": "c1"
+            }))
+            .await
+            .unwrap();
+        let c1_arr = search_c1.as_array().unwrap();
+        assert_eq!(c1_arr.len(), 1);
+        assert_eq!(c1_arr[0]["id"], id1_str);
+
+        // Test 4: Get with as_of_time
+        let get_past = get_tool
+            .execute(json!({
+                "id": id1_str,
+                "as_of_time": t_past.to_rfc3339()
+            }))
+            .await
+            .unwrap();
+        assert_eq!(get_past["summary"], "session_storage_v1");
+
+        let get_now_err = get_tool
+            .execute(json!({
+                "id": id1_str,
+                "as_of_time": t_now.to_rfc3339()
+            }))
+            .await;
+        assert!(get_now_err.is_err(), "rec1 should be not found at present time");
     }
 
     #[tokio::test]

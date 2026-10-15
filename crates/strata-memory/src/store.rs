@@ -139,6 +139,30 @@ impl SqliteStore {
             "ALTER TABLE episodes ADD COLUMN child_ids_json TEXT NOT NULL DEFAULT '[]'",
             [],
         );
+        let _ = conn.execute(
+            "ALTER TABLE memories ADD COLUMN valid_from TEXT DEFAULT NULL",
+            [],
+        );
+        let _ = conn.execute(
+            "ALTER TABLE memories ADD COLUMN valid_until TEXT DEFAULT NULL",
+            [],
+        );
+        let _ = conn.execute(
+            "ALTER TABLE memories ADD COLUMN git_commit_hash TEXT DEFAULT NULL",
+            [],
+        );
+        let _ = conn.execute(
+            "ALTER TABLE semantic_facts ADD COLUMN valid_from TEXT DEFAULT NULL",
+            [],
+        );
+        let _ = conn.execute(
+            "ALTER TABLE semantic_facts ADD COLUMN valid_until TEXT DEFAULT NULL",
+            [],
+        );
+        let _ = conn.execute(
+            "ALTER TABLE semantic_facts ADD COLUMN git_commit_hash TEXT DEFAULT NULL",
+            [],
+        );
 
         conn.execute_batch(
             "
@@ -179,7 +203,10 @@ impl SqliteStore {
                 last_accessed_at TEXT,
                 evidence_ids_json TEXT NOT NULL DEFAULT '[]',
                 embedding BLOB,
-                metadata_json TEXT NOT NULL DEFAULT '{}'
+                metadata_json TEXT NOT NULL DEFAULT '{}',
+                valid_from TEXT,
+                valid_until TEXT,
+                git_commit_hash TEXT
             );
 
             CREATE INDEX IF NOT EXISTS idx_memories_scope ON memories(scope);
@@ -187,6 +214,9 @@ impl SqliteStore {
             CREATE INDEX IF NOT EXISTS idx_memories_tier ON memories(tier);
             CREATE INDEX IF NOT EXISTS idx_memories_approved ON memories(approved_by_human);
             CREATE INDEX IF NOT EXISTS idx_memories_created ON memories(created_at);
+            CREATE INDEX IF NOT EXISTS idx_memories_valid_from ON memories(valid_from);
+            CREATE INDEX IF NOT EXISTS idx_memories_valid_until ON memories(valid_until);
+            CREATE INDEX IF NOT EXISTS idx_memories_commit ON memories(git_commit_hash);
 
             -- Full-text search virtual table for memories
             CREATE VIRTUAL TABLE IF NOT EXISTS memories_fts USING fts5(
@@ -401,7 +431,10 @@ impl SqliteStore {
                 tags_json TEXT NOT NULL DEFAULT '[]',
                 code_anchor_json TEXT DEFAULT NULL,
                 depends_on_json TEXT NOT NULL DEFAULT '[]',
-                embedding BLOB
+                embedding BLOB,
+                valid_from TEXT,
+                valid_until TEXT,
+                git_commit_hash TEXT
             );
 
             CREATE INDEX IF NOT EXISTS idx_facts_scope ON semantic_facts(scope);
@@ -410,6 +443,9 @@ impl SqliteStore {
             CREATE INDEX IF NOT EXISTS idx_facts_approved ON semantic_facts(approved_by_human);
             CREATE INDEX IF NOT EXISTS idx_facts_status ON semantic_facts(status);
             CREATE INDEX IF NOT EXISTS idx_facts_project ON semantic_facts(project);
+            CREATE INDEX IF NOT EXISTS idx_facts_valid_from ON semantic_facts(valid_from);
+            CREATE INDEX IF NOT EXISTS idx_facts_valid_until ON semantic_facts(valid_until);
+            CREATE INDEX IF NOT EXISTS idx_facts_commit ON semantic_facts(git_commit_hash);
 
             -- Full-text search virtual table for semantic facts
             CREATE VIRTUAL TABLE IF NOT EXISTS semantic_facts_fts USING fts5(
@@ -1101,12 +1137,53 @@ impl SqliteStore {
         let embedding_blob = memory.embedding.as_ref().map(|e| embedding_to_bytes(e));
         let approved_int = if memory.approved_by_human { 1i64 } else { 0i64 };
 
+        let valid_from_str = memory
+            .metadata
+            .get("valid_from")
+            .and_then(|v| v.as_str())
+            .map(|s| s.to_string())
+            .unwrap_or_else(|| memory.created_at.to_rfc3339());
+
+        let valid_until_str = memory
+            .metadata
+            .get("valid_until")
+            .and_then(|v| v.as_str())
+            .map(|s| s.to_string())
+            .or_else(|| {
+                if memory
+                    .metadata
+                    .get("status")
+                    .and_then(|v| v.as_str())
+                    .map_or(false, |s| s.eq_ignore_ascii_case("deprecated"))
+                {
+                    Some(memory.updated_at.to_rfc3339())
+                } else {
+                    None
+                }
+            });
+
+        let git_commit_str = memory
+            .metadata
+            .get("git_commit_hash")
+            .or_else(|| memory.metadata.get("git_commit"))
+            .or_else(|| memory.metadata.get("commit"))
+            .and_then(|v| v.as_str())
+            .map(|s| s.to_string())
+            .or_else(|| {
+                memory
+                    .metadata
+                    .get("code_anchor")
+                    .and_then(|ca| ca.get("git_commit_hash"))
+                    .and_then(|v| v.as_str())
+                    .map(|s| s.to_string())
+            });
+
         conn.execute(
             "INSERT INTO memories (
                 id, memory_type, content, summary, scope, tier, approved_by_human, importance, confidence,
                 tags_json, created_at, updated_at, access_count, last_accessed_at,
-                evidence_ids_json, embedding, metadata_json
-            ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17)
+                evidence_ids_json, embedding, metadata_json, valid_from, valid_until, git_commit_hash
+            ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18, ?19, ?20)
             ON CONFLICT(id) DO UPDATE SET
                 memory_type = excluded.memory_type,
                 content = excluded.content,
@@ -1122,7 +1199,10 @@ impl SqliteStore {
                 last_accessed_at = excluded.last_accessed_at,
                 evidence_ids_json = excluded.evidence_ids_json,
                 embedding = COALESCE(excluded.embedding, memories.embedding),
-                metadata_json = excluded.metadata_json",
+                metadata_json = excluded.metadata_json,
+                valid_from = excluded.valid_from,
+                valid_until = excluded.valid_until,
+                git_commit_hash = excluded.git_commit_hash",
             params![
                 id_str,
                 mem_type_str,
@@ -1141,6 +1221,9 @@ impl SqliteStore {
                 evidence_json,
                 embedding_blob,
                 metadata_json,
+                valid_from_str,
+                valid_until_str,
+                git_commit_str,
             ],
         )
         .map_err(|e| StrataError::Database(format!("Failed to persist memory: {e}")))?;
@@ -1149,23 +1232,51 @@ impl SqliteStore {
     }
 
     pub fn get_memory(&self, id: &Uuid) -> Result<Option<MemoryRecord>, StrataError> {
+        self.get_memory_as_of(id, None, None)
+    }
+
+    pub fn get_memory_as_of(
+        &self,
+        id: &Uuid,
+        as_of_time: Option<DateTime<Utc>>,
+        as_of_commit: Option<&str>,
+    ) -> Result<Option<MemoryRecord>, StrataError> {
         let conn = self
             .conn
             .lock()
             .map_err(|_| StrataError::Database("Lock poisoned on SQLite connection".to_string()))?;
 
+        let mut sql = "SELECT id, memory_type, content, summary, scope, tier, approved_by_human, importance,
+                              confidence, tags_json, created_at, updated_at, access_count,
+                              last_accessed_at, evidence_ids_json, embedding, metadata_json
+                       FROM memories
+                       WHERE id = ?1".to_string();
+
+        let mut params_vec: Vec<Box<dyn rusqlite::ToSql>> = vec![Box::new(id.to_string())];
+
+        if let Some(t) = as_of_time {
+            let t_str = t.to_rfc3339();
+            sql.push_str(" AND COALESCE(valid_from, created_at) <= ? AND (valid_until IS NULL OR valid_until > ?)");
+            params_vec.push(Box::new(t_str.clone()));
+            params_vec.push(Box::new(t_str));
+        }
+
+        if let Some(c) = as_of_commit {
+            sql.push_str(" AND (git_commit_hash = ? OR json_extract(metadata_json, '$.git_commit_hash') = ? OR json_extract(metadata_json, '$.commit') = ?)");
+            params_vec.push(Box::new(c.to_string()));
+            params_vec.push(Box::new(c.to_string()));
+            params_vec.push(Box::new(c.to_string()));
+        }
+
         let mut stmt = conn
-            .prepare(
-                "SELECT id, memory_type, content, summary, scope, tier, approved_by_human, importance,
-                        confidence, tags_json, created_at, updated_at, access_count,
-                        last_accessed_at, evidence_ids_json, embedding, metadata_json
-                 FROM memories
-                 WHERE id = ?1",
-            )
+            .prepare(&sql)
             .map_err(|e| StrataError::Database(e.to_string()))?;
 
+        let params_slice: Vec<&dyn rusqlite::ToSql> =
+            params_vec.iter().map(|b| b.as_ref()).collect();
+
         let res = stmt
-            .query_row(params![id.to_string()], |row| Self::row_to_memory(row))
+            .query_row(params_slice.as_slice(), |row| Self::row_to_memory(row))
             .optional()
             .map_err(|e| StrataError::Database(e.to_string()))?;
 
@@ -1198,6 +1309,17 @@ impl SqliteStore {
         memory_types: Option<&[MemoryType]>,
         limit: usize,
     ) -> Result<Vec<MemoryRecord>, StrataError> {
+        self.get_all_memories_as_of(scope, memory_types, None, None, limit)
+    }
+
+    pub fn get_all_memories_as_of(
+        &self,
+        scope: Option<&Scope>,
+        memory_types: Option<&[MemoryType]>,
+        as_of_time: Option<DateTime<Utc>>,
+        as_of_commit: Option<&str>,
+        limit: usize,
+    ) -> Result<Vec<MemoryRecord>, StrataError> {
         let conn = self
             .conn
             .lock()
@@ -1205,9 +1327,9 @@ impl SqliteStore {
 
         let mut query =
             "SELECT id, memory_type, content, summary, scope, tier, approved_by_human, importance,
-                                confidence, tags_json, created_at, updated_at, access_count,
-                                last_accessed_at, evidence_ids_json, embedding, metadata_json
-                         FROM memories WHERE 1=1"
+                    confidence, tags_json, created_at, updated_at, access_count,
+                    last_accessed_at, evidence_ids_json, embedding, metadata_json
+             FROM memories WHERE 1=1"
                 .to_string();
 
         let mut params_vec: Vec<Box<dyn rusqlite::ToSql>> = Vec::new();
@@ -1228,6 +1350,20 @@ impl SqliteStore {
                     params_vec.push(Box::new(t));
                 }
             }
+        }
+
+        if let Some(t) = as_of_time {
+            let t_str = t.to_rfc3339();
+            query.push_str(" AND COALESCE(valid_from, created_at) <= ? AND (valid_until IS NULL OR valid_until > ?)");
+            params_vec.push(Box::new(t_str.clone()));
+            params_vec.push(Box::new(t_str));
+        }
+
+        if let Some(c) = as_of_commit {
+            query.push_str(" AND (git_commit_hash = ? OR json_extract(metadata_json, '$.git_commit_hash') = ? OR json_extract(metadata_json, '$.commit') = ?)");
+            params_vec.push(Box::new(c.to_string()));
+            params_vec.push(Box::new(c.to_string()));
+            params_vec.push(Box::new(c.to_string()));
         }
 
         query.push_str(" ORDER BY created_at DESC LIMIT ?");
@@ -1259,6 +1395,18 @@ impl SqliteStore {
         scope: Option<&Scope>,
         limit: usize,
     ) -> Result<Vec<(MemoryRecord, f32)>, StrataError> {
+        self.search_fts_as_of(query_text, scope, None, None, limit)
+    }
+
+    /// Search memories using FTS5 Porter stemmer with bi-temporal filters (as_of_time, as_of_commit).
+    pub fn search_fts_as_of(
+        &self,
+        query_text: &str,
+        scope: Option<&Scope>,
+        as_of_time: Option<DateTime<Utc>>,
+        as_of_commit: Option<&str>,
+        limit: usize,
+    ) -> Result<Vec<(MemoryRecord, f32)>, StrataError> {
         let conn = self
             .conn
             .lock()
@@ -1284,9 +1432,23 @@ impl SqliteStore {
 
         if let Some(sc) = scope {
             if *sc != Scope::Global {
-                sql.push_str(" AND (m.scope = ?2 OR m.scope = 'global')");
+                sql.push_str(" AND (m.scope = ? OR m.scope = 'global')");
                 params_vec.push(Box::new(sc.to_string()));
             }
+        }
+
+        if let Some(t) = as_of_time {
+            let t_str = t.to_rfc3339();
+            sql.push_str(" AND COALESCE(m.valid_from, m.created_at) <= ? AND (m.valid_until IS NULL OR m.valid_until > ?)");
+            params_vec.push(Box::new(t_str.clone()));
+            params_vec.push(Box::new(t_str));
+        }
+
+        if let Some(c) = as_of_commit {
+            sql.push_str(" AND (m.git_commit_hash = ? OR json_extract(m.metadata_json, '$.git_commit_hash') = ? OR json_extract(m.metadata_json, '$.commit') = ?)");
+            params_vec.push(Box::new(c.to_string()));
+            params_vec.push(Box::new(c.to_string()));
+            params_vec.push(Box::new(c.to_string()));
         }
 
         sql.push_str(" ORDER BY rank ASC LIMIT ?");
@@ -2505,12 +2667,38 @@ impl SqliteStore {
         };
         let depends_on_json = serde_json::to_string(&fact.depends_on)?;
 
+        let (valid_from_str, valid_until_str, git_commit_str) =
+            if let Some(ref anchor) = fact.code_anchor {
+                (
+                    anchor.valid_from.to_rfc3339(),
+                    anchor.valid_until.map(|u| u.to_rfc3339()).or_else(|| {
+                        if fact.status == FactStatus::Deprecated {
+                            Some(fact.last_updated_at.to_rfc3339())
+                        } else {
+                            None
+                        }
+                    }),
+                    anchor.git_commit_hash.clone(),
+                )
+            } else {
+                (
+                    fact.created_at.to_rfc3339(),
+                    if fact.status == FactStatus::Deprecated {
+                        Some(fact.last_updated_at.to_rfc3339())
+                    } else {
+                        None
+                    },
+                    None,
+                )
+            };
+
         conn.execute(
             "INSERT INTO semantic_facts (
                 id, project, scope, statement, category, evidence_json,
                 importance, confidence, tier, approved_by_human, created_at, last_updated_at, status,
-                version, replaced_by, tags_json, code_anchor_json, depends_on_json
-            ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18)
+                version, replaced_by, tags_json, code_anchor_json, depends_on_json,
+                valid_from, valid_until, git_commit_hash
+            ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18, ?19, ?20, ?21)
             ON CONFLICT(id) DO UPDATE SET
                 project = excluded.project,
                 scope = excluded.scope,
@@ -2527,7 +2715,10 @@ impl SqliteStore {
                 replaced_by = excluded.replaced_by,
                 tags_json = excluded.tags_json,
                 code_anchor_json = excluded.code_anchor_json,
-                depends_on_json = excluded.depends_on_json",
+                depends_on_json = excluded.depends_on_json,
+                valid_from = excluded.valid_from,
+                valid_until = excluded.valid_until,
+                git_commit_hash = excluded.git_commit_hash",
             params![
                 id_str,
                 fact.project,
@@ -2547,6 +2738,9 @@ impl SqliteStore {
                 tags_json,
                 code_anchor_json,
                 depends_on_json,
+                valid_from_str,
+                valid_until_str,
+                git_commit_str,
             ],
         )
         .map_err(|e| StrataError::Database(format!("Failed to persist semantic fact: {e}")))?;
@@ -2566,23 +2760,50 @@ impl SqliteStore {
     }
 
     pub fn get_semantic_fact(&self, id: &Uuid) -> Result<Option<SemanticFact>, StrataError> {
+        self.get_semantic_fact_as_of(id, None, None)
+    }
+
+    pub fn get_semantic_fact_as_of(
+        &self,
+        id: &Uuid,
+        as_of_time: Option<DateTime<Utc>>,
+        as_of_commit: Option<&str>,
+    ) -> Result<Option<SemanticFact>, StrataError> {
         let conn = self
             .conn
             .lock()
             .map_err(|_| StrataError::Database("Lock poisoned on SQLite connection".to_string()))?;
 
+        let mut sql = "SELECT id, project, scope, statement, category, evidence_json,
+                              importance, confidence, tier, approved_by_human, created_at, last_updated_at, status,
+                              version, replaced_by, tags_json, code_anchor_json, depends_on_json
+                       FROM semantic_facts
+                       WHERE id = ?1".to_string();
+
+        let mut params_vec: Vec<Box<dyn rusqlite::ToSql>> = vec![Box::new(id.to_string())];
+
+        if let Some(t) = as_of_time {
+            let t_str = t.to_rfc3339();
+            sql.push_str(" AND COALESCE(valid_from, created_at) <= ? AND (valid_until IS NULL OR valid_until > ?)");
+            params_vec.push(Box::new(t_str.clone()));
+            params_vec.push(Box::new(t_str));
+        }
+
+        if let Some(c) = as_of_commit {
+            sql.push_str(" AND (git_commit_hash = ? OR json_extract(code_anchor_json, '$.git_commit_hash') = ?)");
+            params_vec.push(Box::new(c.to_string()));
+            params_vec.push(Box::new(c.to_string()));
+        }
+
         let mut stmt = conn
-            .prepare(
-                "SELECT id, project, scope, statement, category, evidence_json,
-                        importance, confidence, tier, approved_by_human, created_at, last_updated_at, status,
-                        version, replaced_by, tags_json, code_anchor_json, depends_on_json
-                 FROM semantic_facts
-                 WHERE id = ?1",
-            )
+            .prepare(&sql)
             .map_err(|e| StrataError::Database(e.to_string()))?;
 
+        let params_slice: Vec<&dyn rusqlite::ToSql> =
+            params_vec.iter().map(|b| b.as_ref()).collect();
+
         let res = stmt
-            .query_row(params![id.to_string()], |row| Self::row_to_fact(row))
+            .query_row(params_slice.as_slice(), |row| Self::row_to_fact(row))
             .optional()
             .map_err(|e| StrataError::Database(e.to_string()))?;
 
@@ -2618,6 +2839,17 @@ impl SqliteStore {
         status: Option<FactStatus>,
         limit: usize,
     ) -> Result<Vec<SemanticFact>, StrataError> {
+        self.get_all_semantic_facts_as_of(project, status, None, None, limit)
+    }
+
+    pub fn get_all_semantic_facts_as_of(
+        &self,
+        project: Option<&str>,
+        status: Option<FactStatus>,
+        as_of_time: Option<DateTime<Utc>>,
+        as_of_commit: Option<&str>,
+        limit: usize,
+    ) -> Result<Vec<SemanticFact>, StrataError> {
         let conn = self
             .conn
             .lock()
@@ -2638,6 +2870,19 @@ impl SqliteStore {
         if let Some(st) = status {
             sql.push_str(" AND status = ?");
             params_vec.push(Box::new(st.to_string()));
+        }
+
+        if let Some(t) = as_of_time {
+            let t_str = t.to_rfc3339();
+            sql.push_str(" AND COALESCE(valid_from, created_at) <= ? AND (valid_until IS NULL OR valid_until > ?)");
+            params_vec.push(Box::new(t_str.clone()));
+            params_vec.push(Box::new(t_str));
+        }
+
+        if let Some(c) = as_of_commit {
+            sql.push_str(" AND (git_commit_hash = ? OR json_extract(code_anchor_json, '$.git_commit_hash') = ?)");
+            params_vec.push(Box::new(c.to_string()));
+            params_vec.push(Box::new(c.to_string()));
         }
 
         sql.push_str(" ORDER BY last_updated_at DESC LIMIT ?");
@@ -2714,6 +2959,17 @@ impl SqliteStore {
         query_text: &str,
         limit: usize,
     ) -> Result<Vec<(SemanticFact, f32)>, StrataError> {
+        self.search_semantic_facts_as_of(query_text, None, None, limit)
+    }
+
+    /// Search semantic facts using FTS5 Porter stemmer with bi-temporal filters (as_of_time, as_of_commit).
+    pub fn search_semantic_facts_as_of(
+        &self,
+        query_text: &str,
+        as_of_time: Option<DateTime<Utc>>,
+        as_of_commit: Option<&str>,
+        limit: usize,
+    ) -> Result<Vec<(SemanticFact, f32)>, StrataError> {
         let conn = self
             .conn
             .lock()
@@ -2724,7 +2980,7 @@ impl SqliteStore {
             return Ok(Vec::new());
         }
 
-        let sql = "
+        let mut sql = "
             SELECT m.id, m.project, m.scope, m.statement, m.category, m.evidence_json,
                    m.importance, m.confidence, m.tier, m.approved_by_human, m.created_at, m.last_updated_at, m.status,
                    m.version, m.replaced_by, m.tags_json, m.code_anchor_json, m.depends_on_json,
@@ -2732,14 +2988,35 @@ impl SqliteStore {
             FROM semantic_facts_fts f
             JOIN semantic_facts m ON m.id = f.id
             WHERE semantic_facts_fts MATCH ?1
-            ORDER BY rank ASC LIMIT ?2
-        ";
+        ".to_string();
+
+        let mut params_vec: Vec<Box<dyn rusqlite::ToSql>> = Vec::new();
+        params_vec.push(Box::new(sanitized));
+
+        if let Some(t) = as_of_time {
+            let t_str = t.to_rfc3339();
+            sql.push_str(" AND COALESCE(m.valid_from, m.created_at) <= ? AND (m.valid_until IS NULL OR m.valid_until > ?)");
+            params_vec.push(Box::new(t_str.clone()));
+            params_vec.push(Box::new(t_str));
+        }
+
+        if let Some(c) = as_of_commit {
+            sql.push_str(" AND (m.git_commit_hash = ? OR json_extract(m.code_anchor_json, '$.git_commit_hash') = ?)");
+            params_vec.push(Box::new(c.to_string()));
+            params_vec.push(Box::new(c.to_string()));
+        }
+
+        sql.push_str(" ORDER BY rank ASC LIMIT ?");
+        params_vec.push(Box::new(limit as i64));
 
         let mut stmt = conn
-            .prepare(sql)
+            .prepare(&sql)
             .map_err(|e| StrataError::Database(e.to_string()))?;
+        let params_slice: Vec<&dyn rusqlite::ToSql> =
+            params_vec.iter().map(|b| b.as_ref()).collect();
+
         let rows = stmt
-            .query_map(params![sanitized, limit as i64], |row| {
+            .query_map(params_slice.as_slice(), |row| {
                 let fact = Self::row_to_fact(row)?;
                 let rank: f64 = row.get(18)?;
                 Ok((fact, rank as f32))

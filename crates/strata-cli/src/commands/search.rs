@@ -1,4 +1,5 @@
 use anyhow::Result;
+use chrono::{DateTime, Utc};
 use std::sync::Arc;
 use strata_core::{
     state::{MemoryType, Scope},
@@ -10,6 +11,8 @@ pub struct SearchOptions {
     pub limit: usize,
     pub scope: Option<String>,
     pub memory_type: Option<String>,
+    pub as_of_time: Option<String>,
+    pub as_of_commit: Option<String>,
     pub json: bool,
     pub graph: bool,
 }
@@ -25,8 +28,20 @@ pub async fn run_search(options: SearchOptions, engine: Arc<dyn MemoryEngine>) -
         .as_deref()
         .and_then(|s| s.parse::<MemoryType>().ok());
 
+    let as_of_time = options
+        .as_of_time
+        .as_deref()
+        .and_then(|s| DateTime::parse_from_rfc3339(s).ok())
+        .map(|dt| dt.with_timezone(&Utc));
+
     let results = engine
-        .search(&options.query, parsed_scope.as_ref(), options.limit)
+        .search_as_of(
+            &options.query,
+            parsed_scope.as_ref(),
+            as_of_time,
+            options.as_of_commit.as_deref(),
+            options.limit,
+        )
         .await?;
 
     let filtered: Vec<_> = if let Some(mt) = parsed_type {

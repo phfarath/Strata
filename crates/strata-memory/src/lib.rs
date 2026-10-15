@@ -27,6 +27,7 @@ pub mod workspace;
 mod tests;
 
 use async_trait::async_trait;
+use chrono::{DateTime, Utc};
 use std::path::Path;
 use std::sync::Arc;
 use uuid::Uuid;
@@ -489,15 +490,28 @@ impl MemoryEngine for SqliteMemoryEngine {
         scope: Option<&Scope>,
         limit: usize,
     ) -> Result<Vec<MemoryRecord>, StrataError> {
+        self.search_as_of(query, scope, None, None, limit).await
+    }
+
+    async fn search_as_of(
+        &self,
+        query: &str,
+        scope: Option<&Scope>,
+        as_of_time: Option<DateTime<Utc>>,
+        as_of_commit: Option<&str>,
+        limit: usize,
+    ) -> Result<Vec<MemoryRecord>, StrataError> {
         let mut results = self
             .ranker
-            .retrieve_federated(
+            .retrieve_federated_as_of(
                 &self.store,
                 self.global_store.as_deref(),
                 Some(self.embedding_provider.as_ref()),
                 query,
                 scope,
                 None,
+                as_of_time,
+                as_of_commit,
                 limit,
             )
             .await?;
@@ -516,14 +530,23 @@ impl MemoryEngine for SqliteMemoryEngine {
     }
 
     async fn get(&self, id: &Uuid) -> Result<Option<MemoryRecord>, StrataError> {
-        if let Some(mut memory) = self.store.get_memory(id)? {
+        self.get_as_of(id, None, None).await
+    }
+
+    async fn get_as_of(
+        &self,
+        id: &Uuid,
+        as_of_time: Option<DateTime<Utc>>,
+        as_of_commit: Option<&str>,
+    ) -> Result<Option<MemoryRecord>, StrataError> {
+        if let Some(mut memory) = self.store.get_memory_as_of(id, as_of_time, as_of_commit)? {
             memory.mark_accessed();
             let _ = self.store.insert_or_update_memory(&memory);
             return Ok(Some(memory));
         }
 
         if let Some(ref global) = self.global_store {
-            if let Some(mut memory) = global.get_memory(id)? {
+            if let Some(mut memory) = global.get_memory_as_of(id, as_of_time, as_of_commit)? {
                 memory.mark_accessed();
                 let _ = global.insert_or_update_memory(&memory);
                 return Ok(Some(memory));

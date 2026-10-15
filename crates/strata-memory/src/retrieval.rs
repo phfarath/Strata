@@ -1,3 +1,4 @@
+use chrono::{DateTime, Utc};
 use std::collections::HashMap;
 use strata_core::errors::StrataError;
 use strata_core::state::{MemoryRecord, MemoryType, Scope};
@@ -90,6 +91,32 @@ impl HybridRanker {
         memory_types: Option<&[MemoryType]>,
         limit: usize,
     ) -> Result<Vec<MemoryRecord>, StrataError> {
+        self.retrieve_as_of(
+            store,
+            embedding_provider,
+            query,
+            scope,
+            memory_types,
+            None,
+            None,
+            limit,
+        )
+        .await
+    }
+
+    /// Perform hybrid retrieval combining FTS5 BM25, Vector Cosine Similarity,
+    /// and Knowledge Graph Spreading Activation via Tri-Modal RRF with bi-temporal time-travel filters.
+    pub async fn retrieve_as_of(
+        &self,
+        store: &SqliteStore,
+        embedding_provider: Option<&dyn EmbeddingProvider>,
+        query: &str,
+        scope: Option<&Scope>,
+        memory_types: Option<&[MemoryType]>,
+        as_of_time: Option<DateTime<Utc>>,
+        as_of_commit: Option<&str>,
+        limit: usize,
+    ) -> Result<Vec<MemoryRecord>, StrataError> {
         let candidate_limit = (limit * 3).max(20);
 
         // Transparent cold-start fallback if community has < k memories
@@ -104,16 +131,27 @@ impl HybridRanker {
             scope
         };
 
-        // 1. Lexical retrieval via SQLite FTS5
-        let fts_results = store.search_fts(query, effective_scope, candidate_limit)?;
+        // 1. Lexical retrieval via SQLite FTS5 with bi-temporal bounds
+        let fts_results = store.search_fts_as_of(
+            query,
+            effective_scope,
+            as_of_time,
+            as_of_commit,
+            candidate_limit,
+        )?;
 
-        // 2. Vector retrieval
+        // 2. Vector retrieval filtered by bi-temporal bounds
         let mut vector_results: Vec<(MemoryRecord, f32)> = Vec::new();
         if let Some(embedder) = embedding_provider {
             if let Ok(query_embedding) = embedder.embed_text(query).await {
                 // Fetch candidates in scope to score against
-                let all_candidates =
-                    store.get_all_memories(effective_scope, memory_types, candidate_limit * 2)?;
+                let all_candidates = store.get_all_memories_as_of(
+                    effective_scope,
+                    memory_types,
+                    as_of_time,
+                    as_of_commit,
+                    candidate_limit * 2,
+                )?;
                 for memory in all_candidates {
                     if let Some(ref mem_emb) = memory.embedding {
                         let sim = cosine_similarity(&query_embedding, mem_emb);
@@ -161,7 +199,9 @@ impl HybridRanker {
                             vector_results.iter().find(|(r, _)| r.id == mem_id)
                         {
                             graph_results.push((rec.clone(), act_score));
-                        } else if let Ok(Some(rec)) = store.get_memory(&mem_id) {
+                        } else if let Ok(Some(rec)) =
+                            store.get_memory_as_of(&mem_id, as_of_time, as_of_commit)
+                        {
                             // Discovered via associative multi-hop jump!
                             if effective_scope.map_or(true, |s| s.is_compatible(&rec.scope))
                                 && memory_types
@@ -178,7 +218,13 @@ impl HybridRanker {
         // If all candidate streams are empty, fall back to recent memories only if query is blank
         if fts_results.is_empty() && vector_results.is_empty() && graph_results.is_empty() {
             if query.trim().is_empty() {
-                return store.get_all_memories(effective_scope, memory_types, limit);
+                return store.get_all_memories_as_of(
+                    effective_scope,
+                    memory_types,
+                    as_of_time,
+                    as_of_commit,
+                    limit,
+                );
             } else {
                 return Ok(Vec::new());
             }
@@ -273,16 +319,45 @@ impl HybridRanker {
         memory_types: Option<&[MemoryType]>,
         limit: usize,
     ) -> Result<Vec<MemoryRecord>, StrataError> {
+        self.retrieve_federated_as_of(
+            local_store,
+            global_store,
+            embedding_provider,
+            query,
+            scope,
+            memory_types,
+            None,
+            None,
+            limit,
+        )
+        .await
+    }
+
+    /// Perform federated hybrid retrieval across a local workspace store and an optional global store with bi-temporal time-travel filters.
+    pub async fn retrieve_federated_as_of(
+        &self,
+        local_store: &SqliteStore,
+        global_store: Option<&SqliteStore>,
+        embedding_provider: Option<&dyn EmbeddingProvider>,
+        query: &str,
+        scope: Option<&Scope>,
+        memory_types: Option<&[MemoryType]>,
+        as_of_time: Option<DateTime<Utc>>,
+        as_of_commit: Option<&str>,
+        limit: usize,
+    ) -> Result<Vec<MemoryRecord>, StrataError> {
         let global = match global_store {
             Some(g) => g,
             None => {
                 return self
-                    .retrieve(
+                    .retrieve_as_of(
                         local_store,
                         embedding_provider,
                         query,
                         scope,
                         memory_types,
+                        as_of_time,
+                        as_of_commit,
                         limit,
                     )
                     .await;
@@ -292,24 +367,28 @@ impl HybridRanker {
         // Fetch local candidates
         let candidate_limit = (limit * 2).max(10);
         let local_results = self
-            .retrieve(
+            .retrieve_as_of(
                 local_store,
                 embedding_provider,
                 query,
                 scope,
                 memory_types,
+                as_of_time,
+                as_of_commit,
                 candidate_limit,
             )
             .await?;
 
         // Fetch global candidates (scoped to Global)
         let global_results = self
-            .retrieve(
+            .retrieve_as_of(
                 global,
                 embedding_provider,
                 query,
                 Some(&Scope::Global),
                 memory_types,
+                as_of_time,
+                as_of_commit,
                 candidate_limit,
             )
             .await?;
