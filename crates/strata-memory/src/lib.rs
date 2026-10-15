@@ -215,6 +215,28 @@ impl SqliteMemoryEngine {
             .record_tool_failure(&self.store, tool_name, error_msg, context, scope)
     }
 
+    /// Queries active anti-patterns anchored to a specific file and optional symbol.
+    pub async fn get_symbol_anti_patterns(
+        &self,
+        file: &str,
+        symbol: Option<&str>,
+        limit: usize,
+    ) -> Result<Vec<FailurePattern>, StrataError> {
+        let mut results = self.store.find_symbol_anti_patterns(file, symbol, limit)?;
+        if let Some(ref global) = self.global_store {
+            let global_results = global.find_symbol_anti_patterns(file, symbol, limit)?;
+            let mut seen_signatures: std::collections::HashSet<String> =
+                results.iter().map(|f| f.signature.clone()).collect();
+            for gf in global_results {
+                if seen_signatures.insert(gf.signature.clone()) {
+                    results.push(gf);
+                }
+            }
+            results.truncate(limit);
+        }
+        Ok(results)
+    }
+
     /// Automatically detects monorepo workspace boundaries in the repository.
     pub fn detect_workspace_boundaries(
         &self,
@@ -595,6 +617,15 @@ impl MemoryEngine for SqliteMemoryEngine {
         }
 
         Ok(local_failures)
+    }
+
+    async fn get_symbol_anti_patterns(
+        &self,
+        file: &str,
+        symbol: Option<&str>,
+        limit: usize,
+    ) -> Result<Vec<FailurePattern>, StrataError> {
+        self.get_symbol_anti_patterns(file, symbol, limit).await
     }
 }
 

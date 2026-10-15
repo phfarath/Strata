@@ -72,6 +72,10 @@ pub enum HookCommand {
 
         #[arg(long, default_value_t = 30)]
         ttl: u64,
+
+        /// Optional function/symbol name being edited
+        #[arg(long)]
+        symbol: Option<String>,
     },
 
     /// Silently captures tool failure out-of-band without polluting chat context
@@ -95,6 +99,12 @@ pub enum HookCommand {
         /// Task key (falls back to STRATA_TASK_ID)
         #[arg(long)]
         task: Option<String>,
+
+        #[arg(long)]
+        target: Option<String>,
+
+        #[arg(long)]
+        symbol: Option<String>,
     },
 
     /// Intercepts shell command execution, captures compiler/test errors out-of-band and persists AntiPatterns
@@ -308,8 +318,9 @@ pub async fn handle_hook(command: HookCommand, engine: Arc<SqliteMemoryEngine>) 
             params,
             agent,
             ttl,
+            symbol,
         } => {
-            let resolved_target = target.or_else(|| {
+            let mut resolved_target = target.or_else(|| {
                 params.as_deref().and_then(|p| {
                     serde_json::from_str::<serde_json::Value>(p)
                         .ok()
@@ -323,6 +334,33 @@ pub async fn handle_hook(command: HookCommand, engine: Arc<SqliteMemoryEngine>) 
                         })
                 })
             });
+
+            let mut resolved_symbol = symbol.or_else(|| {
+                params.as_deref().and_then(|p| {
+                    serde_json::from_str::<serde_json::Value>(p)
+                        .ok()
+                        .and_then(|v| {
+                            v.get("symbol")
+                                .or_else(|| v.get("function"))
+                                .or_else(|| v.get("fn"))
+                                .or_else(|| v.get("symbol_name"))
+                                .or_else(|| v.get("target_symbol"))
+                                .and_then(|f| f.as_str())
+                                .map(|s| s.to_string())
+                        })
+                })
+            });
+
+            if let Some(ref t) = resolved_target {
+                if let Some(colons) = t.find("::") {
+                    let file_part = t[..colons].to_string();
+                    let sym_part = t[colons + 2..].to_string();
+                    resolved_target = Some(file_part);
+                    if resolved_symbol.is_none() && !sym_part.is_empty() {
+                        resolved_symbol = Some(sym_part);
+                    }
+                }
+            }
 
             if let Some(target_path) = resolved_target {
                 let lower_tool = tool.to_lowercase();
@@ -364,6 +402,27 @@ pub async fn handle_hook(command: HookCommand, engine: Arc<SqliteMemoryEngine>) 
                         Some(&metadata),
                     );
                 }
+
+                // Deterministic Symbol-Level Anti-Pattern Guard (<10ms, Advisory Default - never aborts)
+                let start_guard = std::time::Instant::now();
+                if let Ok(anti_patterns) = engine
+                    .get_symbol_anti_patterns(&target_path, resolved_symbol.as_deref(), 3)
+                    .await
+                {
+                    if !anti_patterns.is_empty() {
+                        let mut guard_output =
+                            String::from("⚠️ [Strata Pre-Action Guardrail: Known Anti-Pattern]\n");
+                        for ap in anti_patterns {
+                            let surgical = AntiPatternParser::format_surgical_guardrail(&ap);
+                            guard_output.push_str(&format!("  • {surgical}\n"));
+                        }
+                        eprint!("{guard_output}");
+                    }
+                }
+                debug!(
+                    "PreTool symbol guard checked in {}µs",
+                    start_guard.elapsed().as_micros()
+                );
             }
         }
 
@@ -374,6 +433,8 @@ pub async fn handle_hook(command: HookCommand, engine: Arc<SqliteMemoryEngine>) 
             context,
             agent,
             task,
+            target,
+            symbol,
         } => {
             let (agent_id, task_key) =
                 resolve_futility_ids(agent, task, |k| std::env::var(k).ok());
@@ -390,23 +451,39 @@ pub async fn handle_hook(command: HookCommand, engine: Arc<SqliteMemoryEngine>) 
                 if !err_msg.trim().is_empty() {
                     shadow_failure(&shadow_store, &agent_id, &task_key, &tool_ident, &err_msg);
                     debug!("Out-of-band capturing silent tool failure: tool='{tool}', error='{err_msg}'");
-                    let failure =
+                    let mut failure =
                         AntiPatternParser::parse(&tool, "", &err_msg, 1, context.as_deref(), None)
                             .unwrap_or_else(|| {
                                 let mut f = FailurePattern::new(
-                            format!("{tool}_failure"),
-                            format!("{tool} execution error"),
-                            err_msg.clone(),
-                            "Avoid repeating identical invalid parameters or unverified flags",
-                        );
+                                    format!("{tool}_failure"),
+                                    format!("{tool} execution error"),
+                                    err_msg.clone(),
+                                    "Avoid repeating identical invalid parameters or unverified flags",
+                                );
                                 f.error_type = "ToolExecutionError".to_string();
-                                f.trigger_condition = params.unwrap_or_default();
+                                f.trigger_condition = params.clone().unwrap_or_default();
                                 f.severity = FailureSeverity::High;
                                 if let Some(ctx) = context {
                                     f.metadata = serde_json::json!({ "context": ctx });
                                 }
                                 f
                             });
+
+                    if let Some(ref t) = target {
+                        if failure.file_path().is_none() {
+                            failure = failure.with_symbol_anchor(t, symbol.as_deref(), None::<&str>);
+                        }
+                    } else if let Some(ref s) = symbol {
+                        if failure.symbol_name().is_none() {
+                            let curr_file = failure.file_path().unwrap_or("").to_string();
+                            let err_class = failure.error_class().map(|c| c.to_string());
+                            failure = failure.with_symbol_anchor(
+                                curr_file,
+                                Some(s),
+                                err_class,
+                            );
+                        }
+                    }
 
                     if let Err(e) = engine.record_failure(&failure).await {
                         error!("Failed to silently record tool failure: {e}");
@@ -571,6 +648,8 @@ mod futility_shadow_tests {
             context: None,
             agent: Some("agent-42".to_string()),
             task: Some("task-99".to_string()),
+            target: None,
+            symbol: None,
         };
         handle_hook(cmd, Arc::clone(&engine)).await.unwrap();
 
@@ -590,6 +669,8 @@ mod futility_shadow_tests {
             context: None,
             agent: Some("agent-42".to_string()),
             task: Some("task-99".to_string()),
+            target: None,
+            symbol: None,
         };
         handle_hook(ok_cmd, Arc::clone(&engine)).await.unwrap();
 
@@ -599,5 +680,35 @@ mod futility_shadow_tests {
             .unwrap();
         assert_eq!(trace2.len(), 2);
         assert_eq!(trace2[1].signal, "success");
+    }
+
+    #[tokio::test]
+    async fn pre_tool_queries_symbol_guard_without_blocking() {
+        let engine = Arc::new(SqliteMemoryEngine::open_in_memory(None).unwrap());
+
+        // Seed a known failure anchored to a symbol
+        let failure = FailurePattern::new(
+            "sig_auth_lock",
+            "Auth Deadlock",
+            "Deadlock in login",
+            "Drop lock before await",
+        )
+        .with_symbol_anchor("src/auth.rs", Some("login"), Some("E0502"))
+        .with_verified_correction("Use tokio::sync::Mutex or clone token");
+
+        engine.record_failure(&failure).await.unwrap();
+
+        let cmd = HookCommand::PreTool {
+            tool: "edit".to_string(),
+            target: Some("src/auth.rs::login".to_string()),
+            params: None,
+            agent: "agent-test".to_string(),
+            ttl: 30,
+            symbol: None,
+        };
+
+        // Execution must succeed and never abort/exit (advisory default)
+        let res = handle_hook(cmd, Arc::clone(&engine)).await;
+        assert!(res.is_ok());
     }
 }

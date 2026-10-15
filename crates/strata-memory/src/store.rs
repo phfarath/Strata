@@ -274,6 +274,10 @@ impl SqliteStore {
             CREATE INDEX IF NOT EXISTS idx_failures_sig ON failure_patterns(signature);
             CREATE INDEX IF NOT EXISTS idx_failures_scope ON failure_patterns(scope);
             CREATE INDEX IF NOT EXISTS idx_failures_last_seen ON failure_patterns(last_seen);
+            CREATE INDEX IF NOT EXISTS idx_failures_file_symbol ON failure_patterns(
+                json_extract(metadata_json, '$.file'),
+                json_extract(metadata_json, '$.symbol')
+            );
 
             -- Futility accumulator state, one row per (agent, task)
             CREATE TABLE IF NOT EXISTS futility_state (
@@ -1915,6 +1919,130 @@ impl SqliteStore {
             results.push(r.map_err(|e| StrataError::Database(e.to_string()))?);
         }
         Ok(results)
+    }
+
+    /// Finds failure anti-patterns anchored to a specific file and optional symbol.
+    /// Returns exact symbol matches first, followed by file-level failure patterns.
+    pub fn find_symbol_anti_patterns(
+        &self,
+        file_path: &str,
+        symbol: Option<&str>,
+        limit: usize,
+    ) -> Result<Vec<FailurePattern>, StrataError> {
+        let conn = self
+            .conn
+            .lock()
+            .map_err(|_| StrataError::Database("Lock poisoned on SQLite connection".to_string()))?;
+
+        let norm_file = file_path.replace('\\', "/");
+        let norm_file = norm_file.trim_start_matches("./");
+
+        let mut sql = "
+            SELECT id, signature, pattern_name, description, trigger_condition,
+                   error_type, mitigation, occurrences, first_seen, last_seen,
+                   severity, scope, metadata_json
+            FROM failure_patterns
+            WHERE (
+                json_extract(metadata_json, '$.file') = ?1
+                OR ?1 LIKE '%' || json_extract(metadata_json, '$.file')
+                OR json_extract(metadata_json, '$.file') LIKE '%' || ?1
+            )
+        "
+        .to_string();
+
+        let mut params_vec: Vec<Box<dyn rusqlite::ToSql>> = Vec::new();
+        params_vec.push(Box::new(norm_file.to_string()));
+
+        if let Some(s) = symbol {
+            sql.push_str(" AND (json_extract(metadata_json, '$.symbol') = ?2 OR json_extract(metadata_json, '$.symbol') IS NULL)");
+            params_vec.push(Box::new(s.to_string()));
+            sql.push_str(" ORDER BY (CASE WHEN json_extract(metadata_json, '$.symbol') = ?2 THEN 0 ELSE 1 END), occurrences DESC, last_seen DESC LIMIT ?3");
+            params_vec.push(Box::new(limit as i64));
+        } else {
+            sql.push_str(" ORDER BY (CASE WHEN json_extract(metadata_json, '$.symbol') IS NULL THEN 0 ELSE 1 END), occurrences DESC, last_seen DESC LIMIT ?2");
+            params_vec.push(Box::new(limit as i64));
+        }
+
+        let mut stmt = conn
+            .prepare(&sql)
+            .map_err(|e| StrataError::Database(e.to_string()))?;
+
+        let params_slice: Vec<&dyn rusqlite::ToSql> =
+            params_vec.iter().map(|b| b.as_ref()).collect();
+
+        let rows = stmt
+            .query_map(params_slice.as_slice(), |row| Self::row_to_failure(row))
+            .map_err(|e| StrataError::Database(e.to_string()))?;
+
+        let mut results = Vec::new();
+        for r in rows {
+            results.push(r.map_err(|e| StrataError::Database(e.to_string()))?);
+        }
+
+        Ok(results)
+    }
+
+    /// Attaches a verified correction to a known anti-pattern by its unique signature (Dual-Polarity).
+    pub fn attach_verified_correction(
+        &self,
+        signature: &str,
+        correction: &str,
+    ) -> Result<bool, StrataError> {
+        let conn = self
+            .conn
+            .lock()
+            .map_err(|_| StrataError::Database("Lock poisoned on SQLite connection".to_string()))?;
+
+        let rows_affected = conn
+            .execute(
+                "UPDATE failure_patterns
+                 SET metadata_json = json_set(metadata_json, '$.verified_correction', ?1)
+                 WHERE signature = ?2",
+                rusqlite::params![correction, signature],
+            )
+            .map_err(|e| StrataError::Database(e.to_string()))?;
+
+        Ok(rows_affected > 0)
+    }
+
+    /// Attaches a verified correction to all anti-patterns anchored to a file and optional symbol.
+    pub fn attach_symbol_correction(
+        &self,
+        file: &str,
+        symbol: Option<&str>,
+        correction: &str,
+    ) -> Result<usize, StrataError> {
+        let conn = self
+            .conn
+            .lock()
+            .map_err(|_| StrataError::Database("Lock poisoned on SQLite connection".to_string()))?;
+
+        let norm_file = file.replace('\\', "/");
+        let norm_file = norm_file.trim_start_matches("./");
+
+        let rows = if let Some(s) = symbol {
+            conn.execute(
+                "UPDATE failure_patterns
+                 SET metadata_json = json_set(metadata_json, '$.verified_correction', ?1)
+                 WHERE (json_extract(metadata_json, '$.file') = ?2
+                        OR ?2 LIKE '%' || json_extract(metadata_json, '$.file')
+                        OR json_extract(metadata_json, '$.file') LIKE '%' || ?2)
+                   AND json_extract(metadata_json, '$.symbol') = ?3",
+                rusqlite::params![correction, norm_file, s],
+            )
+        } else {
+            conn.execute(
+                "UPDATE failure_patterns
+                 SET metadata_json = json_set(metadata_json, '$.verified_correction', ?1)
+                 WHERE (json_extract(metadata_json, '$.file') = ?2
+                        OR ?2 LIKE '%' || json_extract(metadata_json, '$.file')
+                        OR json_extract(metadata_json, '$.file') LIKE '%' || ?2)",
+                rusqlite::params![correction, norm_file],
+            )
+        }
+        .map_err(|e| StrataError::Database(e.to_string()))?;
+
+        Ok(rows)
     }
 
     // ==========================================

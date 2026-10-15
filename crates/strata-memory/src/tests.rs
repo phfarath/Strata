@@ -3744,3 +3744,84 @@ fn test_metaplasticity_threshold_adaptation_under_volatility() {
     assert_eq!(state.volatility, 0.0);
 }
 
+#[tokio::test]
+async fn test_symbol_anti_pattern_lookup_and_dual_polarity() {
+    use strata_core::state::FailurePattern;
+
+    let store = Arc::new(SqliteStore::open_in_memory().expect("open memory store"));
+
+    // 1. Insert file-level anti-pattern
+    let file_pat = FailurePattern::new(
+        "sig_file_borrow",
+        "File Level Borrow Issue",
+        "Aliasing conflict in file",
+        "Check overall module structure",
+    )
+    .with_symbol_anchor("src/auth.rs", None::<&str>, Some("E0502"));
+
+    // 2. Insert symbol-level anti-pattern
+    let sym_pat = FailurePattern::new(
+        "sig_sym_login",
+        "Login Handler Conflict",
+        "Mutable borrow collision in login_handler",
+        "Avoid keeping lock across await",
+    )
+    .with_symbol_anchor("src/auth.rs", Some("login_handler"), Some("E0502"))
+    .with_verified_correction("Clone UserToken before dispatching async verification call");
+
+    store.upsert_failure_pattern(&file_pat).expect("insert file pattern");
+    store.upsert_failure_pattern(&sym_pat).expect("insert symbol pattern");
+
+    // 3. Query symbol anti-patterns with exact symbol
+    let results = store
+        .find_symbol_anti_patterns("src/auth.rs", Some("login_handler"), 5)
+        .expect("find symbol anti-patterns");
+    assert_eq!(results.len(), 2);
+    // Exact symbol match should be ranked first
+    assert_eq!(results[0].signature, "sig_sym_login");
+    assert_eq!(results[0].symbol_name(), Some("login_handler"));
+    assert_eq!(
+        results[0].verified_correction(),
+        Some("Clone UserToken before dispatching async verification call")
+    );
+    assert_eq!(results[1].signature, "sig_file_borrow");
+
+    // 4. Query with non-matching symbol: should return file-level only
+    let other_sym = store
+        .find_symbol_anti_patterns("src/auth.rs", Some("logout_handler"), 5)
+        .expect("find for other symbol");
+    assert_eq!(other_sym.len(), 1);
+    assert_eq!(other_sym[0].signature, "sig_file_borrow");
+
+    // 5. Query by file only
+    let file_only = store
+        .find_symbol_anti_patterns(r".\src\auth.rs", None, 5)
+        .expect("find file only");
+    assert_eq!(file_only.len(), 2);
+
+    // 6. Test attach_verified_correction by signature
+    let updated = store
+        .attach_verified_correction("sig_file_borrow", "Use interior mutability RefCell/Mutex")
+        .expect("attach correction");
+    assert!(updated);
+
+    let re_queried = store
+        .find_symbol_anti_patterns("src/auth.rs", None, 5)
+        .expect("re-query");
+    let file_p = re_queried.iter().find(|f| f.signature == "sig_file_borrow").unwrap();
+    assert_eq!(
+        file_p.verified_correction(),
+        Some("Use interior mutability RefCell/Mutex")
+    );
+
+    // 7. Verify gate latency is well under 10ms (p95 requirement)
+    let start = std::time::Instant::now();
+    for _ in 0..100 {
+        let _ = store.find_symbol_anti_patterns("src/auth.rs", Some("login_handler"), 5).unwrap();
+    }
+    let elapsed = start.elapsed();
+    let avg_us = elapsed.as_micros() / 100;
+    println!("Average gate lookup latency: {} microseconds", avg_us);
+    assert!(avg_us < 10_000, "Gate lookup latency must be < 10ms, got {}us", avg_us);
+}
+
