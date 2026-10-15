@@ -16,7 +16,8 @@ pub use engine::*;
 pub use mock::*;
 pub use planning::{
     DagExecutionReport, DagScheduler, DynamicReplanner, ExecutionWave, GoalDag, GoalDagExport,
-    GoalDecomposer, GoalEdge, GoalEdgeKind, GoalNode, GoalNodeKind, GoalStatus, RecoveryAction,
+    GoalDecomposer, GoalEdge, GoalEdgeKind, GoalNode, GoalNodeKind, GoalStatus,
+    MacroCompilationReport, MacroSubstitution, ProceduralMacroCompiler, RecoveryAction,
     SerializedGoalEdge, TaskExecutor,
 };
 pub use prompts::*;

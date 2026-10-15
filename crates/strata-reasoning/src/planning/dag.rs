@@ -491,6 +491,150 @@ impl GoalDag {
         Ok(())
     }
 
+    /// Expands a high-level goal node into a sequence of concrete procedural macro steps.
+    ///
+    /// Preserves DAG topology: incoming edges to `target_id` point to the first step,
+    /// and outgoing edges from `target_id` connect to the last step (or verification gate).
+    pub fn expand_macro(
+        &mut self,
+        target_id: &str,
+        skill: &strata_core::schemas::ProceduralSkill,
+        auto_inject_verification: bool,
+    ) -> Result<Vec<String>> {
+        if skill.steps.is_empty() {
+            return Ok(Vec::new());
+        }
+
+        let target_idx = match self.node_indices.get(target_id) {
+            Some(&i) => i,
+            None => bail!("Cannot expand macro: target node '{target_id}' not found in DAG"),
+        };
+
+        // Capture incoming predecessors of target node
+        let incoming_preds: Vec<(NodeIndex, GoalEdge)> = self
+            .graph
+            .neighbors_directed(target_idx, Direction::Incoming)
+            .filter_map(|pred_idx| {
+                self.graph
+                    .find_edge(pred_idx, target_idx)
+                    .and_then(|e_idx| self.graph.edge_weight(e_idx).cloned())
+                    .map(|edge| (pred_idx, edge))
+            })
+            .collect();
+
+        // Capture outgoing dependents of target node and remove old edges
+        let outgoing_edges: Vec<(NodeIndex, GoalEdge)> = self
+            .graph
+            .neighbors_directed(target_idx, Direction::Outgoing)
+            .filter_map(|succ_idx| {
+                self.graph
+                    .find_edge(target_idx, succ_idx)
+                    .and_then(|e_idx| self.graph.edge_weight(e_idx).cloned())
+                    .map(|edge| (succ_idx, edge))
+            })
+            .collect();
+
+        for (succ_idx, _) in &outgoing_edges {
+            if let Some(e_idx) = self.graph.find_edge(target_idx, *succ_idx) {
+                self.graph.remove_edge(e_idx);
+            }
+        }
+        for (pred_idx, _) in &incoming_preds {
+            if let Some(e_idx) = self.graph.find_edge(*pred_idx, target_idx) {
+                self.graph.remove_edge(e_idx);
+            }
+        }
+
+        // 1. Generate a GoalNode for each procedural step
+        let mut step_node_ids = Vec::new();
+        for step in &skill.steps {
+            let step_id = format!("{}_macro_step_{}", target_id, step.order);
+            let action_desc = step.expected_result.as_deref().unwrap_or("execute");
+            let node = GoalNode::task(
+                &step_id,
+                format!("[{}] {}", skill.name, step.action),
+            )
+            .with_description(format!(
+                "Macro step {} using tool '{}' ({})",
+                step.order, step.tool, action_desc
+            ))
+            .with_action(&step.tool)
+            .with_action_params(step.arguments.clone())
+            .with_metadata(serde_json::json!({
+                "procedural_macro_id": skill.id.to_string(),
+                "procedural_macro_name": skill.name,
+                "step_order": step.order,
+                "expected_result": step.expected_result,
+                "notes": step.notes,
+            }));
+
+            self.add_node(node);
+            step_node_ids.push(step_id);
+        }
+
+        // 2. Chain consecutive steps sequentially
+        for window in step_node_ids.windows(2) {
+            self.add_edge(&window[0], &window[1], GoalEdge::depends_on())?;
+        }
+
+        // 3. Inject verification gate if skill has postconditions or requested
+        if auto_inject_verification && (!skill.postconditions.is_empty() || skill.steps.iter().any(|s| s.expected_result.is_some())) {
+            let verify_id = format!("{}_macro_verify", target_id);
+            let post_desc = if skill.postconditions.is_empty() {
+                "Verify macro execution outcome and invariants".to_string()
+            } else {
+                format!("Verify postconditions: {}", skill.postconditions.join("; "))
+            };
+
+            let verify_node = GoalNode::verification(
+                &verify_id,
+                format!("Verify [{}]", skill.name),
+            )
+            .with_description(post_desc)
+            .with_action("verify_macro_invariants")
+            .with_metadata(serde_json::json!({
+                "macro_id": skill.id.to_string(),
+                "postconditions": skill.postconditions,
+            }));
+
+            self.add_node(verify_node);
+
+            if let Some(last_step_id) = step_node_ids.last() {
+                self.add_edge(last_step_id, &verify_id, GoalEdge::verifies())?;
+            }
+            step_node_ids.push(verify_id);
+        }
+
+        // 4. Connect incoming predecessors to first step
+        if let Some(first_id) = step_node_ids.first() {
+            if let Some(&first_idx) = self.node_indices.get(first_id) {
+                for (pred_idx, edge) in incoming_preds {
+                    self.graph.add_edge(pred_idx, first_idx, edge);
+                }
+            }
+        }
+
+        // 5. Connect last step / verification to outgoing dependents
+        if let Some(last_id) = step_node_ids.last() {
+            if let Some(&last_idx) = self.node_indices.get(last_id) {
+                for (succ_idx, edge) in outgoing_edges {
+                    self.graph.add_edge(last_idx, succ_idx, edge);
+                }
+            }
+        }
+
+        // 6. Mark target node as skipped (substituted by macro steps)
+        if let Some(target) = self.get_node_mut(target_id) {
+            target.mark_skipped(format!(
+                "Substituted by procedural macro '{}' ({} steps)",
+                skill.name,
+                skill.steps.len()
+            ));
+        }
+
+        Ok(step_node_ids)
+    }
+
     /// Export the DAG as a serializable struct.
     pub fn export(&self) -> GoalDagExport {
         let nodes: Vec<GoalNode> = self.graph.node_weights().cloned().collect();

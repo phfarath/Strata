@@ -1,4 +1,5 @@
 use anyhow::Result;
+use strata_core::schemas::ProceduralSkill;
 use strata_core::state::FailurePattern;
 
 use super::dag::GoalDag;
@@ -8,6 +9,7 @@ use super::types::{GoalEdgeKind, GoalNode, GoalNodeKind, GoalStatus, RecoveryAct
 #[derive(Debug, Clone)]
 pub struct DynamicReplanner {
     known_failures: Vec<FailurePattern>,
+    procedural_recovery_skills: Vec<ProceduralSkill>,
 }
 
 impl Default for DynamicReplanner {
@@ -20,6 +22,7 @@ impl DynamicReplanner {
     pub fn new() -> Self {
         Self {
             known_failures: Vec::new(),
+            procedural_recovery_skills: Vec::new(),
         }
     }
 
@@ -30,6 +33,15 @@ impl DynamicReplanner {
 
     pub fn add_known_failure(&mut self, failure: FailurePattern) {
         self.known_failures.push(failure);
+    }
+
+    pub fn with_procedural_skills(mut self, skills: Vec<ProceduralSkill>) -> Self {
+        self.procedural_recovery_skills = skills;
+        self
+    }
+
+    pub fn add_procedural_skill(&mut self, skill: ProceduralSkill) {
+        self.procedural_recovery_skills.push(skill);
     }
 
     /// Evaluate failure context and determine appropriate `RecoveryAction`.
@@ -112,6 +124,60 @@ impl DynamicReplanner {
                 return Ok(RecoveryAction::SubstituteNode {
                     failed_node_id: failed_node.id.clone(),
                     replacement_node: fix_node,
+                });
+            }
+        }
+
+        // 4b. Check mined procedural recovery routines
+        for skill in &self.procedural_recovery_skills {
+            let skill_name_clean = skill.name.to_lowercase();
+            let matches_error = err_lower.contains(&skill_name_clean)
+                || skill.tags.iter().any(|t| err_lower.contains(&t.to_lowercase()))
+                || skill.preconditions.iter().any(|p| err_lower.contains(&p.to_lowercase()));
+
+            if matches_error && !skill.steps.is_empty() {
+                let mut mitigation_nodes = Vec::new();
+                let mut edges = Vec::new();
+                let mut prev_id: Option<String> = None;
+
+                for step in &skill.steps {
+                    let step_id = format!("{}_recovery_step_{}", failed_node.id, step.order);
+                    let node = GoalNode::task(
+                        &step_id,
+                        format!("[Recovery: {}] {}", skill.name, step.action),
+                    )
+                    .with_description(format!(
+                        "Mined recovery step {} using tool '{}'",
+                        step.order, step.tool
+                    ))
+                    .with_action(&step.tool)
+                    .with_action_params(step.arguments.clone());
+
+                    if let Some(prev) = &prev_id {
+                        edges.push((prev.clone(), step_id.clone(), GoalEdgeKind::DependsOn));
+                    }
+                    prev_id = Some(step_id.clone());
+                    mitigation_nodes.push(node);
+                }
+
+                // Append reverification gate
+                let reverify_id = format!("{}_reverify_after_recovery", failed_node.id);
+                let reverify_node = GoalNode::verification(
+                    &reverify_id,
+                    format!("Re-verify after {}", skill.name),
+                )
+                .with_description("Re-run verification gate after applying mined procedural recovery routine")
+                .with_action(failed_node.action.as_deref().unwrap_or("verify"));
+
+                if let Some(prev) = &prev_id {
+                    edges.push((prev.clone(), reverify_id.clone(), GoalEdgeKind::DependsOn));
+                }
+                mitigation_nodes.push(reverify_node);
+
+                return Ok(RecoveryAction::InjectMitigation {
+                    failed_node_id: failed_node.id.clone(),
+                    mitigation_nodes,
+                    edges,
                 });
             }
         }
