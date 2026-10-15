@@ -31,8 +31,12 @@ pub async fn run_search(options: SearchOptions, engine: Arc<dyn MemoryEngine>) -
     let as_of_time = options
         .as_of_time
         .as_deref()
-        .and_then(|s| DateTime::parse_from_rfc3339(s).ok())
-        .map(|dt| dt.with_timezone(&Utc));
+        .map(|s| {
+            DateTime::parse_from_rfc3339(s)
+                .map(|dt| dt.with_timezone(&Utc))
+                .map_err(|e| anyhow::anyhow!("Invalid RFC3339 timestamp for --as-of-time '{s}': {e}"))
+        })
+        .transpose()?;
 
     let results = engine
         .search_as_of(

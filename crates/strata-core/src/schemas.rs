@@ -1689,7 +1689,7 @@ impl CodeAnchor {
             return false;
         }
         if let Some(until) = self.valid_until {
-            time <= until
+            time < until
         } else {
             self.is_valid
         }

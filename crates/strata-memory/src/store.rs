@@ -164,6 +164,16 @@ impl SqliteStore {
             [],
         );
 
+        // Idempotently backfill valid_until for legacy deprecated records
+        let _ = conn.execute(
+            "UPDATE memories SET valid_until = updated_at WHERE valid_until IS NULL AND json_extract(metadata_json, '$.status') = 'deprecated'",
+            [],
+        );
+        let _ = conn.execute(
+            "UPDATE semantic_facts SET valid_until = last_updated_at WHERE valid_until IS NULL AND status = 'deprecated'",
+            [],
+        );
+
         conn.execute_batch(
             "
             -- Canonical Events table
@@ -1262,7 +1272,8 @@ impl SqliteStore {
         }
 
         if let Some(c) = as_of_commit {
-            sql.push_str(" AND (git_commit_hash = ? OR json_extract(metadata_json, '$.git_commit_hash') = ? OR json_extract(metadata_json, '$.commit') = ?)");
+            sql.push_str(" AND (git_commit_hash = ? OR json_extract(metadata_json, '$.git_commit_hash') = ? OR json_extract(metadata_json, '$.git_commit') = ? OR json_extract(metadata_json, '$.commit') = ?)");
+            params_vec.push(Box::new(c.to_string()));
             params_vec.push(Box::new(c.to_string()));
             params_vec.push(Box::new(c.to_string()));
             params_vec.push(Box::new(c.to_string()));
@@ -1360,7 +1371,8 @@ impl SqliteStore {
         }
 
         if let Some(c) = as_of_commit {
-            query.push_str(" AND (git_commit_hash = ? OR json_extract(metadata_json, '$.git_commit_hash') = ? OR json_extract(metadata_json, '$.commit') = ?)");
+            query.push_str(" AND (git_commit_hash = ? OR json_extract(metadata_json, '$.git_commit_hash') = ? OR json_extract(metadata_json, '$.git_commit') = ? OR json_extract(metadata_json, '$.commit') = ?)");
+            params_vec.push(Box::new(c.to_string()));
             params_vec.push(Box::new(c.to_string()));
             params_vec.push(Box::new(c.to_string()));
             params_vec.push(Box::new(c.to_string()));
@@ -1445,7 +1457,8 @@ impl SqliteStore {
         }
 
         if let Some(c) = as_of_commit {
-            sql.push_str(" AND (m.git_commit_hash = ? OR json_extract(m.metadata_json, '$.git_commit_hash') = ? OR json_extract(m.metadata_json, '$.commit') = ?)");
+            sql.push_str(" AND (m.git_commit_hash = ? OR json_extract(m.metadata_json, '$.git_commit_hash') = ? OR json_extract(m.metadata_json, '$.git_commit') = ? OR json_extract(m.metadata_json, '$.commit') = ?)");
+            params_vec.push(Box::new(c.to_string()));
             params_vec.push(Box::new(c.to_string()));
             params_vec.push(Box::new(c.to_string()));
             params_vec.push(Box::new(c.to_string()));
