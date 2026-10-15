@@ -1864,4 +1864,47 @@ pub fn verify_token(token: &str) -> bool {
 
         assert!(transitioned, "Fact should transition to Stale upon live fs modification event");
     }
+
+    #[tokio::test]
+    async fn test_cli_sync_merge_branch() {
+        use crate::commands::sync::{run_sync, SyncArgs};
+        use strata_core::state::{MemoryRecord, MemoryType, Scope};
+
+        let store = Arc::new(SqliteStore::open_in_memory().expect("open store"));
+
+        let rec = MemoryRecord::new(
+            MemoryType::Semantic,
+            "Feature-isolated API contract",
+            Scope::Global,
+        )
+        .with_branch("feat/payment-gateway");
+        store.insert_or_update_memory(&rec).expect("insert memory");
+
+        // Pre-merge: query on main should find 0 memories
+        let main_before = store.search_fts_as_of("contract", None, None, None, Some("main"), 10).expect("search main before");
+        assert_eq!(main_before.len(), 0);
+
+        // Pre-merge: query on feat branch should find 1 memory
+        let feat_before = store.search_fts_as_of("contract", None, None, None, Some("feat/payment-gateway"), 10).expect("search feat before");
+        assert_eq!(feat_before.len(), 1);
+
+        // Run sync command with --merge-branch
+        let sync_args = SyncArgs {
+            action: None,
+            endpoint: None,
+            token: None,
+            workspace: None,
+            json: true,
+            merge_branch: Some("feat/payment-gateway".to_string()),
+            target_branch: "main".to_string(),
+        };
+
+        let res = run_sync(sync_args, store.clone()).await;
+        assert!(res.is_ok(), "run_sync with --merge-branch must succeed");
+
+        // Post-merge: query on main should now find 1 memory!
+        let main_after = store.search_fts_as_of("contract", None, None, None, Some("main"), 10).expect("search main after");
+        assert_eq!(main_after.len(), 1);
+        assert_eq!(main_after[0].0.id, rec.id);
+    }
 }

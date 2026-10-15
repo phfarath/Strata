@@ -24,6 +24,19 @@ pub struct SyncArgs {
 
     #[arg(long, global = true, help = "Output report as JSON")]
     pub json: bool,
+
+    #[arg(
+        long = "merge-branch",
+        help = "Merge and promote memories from a feature branch into target branch (default: main)"
+    )]
+    pub merge_branch: Option<String>,
+
+    #[arg(
+        long = "target-branch",
+        default_value = "main",
+        help = "Target branch to promote memories into (default: main)"
+    )]
+    pub target_branch: String,
 }
 
 #[derive(Subcommand, Debug, Clone)]
@@ -39,6 +52,31 @@ pub enum SyncAction {
 use crate::config::StrataConfig;
 
 pub async fn run_sync(args: SyncArgs, store: Arc<SqliteStore>) -> Result<()> {
+    // If --merge-branch is passed, perform atomic memory branch merge and promotion
+    if let Some(ref source_branch) = args.merge_branch {
+        let report = store
+            .merge_branch_memories(source_branch, &args.target_branch)
+            .context("Failed to merge branch memories")?;
+
+        if args.json {
+            println!("{}", serde_json::to_string_pretty(&report)?);
+        } else {
+            println!("\n🔀 [Strata Memory Branch Merge]");
+            println!("═════════════════════════════════════════");
+            println!("Source Branch:            {}", report.source_branch);
+            println!("Target Branch:            {}", report.target_branch);
+            println!("Memories Merged:          {}", report.memories_merged);
+            println!("Semantic Facts Merged:    {}", report.semantic_facts_merged);
+            println!("Events Merged:            {}", report.events_merged);
+            println!("Episodic Memories Merged: {}", report.episodic_memories_merged);
+            println!("Episodes Merged:          {}", report.episodes_merged);
+            println!("─────────────────────────────────────────");
+            println!("Total Records Promoted:   {}", report.total_merged());
+            println!("✓ Successfully unified memories into '{}'.", report.target_branch);
+        }
+        return Ok(());
+    }
+
     let workspace = StrataConfig::resolve_workspace(args.workspace.as_deref());
 
     let mut config = SyncConfig::new(&workspace);

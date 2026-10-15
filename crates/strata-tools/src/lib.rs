@@ -46,7 +46,7 @@ mod tests {
             scope: Option<&Scope>,
             limit: usize,
         ) -> Result<Vec<MemoryRecord>, StrataError> {
-            self.search_as_of(query, scope, None, None, limit).await
+            self.search_as_of(query, scope, None, None, None, limit).await
         }
 
         async fn search_as_of(
@@ -55,6 +55,7 @@ mod tests {
             _scope: Option<&Scope>,
             as_of_time: Option<chrono::DateTime<chrono::Utc>>,
             as_of_commit: Option<&str>,
+            as_of_branch: Option<&str>,
             _limit: usize,
         ) -> Result<Vec<MemoryRecord>, StrataError> {
             let recs = self.records.lock().await;
@@ -76,6 +77,11 @@ mod tests {
                             return false;
                         }
                     }
+                    if let Some(b) = as_of_branch {
+                        if !r.matches_branch(b) {
+                            return false;
+                        }
+                    }
                     true
                 })
                 .cloned()
@@ -84,7 +90,7 @@ mod tests {
         }
 
         async fn get(&self, id: &Uuid) -> Result<Option<MemoryRecord>, StrataError> {
-            self.get_as_of(id, None, None).await
+            self.get_as_of(id, None, None, None).await
         }
 
         async fn get_as_of(
@@ -92,6 +98,7 @@ mod tests {
             id: &Uuid,
             as_of_time: Option<chrono::DateTime<chrono::Utc>>,
             as_of_commit: Option<&str>,
+            as_of_branch: Option<&str>,
         ) -> Result<Option<MemoryRecord>, StrataError> {
             let recs = self.records.lock().await;
             let found = recs
@@ -107,6 +114,11 @@ mod tests {
                     }
                     if let Some(c) = as_of_commit {
                         if !r.matches_commit(c) {
+                            return false;
+                        }
+                    }
+                    if let Some(b) = as_of_branch {
+                        if !r.matches_branch(b) {
                             return false;
                         }
                     }

@@ -74,6 +74,8 @@ pub struct EpisodicMemory {
     pub tags: Vec<String>,
     #[serde(default)]
     pub raw_event_ids: Vec<i64>,
+    #[serde(default)]
+    pub git_branch: Option<String>,
 }
 
 impl EpisodicMemory {
@@ -101,7 +103,13 @@ impl EpisodicMemory {
             signals: SignalScores::default(),
             tags: Vec::new(),
             raw_event_ids: Vec::new(),
+            git_branch: None,
         }
+    }
+
+    pub fn with_git_branch(mut self, branch: impl Into<String>) -> Self {
+        self.git_branch = Some(branch.into());
+        self
     }
 
     pub fn with_project(mut self, project: impl Into<String>) -> Self {
@@ -221,6 +229,8 @@ pub struct EpisodeRecord {
     #[serde(default)]
     pub child_ids: Vec<Uuid>,
     pub created_at: i64,
+    #[serde(default)]
+    pub git_branch: Option<String>,
 }
 
 impl EpisodeRecord {
@@ -245,7 +255,13 @@ impl EpisodeRecord {
             parent_id: None,
             child_ids: Vec::new(),
             created_at: Utc::now().timestamp(),
+            git_branch: None,
         }
+    }
+
+    pub fn with_git_branch(mut self, branch: impl Into<String>) -> Self {
+        self.git_branch = Some(branch.into());
+        self
     }
 
     pub fn with_task_id(mut self, task_id: impl Into<String>) -> Self {
@@ -606,6 +622,36 @@ impl SemanticFact {
             .as_ref()
             .and_then(|a| a.git_commit_hash.as_deref())
             == Some(commit)
+    }
+
+    /// Retrieve the Git branch namespace associated with this semantic fact's code anchor, if any.
+    pub fn git_branch(&self) -> Option<&str> {
+        self.code_anchor
+            .as_ref()
+            .and_then(|a| a.git_branch.as_deref())
+    }
+
+    /// Check if this semantic fact matches or is accessible from a specific Git branch.
+    pub fn matches_branch(&self, branch: &str) -> bool {
+        if branch == "*" || branch == "all" {
+            return true;
+        }
+        self.code_anchor
+            .as_ref()
+            .map(|a| a.matches_branch(branch))
+            .unwrap_or(true)
+    }
+
+    pub fn with_branch(mut self, branch: impl Into<String>) -> Self {
+        let b = branch.into();
+        if let Some(ref mut anchor) = self.code_anchor {
+            anchor.git_branch = Some(b);
+        } else {
+            let mut anchor = CodeAnchor::new("unknown", "unknown", SymbolType::Other, "hash", 1, 1);
+            anchor.git_branch = Some(b);
+            self.code_anchor = Some(anchor);
+        }
+        self
     }
 
     pub fn is_stale(&self) -> bool {
@@ -1618,6 +1664,8 @@ pub struct CodeAnchor {
     pub symbol_type: SymbolType,
     #[serde(default)]
     pub git_commit_hash: Option<String>,
+    #[serde(default)]
+    pub git_branch: Option<String>,
     pub ast_node_hash: String,
     #[serde(default)]
     pub content_hash: Option<String>,
@@ -1644,6 +1692,7 @@ impl CodeAnchor {
             symbol_path: symbol_path.into(),
             symbol_type,
             git_commit_hash: None,
+            git_branch: None,
             ast_node_hash: ast_node_hash.into(),
             content_hash: None,
             start_line,
@@ -1662,6 +1711,21 @@ impl CodeAnchor {
     pub fn with_git_commit(mut self, commit_hash: impl Into<String>) -> Self {
         self.git_commit_hash = Some(commit_hash.into());
         self
+    }
+
+    pub fn with_git_branch(mut self, branch: impl Into<String>) -> Self {
+        self.git_branch = Some(branch.into());
+        self
+    }
+
+    pub fn matches_branch(&self, branch: &str) -> bool {
+        if branch == "*" || branch == "all" {
+            return true;
+        }
+        match self.git_branch.as_deref() {
+            Some(b) => b == branch || b == "main" || b == "master",
+            None => true,
+        }
     }
 
     pub fn with_validity(
@@ -1812,3 +1876,38 @@ pub struct TransferReport {
     pub transferred_procedural_skills: usize,
     pub skipped_duplicates: usize,
 }
+
+/// Execution report summarizing merged knowledge across git branches.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Default)]
+pub struct BranchMergeReport {
+    pub source_branch: String,
+    pub target_branch: String,
+    pub memories_merged: usize,
+    pub semantic_facts_merged: usize,
+    pub events_merged: usize,
+    pub episodic_memories_merged: usize,
+    pub episodes_merged: usize,
+}
+
+impl BranchMergeReport {
+    pub fn new(source_branch: impl Into<String>, target_branch: impl Into<String>) -> Self {
+        Self {
+            source_branch: source_branch.into(),
+            target_branch: target_branch.into(),
+            memories_merged: 0,
+            semantic_facts_merged: 0,
+            events_merged: 0,
+            episodic_memories_merged: 0,
+            episodes_merged: 0,
+        }
+    }
+
+    pub fn total_merged(&self) -> usize {
+        self.memories_merged
+            + self.semantic_facts_merged
+            + self.events_merged
+            + self.episodic_memories_merged
+            + self.episodes_merged
+    }
+}
+

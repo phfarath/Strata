@@ -21,12 +21,12 @@ pub use events::{
     SessionEnded, SessionStarted, TaskCompleted, TaskStarted, ToolInvoked, ToolResultReceived,
 };
 pub use schemas::{
-    CodeAnchor, ContextBudgetConfig, DecayConfig, DecayMetrics, EpisodeRecord, EpisodeReplay,
-    EpisodeStep, EpisodicMemory, EvidenceRef, ExportFormat, FactDependency, FactStatus,
-    FeedbackEvent, FeedbackRating, HippocampalConsolidationResult, HostTargetConfig, ImplicitSignal,
-    JtmsAuditRow, KtoSample, MemoryFeedback, ParameterDef, PreferencePair, ProceduralExample,
-    ProceduralSkill, ProceduralStep, SemanticFact, SftSample, SignalKind, SignalScores, SymbolType,
-    SyncConfig, SyncDelta, SyncReport,
+    BranchMergeReport, CodeAnchor, ContextBudgetConfig, DecayConfig, DecayMetrics, EpisodeRecord,
+    EpisodeReplay, EpisodeStep, EpisodicMemory, EvidenceRef, ExportFormat, FactDependency,
+    FactStatus, FeedbackEvent, FeedbackRating, HippocampalConsolidationResult, HostTargetConfig,
+    ImplicitSignal, JtmsAuditRow, KtoSample, MemoryFeedback, ParameterDef, PreferencePair,
+    ProceduralExample, ProceduralSkill, ProceduralStep, SemanticFact, SftSample, SignalKind,
+    SignalScores, SymbolType, SyncConfig, SyncDelta, SyncReport,
 };
 pub use state::{
     DigestOutput, FailurePattern, FailureSeverity, MemoryHandle, MemoryRecord, MemoryTier,

@@ -490,7 +490,7 @@ impl MemoryEngine for SqliteMemoryEngine {
         scope: Option<&Scope>,
         limit: usize,
     ) -> Result<Vec<MemoryRecord>, StrataError> {
-        self.search_as_of(query, scope, None, None, limit).await
+        self.search_as_of(query, scope, None, None, None, limit).await
     }
 
     async fn search_as_of(
@@ -499,6 +499,7 @@ impl MemoryEngine for SqliteMemoryEngine {
         scope: Option<&Scope>,
         as_of_time: Option<DateTime<Utc>>,
         as_of_commit: Option<&str>,
+        as_of_branch: Option<&str>,
         limit: usize,
     ) -> Result<Vec<MemoryRecord>, StrataError> {
         let mut results = self
@@ -512,6 +513,7 @@ impl MemoryEngine for SqliteMemoryEngine {
                 None,
                 as_of_time,
                 as_of_commit,
+                as_of_branch,
                 limit,
             )
             .await?;
@@ -530,7 +532,7 @@ impl MemoryEngine for SqliteMemoryEngine {
     }
 
     async fn get(&self, id: &Uuid) -> Result<Option<MemoryRecord>, StrataError> {
-        self.get_as_of(id, None, None).await
+        self.get_as_of(id, None, None, None).await
     }
 
     async fn get_as_of(
@@ -538,15 +540,16 @@ impl MemoryEngine for SqliteMemoryEngine {
         id: &Uuid,
         as_of_time: Option<DateTime<Utc>>,
         as_of_commit: Option<&str>,
+        as_of_branch: Option<&str>,
     ) -> Result<Option<MemoryRecord>, StrataError> {
-        if let Some(mut memory) = self.store.get_memory_as_of(id, as_of_time, as_of_commit)? {
+        if let Some(mut memory) = self.store.get_memory_as_of(id, as_of_time, as_of_commit, as_of_branch)? {
             memory.mark_accessed();
             let _ = self.store.insert_or_update_memory(&memory);
             return Ok(Some(memory));
         }
 
         if let Some(ref global) = self.global_store {
-            if let Some(mut memory) = global.get_memory_as_of(id, as_of_time, as_of_commit)? {
+            if let Some(mut memory) = global.get_memory_as_of(id, as_of_time, as_of_commit, as_of_branch)? {
                 memory.mark_accessed();
                 let _ = global.insert_or_update_memory(&memory);
                 return Ok(Some(memory));
@@ -564,6 +567,15 @@ impl MemoryEngine for SqliteMemoryEngine {
             return Err(StrataError::Validation(
                 "Cannot write memory directly to Core Tier without explicit human approval (approved_by_human=true)".to_string(),
             ));
+        }
+
+        // Auto-detect git branch if not explicitly set
+        if to_write.git_branch().is_none() {
+            if let Ok(curr_dir) = std::env::current_dir() {
+                if let Some(branch) = crate::workspace::detect_git_branch(&curr_dir) {
+                    to_write = to_write.with_branch(branch);
+                }
+            }
         }
 
         // If embedding is missing, generate it automatically

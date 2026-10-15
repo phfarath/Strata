@@ -56,6 +56,10 @@ impl Tool for MemorySearchTool {
                 "as_of_commit": {
                     "type": "string",
                     "description": "Optional Git commit hash (SHA) to anchor historical playback queries"
+                },
+                "as_of_branch": {
+                    "type": "string",
+                    "description": "Optional Git branch namespace filter (e.g. 'main', 'feat/xyz'). Defaults to current branch if detected, or canonical baseline."
                 }
             },
             "required": ["query"]
@@ -93,10 +97,11 @@ impl Tool for MemorySearchTool {
             .transpose()?;
 
         let as_of_commit = params.get("as_of_commit").and_then(|v| v.as_str());
+        let as_of_branch = params.get("as_of_branch").and_then(|v| v.as_str());
 
         let results = self
             .engine
-            .search_as_of(query, scope.as_ref(), as_of_time, as_of_commit, limit)
+            .search_as_of(query, scope.as_ref(), as_of_time, as_of_commit, as_of_branch, limit)
             .await?;
 
         Ok(json!(results))
@@ -139,6 +144,10 @@ impl Tool for MemoryGetTool {
                 "as_of_commit": {
                     "type": "string",
                     "description": "Optional Git commit hash (SHA) to anchor historical playback queries"
+                },
+                "as_of_branch": {
+                    "type": "string",
+                    "description": "Optional Git branch namespace filter (e.g. 'main', 'feat/xyz')"
                 }
             },
             "required": ["id"]
@@ -171,10 +180,11 @@ impl Tool for MemoryGetTool {
             .transpose()?;
 
         let as_of_commit = params.get("as_of_commit").and_then(|v| v.as_str());
+        let as_of_branch = params.get("as_of_branch").and_then(|v| v.as_str());
 
         let record = self
             .engine
-            .get_as_of(&uuid, as_of_time, as_of_commit)
+            .get_as_of(&uuid, as_of_time, as_of_commit, as_of_branch)
             .await?;
         match record {
             Some(rec) => Ok(json!(rec)),

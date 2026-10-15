@@ -3891,7 +3891,7 @@ async fn test_bitemporal_time_travel_semantic_facts() {
     // Query 1: Time-travel query at t_past (15 days ago)
     // At t_past: fact1 was active, fact2 did not exist yet
     let past_facts = store
-        .search_semantic_facts_as_of("SQLite", Some(t_past), None, 10)
+        .search_semantic_facts_as_of("SQLite", Some(t_past), None, None, 10)
         .expect("search at t_past");
     assert_eq!(past_facts.len(), 1, "Should only return fact1 at t_past");
     assert_eq!(past_facts[0].0.id, fact1.id);
@@ -3900,7 +3900,7 @@ async fn test_bitemporal_time_travel_semantic_facts() {
     // Query 2: Current query (or None as_of_time)
     // At present: fact1 is deprecated (valid_until = t1 < t_now), fact2 is active
     let present_facts = store
-        .search_semantic_facts_as_of("SQLite", Some(t_now), None, 10)
+        .search_semantic_facts_as_of("SQLite", Some(t_now), None, None, 10)
         .expect("search at present");
     assert_eq!(present_facts.len(), 1, "Should only return fact2 at present");
     assert_eq!(present_facts[0].0.id, fact2.id);
@@ -3908,13 +3908,13 @@ async fn test_bitemporal_time_travel_semantic_facts() {
 
     // Query 3: By commit anchoring
     let v1_facts = store
-        .search_semantic_facts_as_of("SQLite", None, Some("commit_v1_hash"), 10)
+        .search_semantic_facts_as_of("SQLite", None, Some("commit_v1_hash"), None, 10)
         .expect("search commit v1");
     assert_eq!(v1_facts.len(), 1);
     assert_eq!(v1_facts[0].0.id, fact1.id);
 
     let v2_facts = store
-        .search_semantic_facts_as_of("SQLite", None, Some("commit_v2_hash"), 10)
+        .search_semantic_facts_as_of("SQLite", None, Some("commit_v2_hash"), None, 10)
         .expect("search commit v2");
     assert_eq!(v2_facts.len(), 1);
     assert_eq!(v2_facts[0].0.id, fact2.id);
@@ -3959,23 +3959,23 @@ async fn test_bitemporal_time_travel_memory_records() {
     let h2 = engine.write(&rec2).await.expect("write rec2");
 
     // Test 1: get_as_of for rec1
-    let fetched_past = engine.get_as_of(&h1.id, Some(t_past), None).await.expect("get rec1 at t_past");
+    let fetched_past = engine.get_as_of(&h1.id, Some(t_past), None, None).await.expect("get rec1 at t_past");
     assert!(fetched_past.is_some(), "rec1 should be active at t_past");
     assert_eq!(fetched_past.unwrap().id, h1.id);
 
-    let fetched_now = engine.get_as_of(&h1.id, Some(t_now), None).await.expect("get rec1 at t_now");
+    let fetched_now = engine.get_as_of(&h1.id, Some(t_now), None, None).await.expect("get rec1 at t_now");
     assert!(fetched_now.is_none(), "rec1 should be expired/invalidated at t_now");
 
     // Test 2: search_as_of via engine
     let search_past = engine
-        .search_as_of("tokens", Some(&Scope::Global), Some(t_past), None, 10)
+        .search_as_of("tokens", Some(&Scope::Global), Some(t_past), None, None, 10)
         .await
         .expect("search at t_past");
     assert_eq!(search_past.len(), 1, "Only rec1 should be found at t_past");
     assert_eq!(search_past[0].id, h1.id);
 
     let search_now = engine
-        .search_as_of("tokens", Some(&Scope::Global), Some(t_now), None, 10)
+        .search_as_of("tokens", Some(&Scope::Global), Some(t_now), None, None, 10)
         .await
         .expect("search at t_now");
     assert_eq!(search_now.len(), 1, "Only rec2 should be found at t_now");
@@ -3983,18 +3983,156 @@ async fn test_bitemporal_time_travel_memory_records() {
 
     // Test 3: search_as_of with commit filtering
     let search_commit1 = engine
-        .search_as_of("tokens", Some(&Scope::Global), None, Some("sha_auth_v1"), 10)
+        .search_as_of("tokens", Some(&Scope::Global), None, Some("sha_auth_v1"), None, 10)
         .await
         .expect("search sha_auth_v1");
     assert_eq!(search_commit1.len(), 1);
     assert_eq!(search_commit1[0].id, h1.id);
 
     let search_commit2 = engine
-        .search_as_of("tokens", Some(&Scope::Global), None, Some("sha_auth_v2"), 10)
+        .search_as_of("tokens", Some(&Scope::Global), None, Some("sha_auth_v2"), None, 10)
         .await
         .expect("search sha_auth_v2");
     assert_eq!(search_commit2.len(), 1);
     assert_eq!(search_commit2[0].id, h2.id);
+}
+
+#[tokio::test]
+async fn test_branch_isolation_and_merge() {
+    let engine = SqliteMemoryEngine::open_in_memory(None).expect("init engine");
+    let store = engine.store();
+
+    // 1. Create a memory on 'main'
+    let main_rec = MemoryRecord::new(
+        MemoryType::Semantic,
+        "Canonical architecture guideline on main.",
+        Scope::Global,
+    )
+    .with_summary("Main Arch")
+    .with_branch("main");
+
+    let h_main = engine.write(&main_rec).await.expect("write main");
+
+    // 2. Create a memory on 'feat/feature-x'
+    let feat_rec = MemoryRecord::new(
+        MemoryType::Semantic,
+        "Experimental architecture guideline on feature branch.",
+        Scope::Global,
+    )
+    .with_summary("Feature Arch")
+    .with_branch("feat/feature-x");
+
+    let h_feat = engine.write(&feat_rec).await.expect("write feat");
+
+    // 3. Create a memory on 'feat/feature-y'
+    let feat_y_rec = MemoryRecord::new(
+        MemoryType::Semantic,
+        "Isolated architecture guideline on feature Y branch.",
+        Scope::Global,
+    )
+    .with_summary("Feature Y Arch")
+    .with_branch("feat/feature-y");
+
+    let h_feat_y = engine.write(&feat_y_rec).await.expect("write feat y");
+
+    // Query on 'main': should only see main_rec (feat_rec and feat_y_rec must be excluded)
+    let search_main = engine
+        .search_as_of("architecture", Some(&Scope::Global), None, None, Some("main"), 10)
+        .await
+        .expect("search on main");
+    let main_ids: Vec<_> = search_main.iter().map(|r| r.id).collect();
+    assert!(main_ids.contains(&h_main.id), "main query must see main memory");
+    assert!(!main_ids.contains(&h_feat.id), "main query must NOT see feat/feature-x memory");
+    assert!(!main_ids.contains(&h_feat_y.id), "main query must NOT see feat/feature-y memory");
+
+    // Query on 'feat/feature-x': should see main_rec + feat_rec, but NOT feat_y_rec
+    let search_feat_x = engine
+        .search_as_of("architecture", Some(&Scope::Global), None, None, Some("feat/feature-x"), 10)
+        .await
+        .expect("search on feat/feature-x");
+    let feat_x_ids: Vec<_> = search_feat_x.iter().map(|r| r.id).collect();
+    assert!(feat_x_ids.contains(&h_main.id), "feature query must see main baseline");
+    assert!(feat_x_ids.contains(&h_feat.id), "feature query must see its own branch memory");
+    assert!(!feat_x_ids.contains(&h_feat_y.id), "feature query must NOT see other feature branch memory");
+
+    // get_as_of isolation:
+    let get_main_view = engine.get_as_of(&h_feat.id, None, None, Some("main")).await.expect("get_as_of");
+    assert!(get_main_view.is_none(), "main view cannot fetch feat memory by ID");
+
+    let get_feat_view = engine.get_as_of(&h_feat.id, None, None, Some("feat/feature-x")).await.expect("get_as_of");
+    assert!(get_feat_view.is_some(), "feat view can fetch its own memory by ID");
+
+    // 4. Merge branch 'feat/feature-x' into 'main'
+    let report = store.merge_branch_memories("feat/feature-x", "main").expect("merge branch");
+    assert_eq!(report.memories_merged, 1);
+    assert_eq!(report.total_merged(), 1);
+
+    // 5. Query on 'main' post-merge: now h_feat is promoted to 'main' and visible!
+    let search_main_post = engine
+        .search_as_of("architecture", Some(&Scope::Global), None, None, Some("main"), 10)
+        .await
+        .expect("search on main post merge");
+    let main_post_ids: Vec<_> = search_main_post.iter().map(|r| r.id).collect();
+    assert!(main_post_ids.contains(&h_main.id));
+    assert!(main_post_ids.contains(&h_feat.id), "h_feat must now be visible in main post-merge");
+    assert!(!main_post_ids.contains(&h_feat_y.id), "feat/feature-y remains isolated");
+}
+
+#[tokio::test]
+async fn test_branch_namespaces_all_entities_merge() {
+    let store = SqliteStore::open_in_memory().expect("open store");
+
+    // 1. Semantic Fact on branch
+    let fact = SemanticFact::new("Auth tokens must be signed with RS256", "auth", Scope::Global)
+        .with_branch("feat/auth-v2");
+    store.insert_or_update_semantic_fact(&fact).expect("insert fact");
+
+    // 2. Event on branch
+    let event = Event::new(
+        "sess-1",
+        "agent-x",
+        EventPayload::Custom {
+            event_name: "tool_call".to_string(),
+            payload: serde_json::json!({"tool": "cargo_test"}),
+        },
+    )
+    .with_git_branch("feat/auth-v2");
+    store.insert_event(&event).expect("insert event");
+
+    // 3. Episodic memory on branch
+    let ep_mem = EpisodicMemory::new(
+        "sess-1",
+        "agent-x",
+        "Episodic auth session",
+        Utc::now(),
+        Utc::now(),
+    )
+    .with_git_branch("feat/auth-v2");
+    store.insert_episodic_memory(&ep_mem).expect("insert episodic");
+
+    // 4. Episode on branch
+    let ep_rec = EpisodeRecord::new("sess-1", "agent-x", "Refactored auth")
+        .with_git_branch("feat/auth-v2");
+    store.save_episode(&ep_rec).expect("save episode");
+
+    // Verify isolation on main
+    let main_facts = store.search_semantic_facts_as_of("tokens", None, None, Some("main"), 10).expect("search facts");
+    assert_eq!(main_facts.len(), 0);
+
+    let feat_facts = store.search_semantic_facts_as_of("tokens", None, None, Some("feat/auth-v2"), 10).expect("search facts");
+    assert_eq!(feat_facts.len(), 1);
+
+    // Merge branch into main
+    let report = store.merge_branch_memories("feat/auth-v2", "main").expect("merge");
+    assert_eq!(report.semantic_facts_merged, 1);
+    assert_eq!(report.events_merged, 1);
+    assert_eq!(report.episodic_memories_merged, 1);
+    assert_eq!(report.episodes_merged, 1);
+    assert_eq!(report.total_merged(), 4);
+
+    // Post-merge on main
+    let main_facts_post = store.search_semantic_facts_as_of("tokens", None, None, Some("main"), 10).expect("search facts post");
+    assert_eq!(main_facts_post.len(), 1);
 }
 
 

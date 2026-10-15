@@ -99,13 +99,14 @@ impl HybridRanker {
             memory_types,
             None,
             None,
+            None,
             limit,
         )
         .await
     }
 
     /// Perform hybrid retrieval combining FTS5 BM25, Vector Cosine Similarity,
-    /// and Knowledge Graph Spreading Activation via Tri-Modal RRF with bi-temporal time-travel filters.
+    /// and Knowledge Graph Spreading Activation via Tri-Modal RRF with bi-temporal and branch filters.
     pub async fn retrieve_as_of(
         &self,
         store: &SqliteStore,
@@ -115,6 +116,7 @@ impl HybridRanker {
         memory_types: Option<&[MemoryType]>,
         as_of_time: Option<DateTime<Utc>>,
         as_of_commit: Option<&str>,
+        as_of_branch: Option<&str>,
         limit: usize,
     ) -> Result<Vec<MemoryRecord>, StrataError> {
         let candidate_limit = (limit * 3).max(20);
@@ -137,6 +139,7 @@ impl HybridRanker {
             effective_scope,
             as_of_time,
             as_of_commit,
+            as_of_branch,
             candidate_limit,
         )?;
 
@@ -150,6 +153,7 @@ impl HybridRanker {
                     memory_types,
                     as_of_time,
                     as_of_commit,
+                    as_of_branch,
                     candidate_limit * 2,
                 )?;
                 for memory in all_candidates {
@@ -200,7 +204,7 @@ impl HybridRanker {
                         {
                             graph_results.push((rec.clone(), act_score));
                         } else if let Ok(Some(rec)) =
-                            store.get_memory_as_of(&mem_id, as_of_time, as_of_commit)
+                            store.get_memory_as_of(&mem_id, as_of_time, as_of_commit, as_of_branch)
                         {
                             // Discovered via associative multi-hop jump!
                             if effective_scope.map_or(true, |s| s.is_compatible(&rec.scope))
@@ -223,6 +227,7 @@ impl HybridRanker {
                     memory_types,
                     as_of_time,
                     as_of_commit,
+                    as_of_branch,
                     limit,
                 );
             } else {
@@ -328,12 +333,13 @@ impl HybridRanker {
             memory_types,
             None,
             None,
+            None,
             limit,
         )
         .await
     }
 
-    /// Perform federated hybrid retrieval across a local workspace store and an optional global store with bi-temporal time-travel filters.
+    /// Perform federated hybrid retrieval across a local workspace store and an optional global store with bi-temporal and branch filters.
     pub async fn retrieve_federated_as_of(
         &self,
         local_store: &SqliteStore,
@@ -344,6 +350,7 @@ impl HybridRanker {
         memory_types: Option<&[MemoryType]>,
         as_of_time: Option<DateTime<Utc>>,
         as_of_commit: Option<&str>,
+        as_of_branch: Option<&str>,
         limit: usize,
     ) -> Result<Vec<MemoryRecord>, StrataError> {
         let global = match global_store {
@@ -358,6 +365,7 @@ impl HybridRanker {
                         memory_types,
                         as_of_time,
                         as_of_commit,
+                        as_of_branch,
                         limit,
                     )
                     .await;
@@ -375,11 +383,12 @@ impl HybridRanker {
                 memory_types,
                 as_of_time,
                 as_of_commit,
+                as_of_branch,
                 candidate_limit,
             )
             .await?;
 
-        // Fetch global candidates (scoped to Global)
+        // Fetch global candidates (scoped to Global, cross-branch canonical)
         let global_results = self
             .retrieve_as_of(
                 global,
@@ -389,6 +398,7 @@ impl HybridRanker {
                 memory_types,
                 as_of_time,
                 as_of_commit,
+                None,
                 candidate_limit,
             )
             .await?;
