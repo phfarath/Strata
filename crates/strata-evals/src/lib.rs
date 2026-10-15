@@ -33,9 +33,10 @@ pub async fn run_all_scenarios() -> Result<()> {
     run_consolidation_ab_benchmark_scenario().await?;
     run_agent_loop_futility_baseline_scenario().await?;
     run_hierarchical_episodic_pyramid_eval().await?;
+    run_community_scoped_recall_scenario().await?;
 
     println!("\n========================================================");
-    println!("🎉 ALL EVAL SCENARIOS PASSED (22/22)");
+    println!("🎉 ALL EVAL SCENARIOS PASSED (23/23)");
     println!("========================================================\n");
 
     Ok(())
@@ -221,5 +222,12 @@ mod tests {
         run_a2a_transactive_directory_scenario()
             .await
             .expect("A2A Transactive Directory eval scenario failed");
+    }
+
+    #[tokio::test]
+    async fn test_eval_community_scoped_recall() {
+        run_community_scoped_recall_scenario()
+            .await
+            .expect("Community scoped recall scenario failed");
     }
 }
