@@ -1,0 +1,160 @@
+[
+  {
+    "id": 1,
+    "tipo": "factual",
+    "nivel": "t1_to_t2",
+    "task_id": "task-auth-jwt",
+    "pergunta": "Comprima: episódios Auth JWT geraram keypair RSA, Claims RS256, JWKS em /.well-known/jwks.json, removeram HS256 e usaram Redis para revogação. Qual o milestone Tier 2?",
+    "resposta_esperada": "Milestone Auth JWT: migração de HS256 para RS256 concluída. Gerou keypair RSA-2048, implementou Claims/token minting, expôs JWKS em /.well-known/jwks.json, removeu fallback HS256, moveu revogação para Redis e adicionou middleware Bearer + rate limit 100 req/s. Arquivos: src/auth/*.rs, src/middleware/*.rs, src/storage/redis.rs. Outcomes: RS256 operacional, HS256 deprecado, revogação instantânea.",
+    "palavras_chave": [
+      "RS256",
+      "JWKS",
+      "HS256",
+      "Redis"
+    ]
+  },
+  {
+    "id": 2,
+    "tipo": "factual",
+    "nivel": "t1_to_t2",
+    "task_id": "task-sqlite-pool",
+    "pergunta": "Comprima: WAL + busy_timeout, pool R2D2 16 readers, single-writer Mutex, falha DeadlockTimeout sob 100 writers, backoff jitter, métricas Prometheus. Qual o milestone Tier 2?",
+    "resposta_esperada": "Milestone SQLite Pool: confiabilidade sob carga. Ativou WAL + busy_timeout 5000ms, pool R2D2 de 16 readers, fila single-writer com Mutex, observou falha de esgotamento (SQLITE_BUSY_TIMEOUT / DeadlockTimeout) sob 100 writers, aplicou backoff com jitter e exportou métricas Prometheus. Arquivos: src/db/*.rs, src/telemetry/prometheus.rs. Outcomes: WAL ativo, writer serializado, falha documentada, pool recuperado.",
+    "palavras_chave": [
+      "WAL",
+      "DeadlockTimeout",
+      "backoff",
+      "Prometheus"
+    ]
+  },
+  {
+    "id": 3,
+    "tipo": "factual",
+    "nivel": "t1_to_t2",
+    "task_id": "task-cdc-outbox",
+    "pergunta": "Comprima: outbox_events, publisher atômico, SKIP LOCKED batch 50, Kafka acks=all, DLQ após 3 retries. Qual o milestone Tier 2?",
+    "resposta_esperada": "Milestone CDC Outbox: entrega confiável de eventos. Criou tabela outbox_events, publisher atômico na mesma transação, poller com SELECT FOR UPDATE SKIP LOCKED (batch 50), Kafka idempotente com acks=all, DLQ após 3 retries e métricas de lag. Arquivos: migrations/003_outbox.sql, src/cdc/*.rs. Outcomes: outbox transacional, entrega idempotente, poison pills isolados.",
+    "palavras_chave": [
+      "outbox",
+      "SKIP LOCKED",
+      "Kafka",
+      "DLQ"
+    ]
+  },
+  {
+    "id": 4,
+    "tipo": "sintese",
+    "nivel": "t1_to_t2",
+    "task_id": "task-sqlite-pool",
+    "pergunta": "No cluster SQLite, qual falha crítica deve aparecer no milestone Tier 2 e por que ela importa para a pirâmide episódica?",
+    "resposta_esperada": "A falha DeadlockTimeout / SQLITE_BUSY sob carga de writers deve ser preservada no rollup porque a pirâmide comprime sem apagar invariantes causais; o drill-down precisa reencontrar o episódio de esgotamento.",
+    "palavras_chave": [
+      "DeadlockTimeout",
+      "SQLITE_BUSY",
+      "invariante",
+      "drill-down"
+    ]
+  },
+  {
+    "id": 5,
+    "tipo": "sintese",
+    "nivel": "t2_to_t3",
+    "task_id": null,
+    "pergunta": "Dados os três milestones (Auth JWT RS256, SQLite pool com falha de carga, CDC outbox Kafka), escreva a narrativa Tier 3 da sessão.",
+    "resposta_esperada": "Narrativa de sessão: a equipe estabilizou autenticação (JWT RS256 + JWKS + Redis), endureceu o pool SQLite após esgotamento sob carga concorrente, e entregou o pipeline CDC outbox com Kafka idempotente e DLQ. Decisões-chave: assimetria de chaves, single-writer serializado, SKIP LOCKED no poller. Riscos remanescentes: migração completa dos clientes HS256, alertas de profundidade da fila writer, e monitoramento de lag do outbox em produção.",
+    "palavras_chave": [
+      "JWT",
+      "SQLite",
+      "outbox",
+      "risco"
+    ]
+  },
+  {
+    "id": 6,
+    "tipo": "sintese",
+    "nivel": "t1_to_t2",
+    "task_id": "task-auth-jwt",
+    "pergunta": "Por que o template heurístico '[Milestone Rollup] <medoid> | Invariants: N outcomes, M files' é insuficiente comparado a um resumo gerado por SLM?",
+    "resposta_esperada": "O template só ecoa o medoid e conta outcomes/arquivos; não narra a decisão (HS256→RS256), nem a falha causal, nem o arco do cluster. O SLM comprime semântica preservando invariantes legíveis para zoom_out.",
+    "palavras_chave": [
+      "medoid",
+      "template",
+      "semântica",
+      "invariante"
+    ]
+  },
+  {
+    "id": 7,
+    "tipo": "armadilha",
+    "nivel": "t1_to_t2",
+    "task_id": null,
+    "pergunta": "Comprima o cluster de episódios sobre migração PostgreSQL sharding com Citus e rebalanceamento online de shards.",
+    "resposta_esperada": "Não sei — esse cluster não está no material episódico treinado.",
+    "palavras_chave": [
+      "não sei"
+    ]
+  },
+  {
+    "id": 8,
+    "tipo": "armadilha",
+    "nivel": "t1_to_t2",
+    "task_id": null,
+    "pergunta": "Resuma o milestone Tier 2 do task-graphql-federation (não existe nos dados).",
+    "resposta_esperada": "Não sei — task_id ausente no corpus.",
+    "palavras_chave": [
+      "não sei"
+    ]
+  },
+  {
+    "id": 9,
+    "tipo": "factual",
+    "nivel": "t1_to_t2",
+    "task_id": "task-auth-jwt",
+    "pergunta": "Quais arquivos de auth aparecem tipicamente no rollup JWT?",
+    "resposta_esperada": "src/auth/claims.rs, token.rs, jwks.rs, verifier.rs, revocation.rs e middleware de Bearer/rate limit.",
+    "palavras_chave": [
+      "claims.rs",
+      "jwks",
+      "verifier",
+      "middleware"
+    ]
+  },
+  {
+    "id": 10,
+    "tipo": "factual",
+    "nivel": "t1_to_t2",
+    "task_id": "task-cdc-outbox",
+    "pergunta": "Qual o benefício do SKIP LOCKED no poller CDC segundo os episódios?",
+    "resposta_esperada": "Zero contenção de lock entre workers paralelos ao buscar eventos pending.",
+    "palavras_chave": [
+      "SKIP LOCKED",
+      "contenção",
+      "workers"
+    ]
+  },
+  {
+    "id": 11,
+    "tipo": "sintese",
+    "nivel": "t2_to_t3",
+    "task_id": null,
+    "pergunta": "Na pirâmide, o que muda ao comprimir Tier 2 → Tier 3 versus Tier 1 → Tier 2?",
+    "resposta_esperada": "T1→T2 agrega traces de uma task em milestone; T2→T3 agrega milestones de várias tasks na narrativa de sessão, com decisões e riscos globais.",
+    "palavras_chave": [
+      "milestone",
+      "sessão",
+      "narrativa",
+      "risco"
+    ]
+  },
+  {
+    "id": 12,
+    "tipo": "armadilha",
+    "nivel": "t1_to_t2",
+    "task_id": null,
+    "pergunta": "Liste os episódios Tier 1 da migração de monorepo para Bazel remoto.",
+    "resposta_esperada": "Não sei — fora do corpus sintético da pyramid.",
+    "palavras_chave": [
+      "não sei"
+    ]
+  }
+]

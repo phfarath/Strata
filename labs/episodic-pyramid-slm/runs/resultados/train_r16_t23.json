@@ -1,0 +1,14 @@
+{
+  "tag": "r16_t23",
+  "modelo": "HuggingFaceTB/SmolLM2-360M-Instruct",
+  "r": 16,
+  "alpha": 32,
+  "lr": 0.0002,
+  "epochs": 6,
+  "max_seq": 1024,
+  "include_t23": true,
+  "n_pares": 67,
+  "train_loss": 1.732430100440979,
+  "adapter": "C:\\Dev\\mem-research\\labs\\episodic-pyramid-slm\\runs\\lora_r16_t23\\adapter",
+  "backend": "transformers.Trainer+PEFT"
+}

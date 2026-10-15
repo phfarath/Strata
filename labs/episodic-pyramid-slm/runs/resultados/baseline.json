@@ -1,0 +1,110 @@
+{
+  "resumo": {
+    "n": 12,
+    "acerto_total_%": 33.3,
+    "acerto_factual_%": 60.0,
+    "acerto_sintese_%": 25.0,
+    "abstencao_correta_%": 0.0,
+    "abstencao_indevida_%": 0.0,
+    "latencia_media_s": 3.98,
+    "rota": "baseline"
+  },
+  "detalhes": [
+    {
+      "id": 1,
+      "tipo": "factual",
+      "nivel": "t1_to_t2",
+      "acertou": false,
+      "absteve": false,
+      "resposta": "Milestone: Tier 2: Criar um novo cluster de episódios Tier 1 (traces de execução) e criar um novo cluster de episódios Tier 2 (revisão de reposições)."
+    },
+    {
+      "id": 2,
+      "tipo": "factual",
+      "nivel": "t1_to_t2",
+      "acertou": true,
+      "absteve": false,
+      "resposta": "Milestone: \"Mutexes and Deadlocks in WAL+busy_timeout, pool R2D2, single-writer Mutex, and WAL+deadlockTimeout\""
+    },
+    {
+      "id": 3,
+      "tipo": "factual",
+      "nivel": "t1_to_t2",
+      "acertou": true,
+      "absteve": false,
+      "resposta": "Milestone: \"Trabalha em outbox_events, publisher atômico, SKIP LOCKED batch 50, Kafka acks=all, DLQ após 3 retries.\""
+    },
+    {
+      "id": 4,
+      "tipo": "sintese",
+      "nivel": "t1_to_t2",
+      "acertou": false,
+      "absteve": false,
+      "resposta": "No cluster SQLite, qual falha crítica deve aparecer no milestone Tier 2 e por que ela importa para a pirâmide episódica?"
+    },
+    {
+      "id": 5,
+      "tipo": "sintese",
+      "nivel": "t2_to_t3",
+      "acertou": true,
+      "absteve": false,
+      "resposta": "\"Dados os três milestones (Auth JWT RS256, SQLite pool com falha de carga, CDC outbox Kafka), escreva a narrativa Tier 3 da sessão.\n\n\"A primeira milestone (Auth JWT RS256) é o que está realizando o processo de autenticacao e acesso ao pool de memória SQLite. O usuário deve ser autenticado e acessado com sucesso, como exemplo:\n\n\"Auth JWT RS256: <username>: <password>\n\n\"A segunda milestone (SQLite pool com falha de carga) é o que está realizando o cargamento de memória SQLite. O usuário deve ser cargado com sucesso, como exemplo:\n\n\"SQLite pool com falha de carga: <username>: <password>"
+    },
+    {
+      "id": 6,
+      "tipo": "sintese",
+      "nivel": "t1_to_t2",
+      "acertou": false,
+      "absteve": false,
+      "resposta": "O resumo gerado por SLM é insuficiente comparado a um resumo gerado por [Milestone Rollup] [Medoid] [Invariants: N outcomes, M files]."
+    },
+    {
+      "id": 7,
+      "tipo": "armadilha",
+      "nivel": "t1_to_t2",
+      "acertou": false,
+      "absteve": false,
+      "resposta": "\"Comprimos o cluster de episódios sobre migração PostgreSQL sharding com Citus e rebalanceamento online de shards.\n\nO cluster de episódios sobre migração PostgreSQL sharding com Citus e rebalanceamento online de shards é um cluster de episódios sobre migração PostgreSQL sharding com Citus e rebalanceamento online de shards que está aberta e está como um cluster de episódios sobre migração PostgreSQL sharding com Citus e rebalanceamento online de shards que está aberta e está como um cluster de episódios sobre migração PostgreSQL sharding com Citus e rebalanceamento online de shards que está aberta e está como um cluster de episódios sobre migração PostgreSQL sharding com Citus e rebalanceamento online de shards que está ab"
+    },
+    {
+      "id": 8,
+      "tipo": "armadilha",
+      "nivel": "t1_to_t2",
+      "acertou": false,
+      "absteve": false,
+      "resposta": "Resumo de milestone Tier 2 do task-graphql-federation (não existe nos dados)."
+    },
+    {
+      "id": 9,
+      "tipo": "factual",
+      "nivel": "t1_to_t2",
+      "acertou": false,
+      "absteve": false,
+      "resposta": "A: Arquivos de auth que podemarão aparecer no rollup JWT são:\n\n1. \"Authorization: Bearer\"\n2. \"Authorization: Bearer\"\n3. \"Authorization: Bearer\"\n4. \"Authorization: Bearer\"\n5. \"Authorization: Bearer\"\n6. \"Authorization: Bearer\"\n7. \"Authorization: Bearer\"\n8. \"Authorization: Bearer\"\n9. \"Authorization: Bearer\"\n10. \"Authorization: Bearer\"\n11. \"Authorization: Bearer\"\n12. \"Authorization: Bearer\"\n13. \"Authorization: Bearer\"\n14. \"Authorization: Bearer\"\n15. \"Authorization: Bearer\"\n16. \"Authorization: Bearer\"\n17. \"Authorization: Bearer\"\n18. \"Authorization: Bearer\"\n19. \"Authorization"
+    },
+    {
+      "id": 10,
+      "tipo": "factual",
+      "nivel": "t1_to_t2",
+      "acertou": true,
+      "absteve": false,
+      "resposta": "O SKIP LOCKED é um tipo de lock que permite que a memória de um cluster seja desligada, pois ele não pode ser usado para executar outros episódios. Se o cluster estiver vazio ou não for episódio, o SKIP LOCKED não será desligado."
+    },
+    {
+      "id": 11,
+      "tipo": "sintese",
+      "nivel": "t2_to_t3",
+      "acertou": false,
+      "absteve": false,
+      "resposta": "Ao comprimir Tier 2 → Tier 3, o comprimido é mais seguro e mais seguro, pois ele está em um cluster de episódios que está mais seguro.\n\nAo comprimir Tier 1 → Tier 2, o comprimido é mais seguro e mais seguro, pois ele está em um cluster de episódios que está mais seguro.\n\nAo comprimir Tier 2 → Tier 3, o comprimido é mais seguro e mais seguro, pois ele está em um cluster de episódios que está mais seguro.\n\nAo comprimir Tier 1 → Tier 2, o comprimido é mais seguro e mais seguro, pois ele está em um cluster de episódios que está mais seguro.\n\nAo comprimir Tier 2 → Tier 3, o comprim"
+    },
+    {
+      "id": 12,
+      "tipo": "armadilha",
+      "nivel": "t1_to_t2",
+      "acertou": false,
+      "absteve": false,
+      "resposta": "- \"Este cluster tem 10 episódios Tier 1, que são:\n- 1. \"\n- 2. \"\n- 3. \"\n- 4. \"\n- 5. \"\n- 6. \"\n\nSe o cluster estiver vazio ou não for episódico, diga que não sabe."
+    }
+  ]
+}

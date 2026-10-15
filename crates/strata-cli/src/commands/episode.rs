@@ -4,7 +4,9 @@ use std::sync::Arc;
 use uuid::Uuid;
 
 use strata_core::schemas::{EpisodeRecord, EpisodeStep};
-use strata_memory::{EpisodicPyramidEngine, PyramidConfig, SqliteStore};
+use strata_memory::{
+    EpisodicPyramidEngine, PyramidConfig, SlmBridgeConfig, SlmPyramidBridge, SqliteStore,
+};
 
 #[derive(Debug, Clone, Args)]
 pub struct EpisodeArgs {
@@ -90,7 +92,7 @@ pub enum EpisodeCommand {
         json: bool,
     },
 
-    /// Hierarchical rollup of Tier 1 episodic traces into Tier 2 milestones
+    /// Hierarchical rollup of Tier 1 episodic traces into Tier 2 milestones and Tier 3 session narratives
     Rollup {
         /// Filter by session ID
         #[arg(long, help = "Filter by session ID")]
@@ -103,6 +105,18 @@ pub enum EpisodeCommand {
         /// Cosine similarity threshold for grouping
         #[arg(long, default_value_t = 0.70, help = "Similarity threshold for clustering")]
         similarity: f32,
+
+        /// Generate Tier 3 session narrative via local SLM SmolLM2 adapter
+        #[arg(long, help = "Generate Tier 3 session narrative via local SLM SmolLM2 adapter")]
+        slm_narrative: bool,
+
+        /// Custom path to SmolLM2 LoRA adapter directory
+        #[arg(long, help = "Custom path to SmolLM2 LoRA adapter directory")]
+        adapter_path: Option<std::path::PathBuf>,
+
+        /// Custom path to python binary for SLM inference
+        #[arg(long, help = "Custom path to python binary")]
+        python_bin: Option<String>,
 
         /// Output as raw JSON
         #[arg(long, help = "Output as raw JSON")]
@@ -306,6 +320,9 @@ pub async fn run_episode(args: EpisodeArgs, store: Arc<SqliteStore>) -> Result<(
             session,
             min_cluster,
             similarity,
+            slm_narrative,
+            adapter_path,
+            python_bin,
             json,
         } => {
             let config = PyramidConfig::new()
@@ -320,12 +337,34 @@ pub async fn run_episode(args: EpisodeArgs, store: Arc<SqliteStore>) -> Result<(
             )
             .map_err(|e| anyhow::anyhow!("Failed to aggregate episodic rollups: {e}"))?;
 
+            let mut tier3_record = None;
+            if slm_narrative {
+                let mut bridge_config = SlmBridgeConfig::default();
+                if let Some(ap) = adapter_path {
+                    bridge_config.adapter_path = ap;
+                }
+                if let Some(py) = python_bin {
+                    bridge_config.python_binary = py;
+                }
+                let bridge = SlmPyramidBridge::new(bridge_config);
+                tier3_record = EpisodicPyramidEngine::aggregate_session_narrative(
+                    store.as_ref(),
+                    session.as_deref(),
+                    &bridge,
+                )
+                .map_err(|e| anyhow::anyhow!("Failed to generate Tier 3 session narrative: {e}"))?;
+            }
+
             if json {
-                println!("{}", serde_json::to_string_pretty(&rollups)?);
+                let result = serde_json::json!({
+                    "tier2_rollups": rollups,
+                    "tier3_narrative": tier3_record,
+                });
+                println!("{}", serde_json::to_string_pretty(&result)?);
             } else {
                 println!("\n🏛️ [Strata Episodic Memory Pyramid Rollup Completed]");
                 println!("══════════════════════════════════════════════════");
-                println!("Generated Rollups: {}", rollups.len());
+                println!("Generated Tier 2 Rollups: {}", rollups.len());
                 for r in &rollups {
                     println!("\n  Rollup ID: {}", r.id);
                     println!("  Tier:      {}", r.tier);
@@ -335,6 +374,19 @@ pub async fn run_episode(args: EpisodeArgs, store: Arc<SqliteStore>) -> Result<(
                     println!("  Summary:   {}", r.summary);
                     if !r.outcomes.is_empty() {
                         println!("  Outcomes:  {}", r.outcomes.join(", "));
+                    }
+                }
+
+                if let Some(t3) = tier3_record {
+                    println!("\n📜 [Tier 3 Session Narrative (SmolLM2 SLM Bridge)]");
+                    println!("──────────────────────────────────────────────────");
+                    println!("  Epoch ID:   {}", t3.id);
+                    println!("  Session:    {}", t3.session_id);
+                    println!("  Milestones: {}", t3.child_ids.len());
+                    println!("  Salience:   {:.2}", t3.salience_score);
+                    println!("  Narrative:  {}", t3.summary);
+                    if !t3.outcomes.is_empty() {
+                        println!("  Outcomes:   {}", t3.outcomes.join(", "));
                     }
                 }
             }

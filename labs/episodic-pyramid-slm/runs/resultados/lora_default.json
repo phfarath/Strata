@@ -1,0 +1,110 @@
+{
+  "resumo": {
+    "n": 12,
+    "acerto_total_%": 25.0,
+    "acerto_factual_%": 40.0,
+    "acerto_sintese_%": 25.0,
+    "abstencao_correta_%": 0.0,
+    "abstencao_indevida_%": 0.0,
+    "latencia_media_s": 4.59,
+    "rota": "lora_default"
+  },
+  "detalhes": [
+    {
+      "id": 1,
+      "tipo": "factual",
+      "nivel": "t1_to_t2",
+      "acertou": false,
+      "absteve": false,
+      "resposta": "Milestone Tier 2:\n\n- Objetivo: Identificar e remover as memórias de tocamento de tocamentos de tocamentos de tocamentos de tocamentos de tocamentos de tocamentos de tocamentos de tocamentos de tocamentos de tocamentos de tocamentos de tocamentos de tocamentos de tocamentos de tocamentos de tocamentos de tocamentos de tocamentos de tocamentos de tocamentos de tocamentos de tocamentos de tocamentos de tocamentos de tocamentos de tocamentos de tocamentos de tocamentos de tocamentos de tocamentos de tocamentos de tocamentos de tocamentos de tocamentos de tocamentos de tocamentos de tocamentos de tocamentos"
+    },
+    {
+      "id": 2,
+      "tipo": "factual",
+      "nivel": "t1_to_t2",
+      "acertou": false,
+      "absteve": false,
+      "resposta": "Milestone: \"Mutexes and Deadlocks\""
+    },
+    {
+      "id": 3,
+      "tipo": "factual",
+      "nivel": "t1_to_t2",
+      "acertou": true,
+      "absteve": false,
+      "resposta": "Milestone: \"Trabalha em outbox_events, publisher atômico, SKIP LOCKED batch 50, Kafka acks=all, DLQ após 3 retries.\""
+    },
+    {
+      "id": 4,
+      "tipo": "sintese",
+      "nivel": "t1_to_t2",
+      "acertou": false,
+      "absteve": false,
+      "resposta": "No cluster SQLite, qual falha crítica deve aparecer no milestone Tier 2 e por que ela importa para a pirâmide episódica?"
+    },
+    {
+      "id": 5,
+      "tipo": "sintese",
+      "nivel": "t2_to_t3",
+      "acertou": true,
+      "absteve": false,
+      "resposta": "\"Dados os três milestones (Auth JWT RS256, SQLite pool com falha de carga, CDC outbox Kafka), escreva a narrativa de sessão Tier 3 em português: o arco da sessão, decisões principais e riscos remanescentes.\n\nEntão, o arco da sessão, que está aqui, está aqui.\n\nA decisão principal foi a criar uma nova tabela no banco de dados, como o que está aqui.\n\nA decisão principal foi a criar uma nova tabela no banco de dados, como o que está aqui.\n\nA decisão principal foi a criar uma nova tabela no banco de dados, como o que está aqui.\n\nA decisão principal foi a criar uma nova tabela no banco de d"
+    },
+    {
+      "id": 6,
+      "tipo": "sintese",
+      "nivel": "t1_to_t2",
+      "acertou": false,
+      "absteve": false,
+      "resposta": "O resumo gerado por SLM é insuficiente comparado a um resumo gerado por [Milestone Rollup] [Medoid] [Invariants: N outcomes, M files]."
+    },
+    {
+      "id": 7,
+      "tipo": "armadilha",
+      "nivel": "t1_to_t2",
+      "acertou": false,
+      "absteve": false,
+      "resposta": "\"Categória: Migração de Episódios\n\nO tipo de cluster que você está usando é Tier 1 (traces de execução).\n\nO arquivo que você escreveu para o cluster é o arquivo de código de código de código de código de código de código de código de código de código de código de código de código de código de código de código de código de código de código de código de código de código de código de código de código de código de código de código de código de código de código de código de có"
+    },
+    {
+      "id": 8,
+      "tipo": "armadilha",
+      "nivel": "t1_to_t2",
+      "acertou": false,
+      "absteve": false,
+      "resposta": "Resumo de milestone Tier 2 do task-graphql-federation (não existe nos dados)."
+    },
+    {
+      "id": 9,
+      "tipo": "factual",
+      "nivel": "t1_to_t2",
+      "acertou": false,
+      "absteve": false,
+      "resposta": "Quando o cluster estiver vazio ou não for episódico, ele não sabe o arquivo de auth que estiver presente no rollup JWT."
+    },
+    {
+      "id": 10,
+      "tipo": "factual",
+      "nivel": "t1_to_t2",
+      "acertou": true,
+      "absteve": false,
+      "resposta": "O SKIP LOCKED é um tipo de lock que permite que a memória de um cluster seja seguro e segue a estabilização. Se o cluster estiver vazio ou não for episódio, o SKIP LOCKED permite que a memória seja segura e segue a estabilização."
+    },
+    {
+      "id": 11,
+      "tipo": "sintese",
+      "nivel": "t2_to_t3",
+      "acertou": false,
+      "absteve": false,
+      "resposta": "Na pirâmide, o que muda ao comprimir Tier 2 → Tier 3 versus Tier 1 → Tier 2.\n\nEntão, o comprimir Tier 2 → Tier 3 é o que muda ao comprimir Tier 1 → Tier 2. É a mesma coisa que o comprimir Tier 1 → Tier 2, mas o comprimir Tier 2 → Tier 3 é o que muda ao comprimir Tier 2 → Tier 3.\n\nEntão, o comprimir Tier 2 → Tier 3 é o que muda ao comprimir Tier 1 → Tier 2. É a mesma coisa que o comprimir Tier 1 → Tier 2, mas o comprimir Tier 2 → Tier 3 é o que muda ao comprimir Tier 2 → Tier 3."
+    },
+    {
+      "id": 12,
+      "tipo": "armadilha",
+      "nivel": "t1_to_t2",
+      "acertou": false,
+      "absteve": false,
+      "resposta": "- \"Este cluster de episódios Tier 1 está vazio.\"\n- \"Este cluster de episódios Tier 1 está vazio.\"\n- \"Este cluster de episódios Tier 1 está vazio.\"\n- \"Este cluster de episódios Tier 1 está vazio.\"\n- \"Este cluster de episódios Tier 1 está vazio.\"\n- \"Este cluster de episódios Tier 1 está vazio.\"\n- \"Este cluster de episódios Tier 1 está vazio.\"\n- \"Este cluster de episódios Tier 1 está vazio.\"\n- \"Este cluster de episódios Tier 1 está vazio.\"\n- \"Este cluster de episódios Tier 1 está vazio.\"\n- \"Este cluster de episódios Tier 1 está vazio.\""
+    }
+  ]
+}

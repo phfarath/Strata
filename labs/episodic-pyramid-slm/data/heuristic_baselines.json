@@ -1,0 +1,17 @@
+{
+  "task-auth-jwt": {
+    "heuristic": "[Milestone Rollup] Implement Token Minting and Claims Validation | Invariants: 12 outcomes, 11 files touched",
+    "gold": "Milestone Auth JWT: migração de HS256 para RS256 concluída. Gerou keypair RSA-2048, implementou Claims/token minting, expôs JWKS em /.well-known/jwks.json, removeu fallback HS256, moveu revogação para Redis e adicionou middleware Bearer + rate limit 100 req/s. Arquivos: src/auth/*.rs, src/middleware/*.rs, src/storage/redis.rs. Outcomes: RS256 operacional, HS256 deprecado, revogação instantânea.",
+    "n_episodes": 6
+  },
+  "task-sqlite-pool": {
+    "heuristic": "[Milestone Rollup] Simulate Connection Exhaustion Under Concurrent Load | Invariants: 12 outcomes, 8 files touched",
+    "gold": "Milestone SQLite Pool: confiabilidade sob carga. Ativou WAL + busy_timeout 5000ms, pool R2D2 de 16 readers, fila single-writer com Mutex, observou falha de esgotamento (SQLITE_BUSY_TIMEOUT / DeadlockTimeout) sob 100 writers, aplicou backoff com jitter e exportou métricas Prometheus. Arquivos: src/db/*.rs, src/telemetry/prometheus.rs. Outcomes: WAL ativo, writer serializado, falha documentada, pool recuperado.",
+    "n_episodes": 6
+  },
+  "task-cdc-outbox": {
+    "heuristic": "[Milestone Rollup] Add Idempotent Kafka Delivery with Ack Receipts | Invariants: 12 outcomes, 12 files touched",
+    "gold": "Milestone CDC Outbox: entrega confiável de eventos. Criou tabela outbox_events, publisher atômico na mesma transação, poller com SELECT FOR UPDATE SKIP LOCKED (batch 50), Kafka idempotente com acks=all, DLQ após 3 retries e métricas de lag. Arquivos: migrations/003_outbox.sql, src/cdc/*.rs. Outcomes: outbox transacional, entrega idempotente, poison pills isolados.",
+    "n_episodes": 6
+  }
+}

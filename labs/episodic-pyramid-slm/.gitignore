@@ -1,0 +1,14 @@
+.venv/
+__pycache__/
+*.pyc
+.pytest_cache/
+.ipynb_checkpoints/
+.DS_Store
+Thumbs.db
+
+# checkpoints intermediários do Trainer (pesados / redundantes)
+runs/**/checkpoint-*/
+runs/**/checkpoint-*/**
+
+# manter adapters finais + resultados versionados
+# (adapter_model.safetensors do r16_1b7 ~70MB)

@@ -1,3 +1,6 @@
+use std::io::Write;
+use std::path::PathBuf;
+use std::process::{Command, Stdio};
 use std::sync::Arc;
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
@@ -541,6 +544,90 @@ impl EpisodicPyramidEngine {
 
         Ok(Some(DrillDownTree::new(root, leaves)))
     }
+
+    /// Aggregates unrolled Tier 2 milestone rollups into a Tier 3 Session Narrative (Epoch Rollup).
+    ///
+    /// - Queries unrolled Tier 2 episodes (`parent_id IS NULL`).
+    /// - If none exist, returns `Ok(None)`.
+    /// - Formats milestones and calls `bridge.generate_narrative(&tier2_episodes)` to obtain local SLM or heuristic narrative.
+    /// - Fuses unique outcomes and aggregates salience.
+    /// - Computes deterministic RFC 4122 UUID v5 from BLAKE3 hash.
+    /// - Persists Tier 3 rollup via `store.save_episode_rollup` (updating `parent_id` of Tier 2 milestones).
+    /// - Returns the created Tier 3 `EpisodeRecord`.
+    pub fn aggregate_session_narrative(
+        store: &SqliteStore,
+        session_id: Option<&str>,
+        bridge: &SlmPyramidBridge,
+    ) -> Result<Option<EpisodeRecord>, StrataError> {
+        let unrolled = store.list_unrolled_episodes(2, session_id, 1000)?;
+        if unrolled.is_empty() {
+            return Ok(None);
+        }
+
+        let inference = bridge.generate_narrative(&unrolled)?;
+        let narrative = inference.narrative;
+
+        // 1. Fuse unique outcomes across all Tier 2 rollups
+        let mut outcomes = Vec::new();
+        let mut seen_outcomes = std::collections::HashSet::new();
+        for ep in &unrolled {
+            for out in &ep.outcomes {
+                let trimmed = out.trim();
+                if !trimmed.is_empty() && seen_outcomes.insert(trimmed.to_string()) {
+                    outcomes.push(trimmed.to_string());
+                }
+            }
+        }
+
+        // 2. Fused salience: 0.6 * max + 0.4 * mean
+        let max_salience = unrolled
+            .iter()
+            .map(|e| e.salience_score)
+            .fold(0.0f32, f32::max);
+        let mean_salience =
+            unrolled.iter().map(|e| e.salience_score).sum::<f32>() / (unrolled.len() as f32);
+        let salience_score = (0.6 * max_salience + 0.4 * mean_salience).clamp(0.0, 1.0);
+
+        // 3. Child IDs and timestamps
+        let child_ids: Vec<Uuid> = unrolled.iter().map(|e| e.id).collect();
+        let child_ids_str = child_ids
+            .iter()
+            .map(|id| id.to_string())
+            .collect::<Vec<_>>()
+            .join(",");
+        let session_str = session_id
+            .map(|s| s.to_string())
+            .unwrap_or_else(|| unrolled[0].session_id.clone());
+
+        // 4. Deterministic BLAKE3 -> RFC 4122 v5 UUID
+        let hash_name = format!(
+            "strata:rollup:tier3:v1:{}:{}:{}",
+            session_str, child_ids_str, narrative
+        );
+        let hash = blake3::hash(hash_name.as_bytes());
+        let mut uuid_bytes = [0u8; 16];
+        uuid_bytes.copy_from_slice(&hash.as_bytes()[..16]);
+        uuid_bytes[6] = (uuid_bytes[6] & 0x0f) | 0x50; // version 5
+        uuid_bytes[8] = (uuid_bytes[8] & 0x3f) | 0x80; // variant RFC 4122
+        let tier3_id = Uuid::from_bytes(uuid_bytes);
+
+        let created_at = unrolled.iter().map(|e| e.created_at).max().unwrap_or(0);
+        let agent_id = unrolled[0].agent_id.clone();
+        let task_id = unrolled[0].task_id.clone();
+
+        let mut tier3_record = EpisodeRecord::new(&session_str, &agent_id, narrative)
+            .with_tier(3)
+            .with_salience(salience_score)
+            .with_child_ids(child_ids);
+        tier3_record.id = tier3_id;
+        tier3_record.task_id = task_id;
+        tier3_record.outcomes = outcomes;
+        tier3_record.created_at = created_at;
+
+        store.save_episode_rollup(&tier3_record)?;
+
+        Ok(Some(tier3_record))
+    }
 }
 
 /// Filter criteria for querying episodic pyramid rollups and drill-downs.
@@ -827,6 +914,238 @@ impl EpisodicPyramidStore {
             total_steps,
             summaries,
             trees,
+        })
+    }
+
+    /// Aggregates unrolled Tier 2 milestone rollups into a Tier 3 Session Narrative.
+    pub fn generate_session_narrative(
+        &self,
+        session_id: Option<&str>,
+        bridge: Option<&SlmPyramidBridge>,
+    ) -> Result<Option<EpisodeRecord>, StrataError> {
+        let default_bridge;
+        let b = match bridge {
+            Some(b) => b,
+            None => {
+                default_bridge = SlmPyramidBridge::with_default_config();
+                &default_bridge
+            }
+        };
+        EpisodicPyramidEngine::aggregate_session_narrative(&self.store, session_id, b)
+    }
+}
+
+/// Configuration for the local SLM SmolLM2 episodic narrative bridge.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct SlmBridgeConfig {
+    /// Python binary path or command name.
+    pub python_binary: String,
+    /// Path to the local LoRA adapter weights directory (e.g. `labs/episodic-pyramid-slm/runs/lora_r16_1b7/adapter`).
+    pub adapter_path: PathBuf,
+    /// Path to the local inference runner script (e.g. `labs/episodic-pyramid-slm/infer.py`).
+    pub script_path: PathBuf,
+    /// Maximum new tokens generated by the SLM.
+    pub max_new_tokens: usize,
+    /// Generation temperature.
+    pub temperature: f32,
+    /// Timeout in seconds for local inference child process.
+    pub timeout_seconds: u64,
+    /// Force 100% offline execution without network calls.
+    pub offline: bool,
+}
+
+impl Default for SlmBridgeConfig {
+    fn default() -> Self {
+        let venv_win = PathBuf::from("labs/episodic-pyramid-slm/.venv/Scripts/python.exe");
+        let venv_unix = PathBuf::from("labs/episodic-pyramid-slm/.venv/bin/python");
+        let python_binary = if let Ok(custom) = std::env::var("STRATA_SLM_PYTHON") {
+            custom
+        } else if venv_win.exists() {
+            venv_win.to_string_lossy().to_string()
+        } else if venv_unix.exists() {
+            venv_unix.to_string_lossy().to_string()
+        } else {
+            "python".to_string()
+        };
+
+        Self {
+            python_binary,
+            adapter_path: PathBuf::from("labs/episodic-pyramid-slm/runs/lora_r16_1b7/adapter"),
+            script_path: PathBuf::from("labs/episodic-pyramid-slm/infer.py"),
+            max_new_tokens: 180,
+            temperature: 0.2,
+            timeout_seconds: 45,
+            offline: true,
+        }
+    }
+}
+
+/// Result of an episodic narrative inference run (from local SLM or deterministic fallback).
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct SlmInferenceResult {
+    pub narrative: String,
+    pub heuristic: String,
+    pub tier: u8,
+    pub chars_in: usize,
+    pub chars_out: usize,
+    pub compression_ratio: f32,
+    pub model: String,
+    pub offline: bool,
+    pub fallback: bool,
+    #[serde(default)]
+    pub warning: Option<String>,
+}
+
+/// Local SLM bridge connecting Strata episodic memory pyramid to SmolLM2 LoRA adapter.
+#[derive(Debug, Clone)]
+pub struct SlmPyramidBridge {
+    pub config: SlmBridgeConfig,
+}
+
+impl SlmPyramidBridge {
+    pub fn new(config: SlmBridgeConfig) -> Self {
+        Self { config }
+    }
+
+    pub fn with_default_config() -> Self {
+        Self::new(SlmBridgeConfig::default())
+    }
+
+    /// Formats Tier 2 milestone rollups into the standard input prompt for Tier 3 narrative synthesis.
+    pub fn format_tier2_prompt(milestones: &[EpisodeRecord]) -> String {
+        let mut prompt = String::new();
+        for m in milestones {
+            let summary = m.summary.trim();
+            let outcomes_str = if m.outcomes.is_empty() {
+                String::new()
+            } else {
+                format!(" (outcomes: {})", m.outcomes.join("; "))
+            };
+            prompt.push_str(&format!("- {}{}\n", summary, outcomes_str));
+        }
+        prompt
+    }
+
+    /// Deterministic heuristic narrative (pure Rust, zero-overhead, 100% offline).
+    pub fn heuristic_narrative(milestones: &[EpisodeRecord]) -> String {
+        if milestones.is_empty() {
+            return "[Session Narrative] Empty Milestone Rollup Cluster".to_string();
+        }
+        let summaries: Vec<String> = milestones
+            .iter()
+            .map(|m| {
+                let s = m.summary.trim();
+                if let Some(stripped) = s.strip_prefix("[Milestone Rollup]") {
+                    stripped.split('|').next().unwrap_or(stripped).trim().to_string()
+                } else {
+                    s.split('|').next().unwrap_or(s).trim().to_string()
+                }
+            })
+            .filter(|s| !s.is_empty())
+            .take(5)
+            .collect();
+
+        format!(
+            "Narrativa: Sessao agregou {} marcos principais. Arco de execucao: {}. Invariantes e contratos preservados com sucesso.",
+            milestones.len(),
+            summaries.join(" | ")
+        )
+    }
+
+    /// Generates a Tier 3 session narrative using the local SmolLM2 adapter,
+    /// with transparent fallback to deterministic heuristic synthesis if Python or GPU is unavailable.
+    pub fn generate_narrative(&self, milestones: &[EpisodeRecord]) -> Result<SlmInferenceResult, StrataError> {
+        if milestones.is_empty() {
+            let heur = Self::heuristic_narrative(milestones);
+            return Ok(SlmInferenceResult {
+                narrative: heur.clone(),
+                heuristic: heur,
+                tier: 3,
+                chars_in: 0,
+                chars_out: 0,
+                compression_ratio: 1.0,
+                model: "heuristic_fallback".to_string(),
+                offline: true,
+                fallback: true,
+                warning: Some("No milestones provided for narrative generation".to_string()),
+            });
+        }
+
+        let prompt = Self::format_tier2_prompt(milestones);
+        let chars_in = prompt.len();
+        let heuristic = Self::heuristic_narrative(milestones);
+
+        // Attempt child process execution if script exists
+        let script = &self.config.script_path;
+        if script.exists() {
+            let mut cmd = Command::new(&self.config.python_binary);
+            cmd.arg(script)
+                .arg("--tier")
+                .arg("t2_to_t3")
+                .arg("--json")
+                .arg("--max-tokens")
+                .arg(self.config.max_new_tokens.to_string())
+                .arg("--temperature")
+                .arg(self.config.temperature.to_string())
+                .arg("--input")
+                .arg("-");
+
+            if self.config.adapter_path.exists() {
+                cmd.arg("--adapter-dir").arg(&self.config.adapter_path);
+            }
+
+            if self.config.offline {
+                cmd.env("HF_HUB_OFFLINE", "1");
+                cmd.env("TRANSFORMERS_OFFLINE", "1");
+                cmd.env("HF_DATASETS_OFFLINE", "1");
+            }
+            cmd.env("HF_HUB_DISABLE_PROGRESS_BARS", "1");
+            cmd.env("TOKENIZERS_PARALLELISM", "false");
+
+            cmd.stdin(Stdio::piped())
+                .stdout(Stdio::piped())
+                .stderr(Stdio::piped());
+
+            if let Ok(mut child) = cmd.spawn() {
+                if let Some(mut stdin) = child.stdin.take() {
+                    let _ = stdin.write_all(prompt.as_bytes());
+                }
+
+                if let Ok(output) = child.wait_with_output() {
+                    if output.status.success() {
+                        let stdout_str = String::from_utf8_lossy(&output.stdout);
+                        if let Some(json_start) = stdout_str.find('{') {
+                            if let Some(json_end) = stdout_str.rfind('}') {
+                                let json_substr = &stdout_str[json_start..=json_end];
+                                if let Ok(parsed) = serde_json::from_str::<SlmInferenceResult>(json_substr) {
+                                    return Ok(parsed);
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        // Deterministic fallback if child process fails or is not found
+        let chars_out = heuristic.len();
+        let ratio = if chars_out > 0 {
+            (chars_in as f32) / (chars_out as f32)
+        } else {
+            1.0
+        };
+
+        Ok(SlmInferenceResult {
+            narrative: heuristic.clone(),
+            heuristic,
+            tier: 3,
+            chars_in,
+            chars_out,
+            compression_ratio: ratio,
+            model: "heuristic_fallback".to_string(),
+            offline: true,
+            fallback: true,
+            warning: Some("Python SLM bridge unavailable or timed out; used deterministic heuristic".to_string()),
         })
     }
 }
@@ -1367,5 +1686,124 @@ mod tests {
             .expect("time db filter");
         assert_eq!(time_db_report.rollups_count, 1);
         assert_eq!(time_db_report.summaries[0].id, db_rollup.id);
+    }
+
+    #[test]
+    fn test_slm_bridge_tier2_prompt_formatting() {
+        let ep1 = EpisodeRecord::new("sess-1", "agent-1", "Auth JWT RS256+JWKS")
+            .with_tier(2)
+            .with_outcomes(vec!["Keypair generated".to_string(), "JWKS exposed".to_string()]);
+        let ep2 = EpisodeRecord::new("sess-1", "agent-1", "SQLite pool with DeadlockTimeout")
+            .with_tier(2)
+            .with_outcomes(vec!["Pool exhaustion mitigated".to_string()]);
+
+        let prompt = SlmPyramidBridge::format_tier2_prompt(&[ep1, ep2]);
+        assert!(prompt.contains("- Auth JWT RS256+JWKS"));
+        assert!(prompt.contains("Keypair generated"));
+        assert!(prompt.contains("- SQLite pool with DeadlockTimeout"));
+        assert!(prompt.contains("Pool exhaustion mitigated"));
+    }
+
+    #[test]
+    fn test_slm_heuristic_narrative() {
+        let ep1 = EpisodeRecord::new("sess-1", "agent-1", "[Milestone Rollup] Auth JWT RS256 | Invariants: 2 outcomes, 2 files touched")
+            .with_tier(2);
+        let ep2 = EpisodeRecord::new("sess-1", "agent-1", "[Milestone Rollup] SQLite pool | Invariants: 1 outcomes, 1 files touched")
+            .with_tier(2);
+
+        let narrative = SlmPyramidBridge::heuristic_narrative(&[ep1, ep2]);
+        assert!(narrative.starts_with("Narrativa: Sessao agregou 2 marcos principais."));
+        assert!(narrative.contains("Auth JWT RS256"));
+        assert!(narrative.contains("SQLite pool"));
+        assert!(narrative.contains("Invariantes e contratos preservados"));
+    }
+
+    #[test]
+    fn test_slm_pyramid_bridge_local_fallback() {
+        let mut config = SlmBridgeConfig::default();
+        config.python_binary = "non_existent_python_binary_xyz123".to_string();
+        let bridge = SlmPyramidBridge::new(config);
+
+        let ep1 = EpisodeRecord::new("sess-1", "agent-1", "Milestone Auth").with_tier(2);
+        let res = bridge.generate_narrative(&[ep1]).expect("inference");
+
+        assert_eq!(res.tier, 3);
+        assert!(res.fallback);
+        assert!(res.offline);
+        assert!(res.narrative.contains("Narrativa:"));
+    }
+
+    #[test]
+    fn test_episodic_pyramid_tier3_session_narrative_and_transitive_drilldown() {
+        let store = Arc::new(SqliteStore::open_in_memory().expect("in memory store"));
+        let pyramid_store = EpisodicPyramidStore::new(store.clone());
+
+        let now = chrono::Utc::now().timestamp();
+
+        // 1. Create 4 Tier 1 episodes (2 for task-auth, 2 for task-db)
+        for i in 1..=2 {
+            let mut ep = EpisodeRecord::new("sess-full-pyramid", "agent-auth", format!("Auth step {i}"))
+                .with_salience(0.8);
+            ep.task_id = Some("task-auth".to_string());
+            ep.created_at = now + i;
+            ep.event_trace = vec![EpisodeStep::new(0, format!("action auth {i}"))
+                .with_output(serde_json::json!({ "file": "src/auth.rs" }))];
+            ep.outcomes = vec![format!("auth_success_{i}")];
+            store.write_episode(&ep).expect("write ep");
+        }
+
+        for i in 1..=2 {
+            let mut ep = EpisodeRecord::new("sess-full-pyramid", "agent-db", format!("DB step {i}"))
+                .with_salience(0.7);
+            ep.task_id = Some("task-db".to_string());
+            ep.created_at = now + 10 + i;
+            ep.event_trace = vec![EpisodeStep::new(0, format!("action db {i}"))
+                .with_output(serde_json::json!({ "file": "src/db.rs" }))];
+            ep.outcomes = vec![format!("db_success_{i}")];
+            store.write_episode(&ep).expect("write ep");
+        }
+
+        // 2. Perform Tier 1 -> Tier 2 rollup
+        let tier2_rollups = pyramid_store
+            .auto_rollup_idle_episodes(Some("sess-full-pyramid"), None)
+            .expect("rollup tier 2");
+        assert_eq!(tier2_rollups.len(), 2, "Expected 2 Tier 2 milestone rollups");
+        assert!(tier2_rollups.iter().all(|r| r.tier == 2));
+        assert!(tier2_rollups.iter().all(|r| r.parent_id.is_none()));
+
+        // 3. Perform Tier 2 -> Tier 3 session narrative rollup
+        let bridge = SlmPyramidBridge::with_default_config();
+        let tier3_opt = pyramid_store
+            .generate_session_narrative(Some("sess-full-pyramid"), Some(&bridge))
+            .expect("generate tier 3");
+
+        assert!(tier3_opt.is_some(), "Expected Tier 3 session narrative to be generated");
+        let tier3 = tier3_opt.unwrap();
+        assert_eq!(tier3.tier, 3);
+        assert_eq!(tier3.session_id, "sess-full-pyramid");
+        assert_eq!(tier3.child_ids.len(), 2, "Tier 3 must reference the 2 Tier 2 milestones");
+        assert!(tier3.summary.starts_with("Narrativa:"));
+        assert_eq!(tier3.outcomes.len(), 4, "Must aggregate unique outcomes from both milestones");
+
+        // 4. Verify that Tier 2 milestones now have parent_id == Some(tier3.id)
+        for t2 in &tier2_rollups {
+            let fetched = store.get_episode(&t2.id).expect("get ep").expect("exists");
+            assert_eq!(fetched.parent_id, Some(tier3.id), "Tier 2 milestone parent_id must point to Tier 3 epoch");
+        }
+
+        // 5. Subsequent call returns None (all Tier 2 milestones are rolled up)
+        let empty_second_call = pyramid_store
+            .generate_session_narrative(Some("sess-full-pyramid"), Some(&bridge))
+            .expect("second call");
+        assert!(empty_second_call.is_none(), "No unrolled Tier 2 milestones remaining");
+
+        // 6. Drill down from Tier 3 reconstructs all 4 leaf episodes
+        let tree_opt = pyramid_store.drill_down(&tier3.id).expect("drill down");
+        assert!(tree_opt.is_some());
+        let tree = tree_opt.unwrap();
+        assert_eq!(tree.root.id, tier3.id);
+        assert_eq!(tree.root.tier, 3);
+        assert_eq!(tree.leaves.len(), 4, "Hierarchical drill down from Tier 3 must reach all 4 Tier 1 leaves");
+        assert_eq!(tree.total_steps, 4);
     }
 }

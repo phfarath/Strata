@@ -77,7 +77,8 @@ pub use pipeline::{ConsolidationPipeline, ConsolidationResult, PipelineConfig};
 pub use procedural_mining::TrajectoryMiner;
 pub use pyramid::{
     DrillDownTree, EpisodicPyramidEngine, EpisodicPyramidStore, PyramidConfig,
-    PyramidDrillDownReport, PyramidFilter, RollupSummary,
+    PyramidDrillDownReport, PyramidFilter, RollupSummary, SlmBridgeConfig,
+    SlmInferenceResult, SlmPyramidBridge,
 };
 pub use retrieval::{HybridRanker, HybridRankerConfig};
 pub use spreading_activation::{
