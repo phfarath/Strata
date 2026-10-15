@@ -7,6 +7,7 @@ use tokio::sync::Semaphore;
 use tokio::task::JoinSet;
 
 use super::dag::GoalDag;
+use super::macros::ProceduralMacroCompiler;
 use super::recovery::DynamicReplanner;
 use super::types::{DagExecutionReport, ExecutionWave, GoalNode, GoalStatus, RecoveryAction};
 
@@ -46,6 +47,7 @@ pub struct DagScheduler {
     auto_recover: bool,
     replanner: DynamicReplanner,
     executor: Arc<dyn TaskExecutor>,
+    macro_compiler: Option<ProceduralMacroCompiler>,
 }
 
 impl Default for DagScheduler {
@@ -61,6 +63,7 @@ impl DagScheduler {
             auto_recover: true,
             replanner: DynamicReplanner::new(),
             executor: Arc::new(DefaultTaskExecutor),
+            macro_compiler: None,
         }
     }
 
@@ -84,10 +87,23 @@ impl DagScheduler {
         self
     }
 
+    pub fn with_macro_compiler(mut self, compiler: ProceduralMacroCompiler) -> Self {
+        self.macro_compiler = Some(compiler);
+        self
+    }
+
     /// Asynchronously execute the Goal DAG wave-by-wave.
     pub async fn execute(&self, mut dag: GoalDag) -> Result<(GoalDag, DagExecutionReport)> {
         dag.validate()?;
         let start_time = Instant::now();
+
+        // 0. Pre-compilation: Substitute matching subgoals with deterministic procedural macros
+        if let Some(compiler) = &self.macro_compiler {
+            let report = compiler.compile_macros(&mut dag)?;
+            if report.has_substitutions() {
+                dag.validate()?;
+            }
+        }
 
         let plan_id = format!("plan_{}", uuid::Uuid::new_v4().simple());
         let root_goal = dag
