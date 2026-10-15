@@ -28,13 +28,14 @@ pub async fn run_all_scenarios() -> Result<()> {
     HitlCoreApprovalEval::run_eval().await?;
     run_a2a_stigmergic_leases_scenario().await?;
     run_a2a_swarm_stress_benchmark_scenario().await?;
+    run_a2a_transactive_directory_scenario().await?;
     run_pluggable_reasoning_cascade_scenario().await?;
     run_consolidation_ab_benchmark_scenario().await?;
     run_agent_loop_futility_baseline_scenario().await?;
     run_hierarchical_episodic_pyramid_eval().await?;
 
     println!("\n========================================================");
-    println!("🎉 ALL EVAL SCENARIOS PASSED (21/21)");
+    println!("🎉 ALL EVAL SCENARIOS PASSED (22/22)");
     println!("========================================================\n");
 
     Ok(())
@@ -213,5 +214,12 @@ mod tests {
         assert_eq!(res.drill_down_accuracy, 1.0);
         assert!(res.is_deterministic);
         assert_eq!(res.clusters_count, 3);
+    }
+
+    #[tokio::test]
+    async fn test_eval_a2a_transactive_directory() {
+        run_a2a_transactive_directory_scenario()
+            .await
+            .expect("A2A Transactive Directory eval scenario failed");
     }
 }

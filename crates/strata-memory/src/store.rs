@@ -15,7 +15,9 @@ use strata_core::schemas::{
     ProceduralSkill, ProceduralStep, SemanticFact, SignalKind, SignalScores, SyncDelta,
 };
 
-use strata_core::a2a::{A2aMessage, AgentPresence, LeaseAcquireResult, ResourceLease};
+use strata_core::a2a::{
+    A2aMessage, AgentCard, AgentPresence, DomainAuthority, LeaseAcquireResult, ResourceLease,
+};
 use strata_core::blackboard::{TaskArtifact, TaskFilter, TaskRecord, TaskStatus};
 use strata_core::state::{
     FailurePattern, FailureSeverity, MemoryRecord, MemoryTier, MemoryType, Scope,
@@ -679,6 +681,34 @@ impl SqliteStore {
             CREATE INDEX IF NOT EXISTS idx_a2a_messages_to ON a2a_messages(to_agent);
             CREATE INDEX IF NOT EXISTS idx_a2a_messages_task ON a2a_messages(task_id);
             CREATE INDEX IF NOT EXISTS idx_a2a_messages_read ON a2a_messages(read_at);
+
+            -- Transactive Memory Directory: Agent Capability Cards
+            CREATE TABLE IF NOT EXISTS agent_cards (
+                agent_id TEXT PRIMARY KEY,
+                host TEXT NOT NULL,
+                memory_capabilities_json TEXT NOT NULL,
+                domain_scopes_json TEXT NOT NULL,
+                memory_persistence TEXT NOT NULL,
+                tenant_scopes_json TEXT NOT NULL,
+                memory_privacy_mode TEXT NOT NULL,
+                confidence_score REAL NOT NULL,
+                updated_at INTEGER NOT NULL
+            );
+
+            CREATE INDEX IF NOT EXISTS idx_agent_cards_updated ON agent_cards(updated_at);
+
+            -- Transactive Memory Directory: Domain Authorities
+            CREATE TABLE IF NOT EXISTS domain_authorities (
+                domain TEXT PRIMARY KEY,
+                authoritative_agent TEXT NOT NULL,
+                confidence_score REAL NOT NULL,
+                lease_held INTEGER NOT NULL DEFAULT 0,
+                active_tasks_count INTEGER NOT NULL DEFAULT 0,
+                last_active_at INTEGER NOT NULL
+            );
+
+            CREATE INDEX IF NOT EXISTS idx_domain_authorities_agent ON domain_authorities(authoritative_agent);
+            CREATE INDEX IF NOT EXISTS idx_domain_authorities_conf ON domain_authorities(confidence_score);
 
             -- Hippocampal Episodic Traces Table
             CREATE TABLE IF NOT EXISTS episodes (
@@ -4774,6 +4804,17 @@ impl SqliteStore {
             })?;
 
         if rows_affected > 0 {
+            let _ = conn.execute(
+                "INSERT INTO domain_authorities (
+                    domain, authoritative_agent, confidence_score, lease_held, active_tasks_count, last_active_at
+                 ) VALUES (?1, ?2, 0.95, 1, 1, ?3)
+                 ON CONFLICT(domain) DO UPDATE SET
+                     authoritative_agent = excluded.authoritative_agent,
+                     lease_held = 1,
+                     last_active_at = excluded.last_active_at",
+                params![resource_id, agent_id, now],
+            );
+
             Ok(LeaseAcquireResult::Acquired {
                 resource_id: resource_id.to_string(),
                 expires_at,
@@ -4825,6 +4866,13 @@ impl SqliteStore {
                 params![resource_id, agent_id],
             )
             .map_err(|e| StrataError::Database(format!("Failed to release lease: {e}")))?;
+
+        if rows > 0 {
+            let _ = conn.execute(
+                "UPDATE domain_authorities SET lease_held = 0 WHERE domain = ?1 AND authoritative_agent = ?2",
+                params![resource_id, agent_id],
+            );
+        }
 
         Ok(rows > 0)
     }
@@ -5593,6 +5641,329 @@ impl SqliteStore {
         }
 
         Ok(count)
+    }
+
+    // ==========================================
+    // Transactive Memory Directory (A2A Frontier 2)
+    // ==========================================
+
+    /// Upserts an agent's capability card and synchronizes its declared domain authorities.
+    pub fn record_agent_card(&self, card: &AgentCard) -> Result<(), StrataError> {
+        let conn = self
+            .conn
+            .lock()
+            .map_err(|_| StrataError::Database("Lock poisoned on SQLite connection".to_string()))?;
+
+        let caps_json = serde_json::to_string(&card.memory_capabilities)
+            .map_err(|e| StrataError::Serialization(e.to_string()))?;
+        let domains_json = serde_json::to_string(&card.domain_scopes)
+            .map_err(|e| StrataError::Serialization(e.to_string()))?;
+        let tenants_json = serde_json::to_string(&card.tenant_scopes)
+            .map_err(|e| StrataError::Serialization(e.to_string()))?;
+
+        conn.execute(
+            "INSERT INTO agent_cards (
+                agent_id, host, memory_capabilities_json, domain_scopes_json,
+                memory_persistence, tenant_scopes_json, memory_privacy_mode,
+                confidence_score, updated_at
+            ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)
+            ON CONFLICT(agent_id) DO UPDATE SET
+                host = excluded.host,
+                memory_capabilities_json = excluded.memory_capabilities_json,
+                domain_scopes_json = excluded.domain_scopes_json,
+                memory_persistence = excluded.memory_persistence,
+                tenant_scopes_json = excluded.tenant_scopes_json,
+                memory_privacy_mode = excluded.memory_privacy_mode,
+                confidence_score = excluded.confidence_score,
+                updated_at = excluded.updated_at",
+            params![
+                card.agent_id,
+                card.host,
+                caps_json,
+                domains_json,
+                card.memory_persistence,
+                tenants_json,
+                card.memory_privacy_mode,
+                card.confidence_score,
+                card.updated_at
+            ],
+        )
+        .map_err(|e| StrataError::Database(format!("Failed to record agent card: {e}")))?;
+
+        // Auto-provision domain authority for each declared scope if not already held with higher confidence
+        for scope in &card.domain_scopes {
+            let auth = DomainAuthority::new(scope, &card.agent_id, card.confidence_score);
+            let _ = self.set_domain_authority_internal(&conn, &auth);
+        }
+
+        Ok(())
+    }
+
+    /// Fetches an agent capability card by agent ID.
+    pub fn get_agent_card(&self, agent_id: &str) -> Result<Option<AgentCard>, StrataError> {
+        let conn = self
+            .conn
+            .lock()
+            .map_err(|_| StrataError::Database("Lock poisoned on SQLite connection".to_string()))?;
+
+        let mut stmt = conn
+            .prepare(
+                "SELECT agent_id, host, memory_capabilities_json, domain_scopes_json,
+                        memory_persistence, tenant_scopes_json, memory_privacy_mode,
+                        confidence_score, updated_at
+                 FROM agent_cards
+                 WHERE agent_id = ?1",
+            )
+            .map_err(|e| StrataError::Database(e.to_string()))?;
+
+        let res = stmt
+            .query_row(params![agent_id], |row| {
+                let caps_str: String = row.get(2)?;
+                let domains_str: String = row.get(3)?;
+                let tenants_str: String = row.get(5)?;
+
+                let memory_capabilities: Vec<String> = serde_json::from_str(&caps_str).unwrap_or_default();
+                let domain_scopes: Vec<String> = serde_json::from_str(&domains_str).unwrap_or_default();
+                let tenant_scopes: Vec<String> = serde_json::from_str(&tenants_str).unwrap_or_default();
+
+                Ok(AgentCard {
+                    agent_id: row.get(0)?,
+                    host: row.get(1)?,
+                    memory_capabilities,
+                    domain_scopes,
+                    memory_persistence: row.get(4)?,
+                    tenant_scopes,
+                    memory_privacy_mode: row.get(6)?,
+                    confidence_score: row.get(7)?,
+                    updated_at: row.get(8)?,
+                })
+            })
+            .optional()
+            .map_err(|e| StrataError::Database(e.to_string()))?;
+
+        Ok(res)
+    }
+
+    /// Lists all registered agent capability cards.
+    pub fn list_agent_cards(&self) -> Result<Vec<AgentCard>, StrataError> {
+        let conn = self
+            .conn
+            .lock()
+            .map_err(|_| StrataError::Database("Lock poisoned on SQLite connection".to_string()))?;
+
+        let mut stmt = conn
+            .prepare(
+                "SELECT agent_id, host, memory_capabilities_json, domain_scopes_json,
+                        memory_persistence, tenant_scopes_json, memory_privacy_mode,
+                        confidence_score, updated_at
+                 FROM agent_cards
+                 ORDER BY updated_at DESC",
+            )
+            .map_err(|e| StrataError::Database(e.to_string()))?;
+
+        let rows = stmt
+            .query_map([], |row| {
+                let caps_str: String = row.get(2)?;
+                let domains_str: String = row.get(3)?;
+                let tenants_str: String = row.get(5)?;
+
+                let memory_capabilities: Vec<String> = serde_json::from_str(&caps_str).unwrap_or_default();
+                let domain_scopes: Vec<String> = serde_json::from_str(&domains_str).unwrap_or_default();
+                let tenant_scopes: Vec<String> = serde_json::from_str(&tenants_str).unwrap_or_default();
+
+                Ok(AgentCard {
+                    agent_id: row.get(0)?,
+                    host: row.get(1)?,
+                    memory_capabilities,
+                    domain_scopes,
+                    memory_persistence: row.get(4)?,
+                    tenant_scopes,
+                    memory_privacy_mode: row.get(6)?,
+                    confidence_score: row.get(7)?,
+                    updated_at: row.get(8)?,
+                })
+            })
+            .map_err(|e| StrataError::Database(e.to_string()))?;
+
+        let mut list = Vec::new();
+        for r in rows {
+            list.push(r.map_err(|e| StrataError::Database(e.to_string()))?);
+        }
+
+        Ok(list)
+    }
+
+    fn set_domain_authority_internal(
+        &self,
+        conn: &Connection,
+        authority: &DomainAuthority,
+    ) -> Result<(), StrataError> {
+        conn.execute(
+            "INSERT INTO domain_authorities (
+                domain, authoritative_agent, confidence_score, lease_held, active_tasks_count, last_active_at
+             ) VALUES (?1, ?2, ?3, ?4, ?5, ?6)
+             ON CONFLICT(domain) DO UPDATE SET
+                 authoritative_agent = excluded.authoritative_agent,
+                 confidence_score = excluded.confidence_score,
+                 lease_held = excluded.lease_held,
+                 active_tasks_count = excluded.active_tasks_count,
+                 last_active_at = excluded.last_active_at",
+            params![
+                authority.domain,
+                authority.authoritative_agent,
+                authority.confidence_score,
+                if authority.lease_held { 1 } else { 0 },
+                authority.active_tasks_count,
+                authority.last_active_at,
+            ],
+        )
+        .map_err(|e| StrataError::Database(format!("Failed to set domain authority: {e}")))?;
+
+        Ok(())
+    }
+
+    /// Registers or updates authority over a specific code domain or topic space.
+    pub fn set_domain_authority(&self, authority: &DomainAuthority) -> Result<(), StrataError> {
+        let conn = self
+            .conn
+            .lock()
+            .map_err(|_| StrataError::Database("Lock poisoned on SQLite connection".to_string()))?;
+
+        self.set_domain_authority_internal(&conn, authority)
+    }
+
+    /// Fetches the explicit domain authority record for a domain.
+    pub fn get_domain_authority(&self, domain: &str) -> Result<Option<DomainAuthority>, StrataError> {
+        let conn = self
+            .conn
+            .lock()
+            .map_err(|_| StrataError::Database("Lock poisoned on SQLite connection".to_string()))?;
+
+        let mut stmt = conn
+            .prepare(
+                "SELECT domain, authoritative_agent, confidence_score, lease_held, active_tasks_count, last_active_at
+                 FROM domain_authorities
+                 WHERE domain = ?1",
+            )
+            .map_err(|e| StrataError::Database(e.to_string()))?;
+
+        let res = stmt
+            .query_row(params![domain], |row| {
+                Ok(DomainAuthority {
+                    domain: row.get(0)?,
+                    authoritative_agent: row.get(1)?,
+                    confidence_score: row.get(2)?,
+                    lease_held: row.get::<_, i64>(3)? != 0,
+                    active_tasks_count: row.get(4)?,
+                    last_active_at: row.get(5)?,
+                })
+            })
+            .optional()
+            .map_err(|e| StrataError::Database(e.to_string()))?;
+
+        Ok(res)
+    }
+
+    /// Lists all domain authorities currently indexed.
+    pub fn list_domain_authorities(&self) -> Result<Vec<DomainAuthority>, StrataError> {
+        let conn = self
+            .conn
+            .lock()
+            .map_err(|_| StrataError::Database("Lock poisoned on SQLite connection".to_string()))?;
+
+        let mut stmt = conn
+            .prepare(
+                "SELECT domain, authoritative_agent, confidence_score, lease_held, active_tasks_count, last_active_at
+                 FROM domain_authorities
+                 ORDER BY domain ASC",
+            )
+            .map_err(|e| StrataError::Database(e.to_string()))?;
+
+        let rows = stmt
+            .query_map([], |row| {
+                Ok(DomainAuthority {
+                    domain: row.get(0)?,
+                    authoritative_agent: row.get(1)?,
+                    confidence_score: row.get(2)?,
+                    lease_held: row.get::<_, i64>(3)? != 0,
+                    active_tasks_count: row.get(4)?,
+                    last_active_at: row.get(5)?,
+                })
+            })
+            .map_err(|e| StrataError::Database(e.to_string()))?;
+
+        let mut list = Vec::new();
+        for r in rows {
+            list.push(r.map_err(|e| StrataError::Database(e.to_string()))?);
+        }
+
+        Ok(list)
+    }
+
+    /// Finds the best authoritative specialist agent for a domain using exact and hierarchical prefix resolution.
+    pub fn find_best_authority_for_domain(
+        &self,
+        query_domain: &str,
+    ) -> Result<Option<DomainAuthority>, StrataError> {
+        let conn = self
+            .conn
+            .lock()
+            .map_err(|_| StrataError::Database("Lock poisoned on SQLite connection".to_string()))?;
+
+        // 1. Exact match
+        let mut stmt = conn
+            .prepare(
+                "SELECT domain, authoritative_agent, confidence_score, lease_held, active_tasks_count, last_active_at
+                 FROM domain_authorities
+                 WHERE domain = ?1
+                 LIMIT 1",
+            )
+            .map_err(|e| StrataError::Database(e.to_string()))?;
+
+        let exact = stmt
+            .query_row(params![query_domain], |row| {
+                Ok(DomainAuthority {
+                    domain: row.get(0)?,
+                    authoritative_agent: row.get(1)?,
+                    confidence_score: row.get(2)?,
+                    lease_held: row.get::<_, i64>(3)? != 0,
+                    active_tasks_count: row.get(4)?,
+                    last_active_at: row.get(5)?,
+                })
+            })
+            .optional()
+            .map_err(|e| StrataError::Database(e.to_string()))?;
+
+        if exact.is_some() {
+            return Ok(exact);
+        }
+
+        // 2. Hierarchical prefix matching: matches parent module or directory
+        let mut stmt = conn
+            .prepare(
+                "SELECT domain, authoritative_agent, confidence_score, lease_held, active_tasks_count, last_active_at
+                 FROM domain_authorities
+                 WHERE ?1 LIKE (domain || '%') OR domain LIKE (?1 || '%')
+                 ORDER BY lease_held DESC, length(domain) DESC, confidence_score DESC
+                 LIMIT 1",
+            )
+            .map_err(|e| StrataError::Database(e.to_string()))?;
+
+        let hierarchical = stmt
+            .query_row(params![query_domain], |row| {
+                Ok(DomainAuthority {
+                    domain: row.get(0)?,
+                    authoritative_agent: row.get(1)?,
+                    confidence_score: row.get(2)?,
+                    lease_held: row.get::<_, i64>(3)? != 0,
+                    active_tasks_count: row.get(4)?,
+                    last_active_at: row.get(5)?,
+                })
+            })
+            .optional()
+            .map_err(|e| StrataError::Database(e.to_string()))?;
+
+        Ok(hierarchical)
     }
 
     // ==========================================

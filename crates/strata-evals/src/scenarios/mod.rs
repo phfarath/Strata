@@ -1,5 +1,6 @@
 pub mod a2a_stigmergic_leases;
 pub mod a2a_swarm_stress_benchmark;
+pub mod a2a_transactive_directory;
 pub mod agent_loop_futility_baseline;
 pub mod architecture_clustering;
 pub mod cognitive_feedback_and_alignment;
@@ -23,6 +24,7 @@ pub mod world_model_causal;
 
 pub use a2a_stigmergic_leases::*;
 pub use a2a_swarm_stress_benchmark::*;
+pub use a2a_transactive_directory::*;
 pub use agent_loop_futility_baseline::*;
 pub use architecture_clustering::*;
 pub use cognitive_feedback_and_alignment::*;

@@ -1,5 +1,7 @@
 use std::sync::Arc;
-use strata_core::a2a::{A2aMessage, AgentPresence, LeaseAcquireResult, ResourceLease};
+use strata_core::a2a::{
+    A2aMessage, AgentCard, AgentPresence, DomainAuthority, LeaseAcquireResult, ResourceLease,
+};
 use strata_core::blackboard::{TaskArtifact, TaskFilter, TaskRecord};
 use strata_core::errors::StrataError;
 
@@ -165,6 +167,48 @@ impl StigmergyCoordinator {
 
     pub fn mark_a2a_read(&self, message_ids: &[String]) -> Result<usize, StrataError> {
         self.store.mark_a2a_read(message_ids)
+    }
+
+    // Transactive Memory Directory (A2A Frontier 2)
+
+    /// Registers or updates an agent's capability card.
+    pub fn register_agent_card(&self, card: &AgentCard) -> Result<(), StrataError> {
+        self.store.record_agent_card(card)
+    }
+
+    /// Fetches an agent's capability card.
+    pub fn get_agent_card(&self, agent_id: &str) -> Result<Option<AgentCard>, StrataError> {
+        self.store.get_agent_card(agent_id)
+    }
+
+    /// Lists all registered agent capability cards.
+    pub fn list_agent_cards(&self) -> Result<Vec<AgentCard>, StrataError> {
+        self.store.list_agent_cards()
+    }
+
+    /// Explicitly registers or overrides authority over a code domain.
+    pub fn set_domain_authority(&self, authority: &DomainAuthority) -> Result<(), StrataError> {
+        self.store.set_domain_authority(authority)
+    }
+
+    /// Fetches the authority record for an exact domain.
+    pub fn get_domain_authority(&self, domain: &str) -> Result<Option<DomainAuthority>, StrataError> {
+        self.store.get_domain_authority(domain)
+    }
+
+    /// Lists all domain authorities currently registered in the workspace directory.
+    pub fn list_domain_authorities(&self) -> Result<Vec<DomainAuthority>, StrataError> {
+        self.store.list_domain_authorities()
+    }
+
+    /// Resolves the best specialist agent for a domain or file path using exact and hierarchical matching.
+    pub fn resolve_domain_authority(&self, domain_or_path: &str) -> Result<Option<DomainAuthority>, StrataError> {
+        self.store.find_best_authority_for_domain(domain_or_path)
+    }
+
+    /// Alias for `resolve_domain_authority`.
+    pub fn find_best_authority_for_domain(&self, domain_or_path: &str) -> Result<Option<DomainAuthority>, StrataError> {
+        self.resolve_domain_authority(domain_or_path)
     }
 }
 
@@ -478,6 +522,65 @@ mod tests {
             .unwrap()
             .expect("renewal by owner succeeds");
         assert_eq!(renewed.assigned_agent.as_deref(), Some("agent-1"));
+    }
+
+    #[test]
+    fn test_transactive_directory_coordination() {
+        let store = Arc::new(SqliteStore::open_in_memory().expect("in-memory db"));
+        let coordinator = StigmergyCoordinator::new(store);
+
+        // Register agent card for claude-specialist
+        let card1 = AgentCard::new("claude-specialist", "claude-code")
+            .with_domain_scopes(vec!["crates/strata-memory".into(), "crates/strata-core".into()])
+            .with_confidence(0.95);
+        coordinator.register_agent_card(&card1).expect("register card1");
+
+        // Register agent card for cursor-generalist
+        let card2 = AgentCard::new("cursor-generalist", "cursor")
+            .with_domain_scopes(vec!["crates/strata-cli".into()])
+            .with_confidence(0.80);
+        coordinator.register_agent_card(&card2).expect("register card2");
+
+        let cards = coordinator.list_agent_cards().expect("list cards");
+        assert_eq!(cards.len(), 2);
+
+        // Query domain authority for exact match
+        let auth_mem = coordinator
+            .resolve_domain_authority("crates/strata-memory")
+            .expect("resolve authority")
+            .expect("found authority");
+        assert_eq!(auth_mem.authoritative_agent, "claude-specialist");
+        assert_eq!(auth_mem.confidence_score, 0.95);
+        assert!(!auth_mem.lease_held);
+
+        // Query domain authority for sub-path (hierarchical prefix matching)
+        let auth_sub = coordinator
+            .resolve_domain_authority("crates/strata-memory/src/jtms.rs")
+            .expect("resolve sub-path")
+            .expect("found hierarchical match");
+        assert_eq!(auth_sub.authoritative_agent, "claude-specialist");
+
+        // When claude-specialist acquires a lease on crates/strata-memory, lease_held becomes true
+        coordinator
+            .acquire_lease("crates/strata-memory", "claude-specialist", 60, None)
+            .expect("acquire lease");
+
+        let auth_leased = coordinator
+            .resolve_domain_authority("crates/strata-memory")
+            .unwrap()
+            .unwrap();
+        assert!(auth_leased.lease_held);
+
+        // Release lease -> lease_held becomes false
+        coordinator
+            .release_lease("crates/strata-memory", "claude-specialist")
+            .expect("release lease");
+
+        let auth_unleased = coordinator
+            .resolve_domain_authority("crates/strata-memory")
+            .unwrap()
+            .unwrap();
+        assert!(!auth_unleased.lease_held);
     }
 }
 

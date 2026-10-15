@@ -8,7 +8,10 @@ pub mod state;
 pub mod traits;
 
 // Re-exports for convenience
-pub use a2a::{A2aMessage, AgentPresence, LeaseAcquireResult, ResourceLease};
+pub use a2a::{
+    A2aMessage, AgentCard, AgentPresence, DomainAuthority, IpcEvent, IpcMessage,
+    LeaseAcquireResult, ResourceLease, TransactiveQuery, TransactiveResponse,
+};
 pub use blackboard::{TaskArtifact, TaskFilter, TaskRecord, TaskStatus};
 pub use config::StrataConfig;
 pub use errors::StrataError;
