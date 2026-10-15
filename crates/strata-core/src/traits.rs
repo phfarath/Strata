@@ -53,6 +53,15 @@ pub trait MemoryEngine: Send + Sync {
         scope: Option<&Scope>,
         limit: usize,
     ) -> Result<Vec<FailurePattern>, StrataError>;
+
+    async fn get_symbol_anti_patterns(
+        &self,
+        _file: &str,
+        _symbol: Option<&str>,
+        _limit: usize,
+    ) -> Result<Vec<FailurePattern>, StrataError> {
+        Ok(Vec::new())
+    }
 }
 
 #[async_trait]

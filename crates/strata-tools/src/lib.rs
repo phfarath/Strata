@@ -97,6 +97,35 @@ mod tests {
             let fails = self.failures.lock().await;
             Ok(fails.clone())
         }
+
+        async fn get_symbol_anti_patterns(
+            &self,
+            file: &str,
+            symbol: Option<&str>,
+            _limit: usize,
+        ) -> Result<Vec<FailurePattern>, StrataError> {
+            let fails = self.failures.lock().await;
+            let norm_file = file.replace('\\', "/");
+            let norm_file = norm_file.trim_start_matches("./");
+            let filtered: Vec<FailurePattern> = fails
+                .iter()
+                .filter(|f| {
+                    if let Some(fp) = f.file_path() {
+                        let fp_norm = fp.replace('\\', "/");
+                        let fp_norm = fp_norm.trim_start_matches("./");
+                        if fp_norm == norm_file || norm_file.contains(fp_norm) || fp_norm.contains(norm_file) {
+                            if let Some(s) = symbol {
+                                return f.symbol_name() == Some(s) || f.symbol_name().is_none();
+                            }
+                            return true;
+                        }
+                    }
+                    false
+                })
+                .cloned()
+                .collect();
+            Ok(filtered)
+        }
     }
 
     // --- Mock Event Store for Testing ---
@@ -639,5 +668,484 @@ fn execute_step() {}
             .as_str()
             .unwrap()
             .contains("High-Level Architecture Map"));
+    }
+
+    #[tokio::test]
+    async fn test_symbol_guard_tool_execution() {
+        let mock_engine = Arc::new(MockMemoryEngine::new());
+        let pattern = FailurePattern::new(
+            "sig_borrow",
+            "Borrow Conflict",
+            "Simultaneous borrows",
+            "Clone reference",
+        )
+        .with_symbol_anchor("src/auth.rs", Some("login"), Some("E0502"))
+        .with_verified_correction("Use Arc::clone before moving into closure");
+
+        mock_engine.record_failure(&pattern).await.unwrap();
+
+        let tool = SymbolGuardTool::new(mock_engine);
+
+        let res = tool
+            .execute(json!({
+                "file": "src/auth.rs",
+                "symbol": "login"
+            }))
+            .await
+            .expect("execute symbol guard");
+
+        assert_eq!(res["status"], "success");
+        assert_eq!(res["has_anti_patterns"], true);
+        assert_eq!(res["count"], 1);
+        let guardrails = res["advisory_guardrails"].as_array().unwrap();
+        assert_eq!(guardrails.len(), 1);
+        let guardrail_str = guardrails[0].as_str().unwrap();
+        assert!(guardrail_str.contains("[KNOWN ANTI-PATTERN]: src/auth.rs::login (E0502)"));
+        assert!(guardrail_str.contains("Verified Correction: Use Arc::clone"));
+    }
+
+    #[tokio::test]
+    async fn test_historical_failures_replay_benchmark_and_gate_latency() {
+        use strata_memory::SqliteStore;
+
+        struct ReplayCase {
+            command: &'static str,
+            stdout: &'static str,
+            stderr: &'static str,
+            exit_code: i32,
+            expected_file: Option<&'static str>,
+            expected_symbol: Option<&'static str>,
+            expected_error: Option<&'static str>,
+        }
+
+        let dataset = vec![
+            // 1. Rust E0502 (Borrow checker mutable collision)
+            ReplayCase {
+                command: "cargo check",
+                stdout: "",
+                stderr: "error[E0502]: cannot borrow `*self` as mutable because it is also borrowed as immutable\n --> src/auth.rs:42:15\n42 | let x = self.get();",
+                exit_code: 1,
+                expected_file: Some("src/auth.rs"),
+                expected_symbol: None,
+                expected_error: Some("E0502"),
+            },
+            // 2. Rust E0063 (Missing struct field)
+            ReplayCase {
+                command: "cargo check --workspace",
+                stdout: "",
+                stderr: "error[E0063]: missing field `symbol` in initializer of `HookCommand`\n --> crates/strata-cli/src/commands/hook.rs:644:19",
+                exit_code: 1,
+                expected_file: Some("crates/strata-cli/src/commands/hook.rs"),
+                expected_symbol: Some("HookCommand"),
+                expected_error: Some("E0063"),
+            },
+            // 3. Rust E0433 (Undeclared module)
+            ReplayCase {
+                command: "cargo build",
+                stdout: "",
+                stderr: "error[E0433]: failed to resolve: use of undeclared crate or module `fastembed`\n --> crates/strata-memory/src/pyramid.rs:15:5",
+                exit_code: 1,
+                expected_file: Some("crates/strata-memory/src/pyramid.rs"),
+                expected_symbol: None,
+                expected_error: Some("E0433"),
+            },
+            // 4. Rust E0308 (Type mismatch)
+            ReplayCase {
+                command: "cargo check -p strata-reasoning",
+                stdout: "",
+                stderr: "error[E0308]: mismatched types\n --> crates/strata-reasoning/src/dag.rs:50:12\nexpected struct `Uuid`, found `&str`",
+                exit_code: 1,
+                expected_file: Some("crates/strata-reasoning/src/dag.rs"),
+                expected_symbol: None,
+                expected_error: Some("E0308"),
+            },
+            // 5. Rust E0599 (No method found)
+            ReplayCase {
+                command: "cargo check",
+                stdout: "",
+                stderr: "error[E0599]: no method named `find_symbol` found for struct `SqliteStore` in the current scope\n --> crates/strata-memory/src/store.rs:88:10",
+                exit_code: 1,
+                expected_file: Some("crates/strata-memory/src/store.rs"),
+                expected_symbol: Some("SqliteStore::find_symbol"),
+                expected_error: Some("E0599"),
+            },
+            // 6. Rust E0425 (Undeclared value)
+            ReplayCase {
+                command: "cargo check",
+                stdout: "",
+                stderr: "error[E0425]: cannot find value `token` in this scope\n --> src/middleware.rs:25:9",
+                exit_code: 1,
+                expected_file: Some("src/middleware.rs"),
+                expected_symbol: None,
+                expected_error: Some("E0425"),
+            },
+            // 7. Rust E0382 (Borrow of moved value)
+            ReplayCase {
+                command: "cargo check",
+                stdout: "",
+                stderr: "error[E0382]: borrow of moved value: `failure`\n --> crates/strata-cli/src/commands/hook.rs:482:33",
+                exit_code: 1,
+                expected_file: Some("crates/strata-cli/src/commands/hook.rs"),
+                expected_symbol: None,
+                expected_error: Some("E0382"),
+            },
+            // 8. Rust E0597 (Does not live long enough)
+            ReplayCase {
+                command: "cargo check",
+                stdout: "",
+                stderr: "error[E0597]: `val` does not live long enough\n --> src/session.rs:30:5",
+                exit_code: 1,
+                expected_file: Some("src/session.rs"),
+                expected_symbol: None,
+                expected_error: Some("E0597"),
+            },
+            // 9. Rust E0277 (Trait bound not satisfied)
+            ReplayCase {
+                command: "cargo check",
+                stdout: "",
+                stderr: "error[E0277]: the trait bound `MyType: Send` is not satisfied\n --> src/engine.rs:12:1",
+                exit_code: 1,
+                expected_file: Some("src/engine.rs"),
+                expected_symbol: None,
+                expected_error: Some("E0277"),
+            },
+            // 10. Rust E0507 (Move out of shared reference)
+            ReplayCase {
+                command: "cargo check",
+                stdout: "",
+                stderr: "error[E0507]: cannot move out of `*self` which is behind a shared reference\n --> crates/strata-core/src/events.rs:77:9",
+                exit_code: 1,
+                expected_file: Some("crates/strata-core/src/events.rs"),
+                expected_symbol: None,
+                expected_error: Some("E0507"),
+            },
+            // 11. Rust test panic in unit test
+            ReplayCase {
+                command: "cargo test -p strata-memory",
+                stdout: "running 1 test\ntest tests::test_decay ... FAILED\npanicked at 'assertion `left == right` failed', crates/strata-memory/src/decay.rs:42:5",
+                stderr: "",
+                exit_code: 101,
+                expected_file: Some("crates/strata-memory/src/decay.rs"),
+                expected_symbol: Some("tests::test_decay"),
+                expected_error: Some("AssertionFailure"),
+            },
+            // 12. Rust test panic unwrap
+            ReplayCase {
+                command: "cargo test",
+                stdout: "thread 'tests::test_preference_miner' panicked at 'called `Option::unwrap()` on a `None` value', crates/strata-memory/src/tests.rs:991:9",
+                stderr: "",
+                exit_code: 101,
+                expected_file: Some("crates/strata-memory/src/tests.rs"),
+                expected_symbol: Some("tests::test_preference_miner"),
+                expected_error: Some("AssertionFailure"),
+            },
+            // 13. Rust test failure summary
+            ReplayCase {
+                command: "cargo test",
+                stdout: "test test_sync_cycle ... FAILED\nfailures:\n    test_sync_cycle",
+                stderr: "",
+                exit_code: 101,
+                expected_file: None,
+                expected_symbol: Some("test_sync_cycle"),
+                expected_error: None,
+            },
+            // 14. Rust panic assertion with line pointer
+            ReplayCase {
+                command: "cargo test -p strata-tools",
+                stdout: "",
+                stderr: "thread 'main' panicked at crates/strata-tools/src/call_graph.rs:55:13: assertion failed: total > 0",
+                exit_code: 101,
+                expected_file: Some("crates/strata-tools/src/call_graph.rs"),
+                expected_symbol: None,
+                expected_error: Some("AssertionFailure"),
+            },
+            // 15. Rust Cargo package not found
+            ReplayCase {
+                command: "cargo test --package nonexistent-package-abc",
+                stdout: "",
+                stderr: "error: package ID specification 'nonexistent-package-abc' did not match any packages",
+                exit_code: 101,
+                expected_file: None,
+                expected_symbol: None,
+                expected_error: Some("CargoPackageMismatch"),
+            },
+            // 16. Python ModuleNotFoundError
+            ReplayCase {
+                command: "python labs/episodic-pyramid-slm/infer.py",
+                stdout: "",
+                stderr: "Traceback (most recent call last):\n  File \"labs/infer.py\", line 1, in <module>\nModuleNotFoundError: No module named 'torch'",
+                exit_code: 1,
+                expected_file: Some("labs/infer.py"),
+                expected_symbol: None,
+                expected_error: Some("ModuleNotFoundError"),
+            },
+            // 17. Python AttributeError
+            ReplayCase {
+                command: "python scripts/db_migration.py",
+                stdout: "",
+                stderr: "Traceback (most recent call last):\n  File \"scripts/db_migration.py\", line 42, in connect_pool\nAttributeError: 'NoneType' object has no attribute 'execute'",
+                exit_code: 1,
+                expected_file: Some("scripts/db_migration.py"),
+                expected_symbol: Some("connect_pool"),
+                expected_error: Some("AttributeError"),
+            },
+            // 18. Python TypeError
+            ReplayCase {
+                command: "python scripts/metrics.py",
+                stdout: "",
+                stderr: "Traceback (most recent call last):\n  File \"scripts/metrics.py\", line 15, in calculate_retention\nTypeError: unsupported operand type(s) for +: 'int' and 'str'",
+                exit_code: 1,
+                expected_file: Some("scripts/metrics.py"),
+                expected_symbol: Some("calculate_retention"),
+                expected_error: Some("TypeError"),
+            },
+            // 19. Python KeyError
+            ReplayCase {
+                command: "python labs/runner.py",
+                stdout: "",
+                stderr: "Traceback (most recent call last):\n  File \"labs/runner.py\", line 68, in parse_payload\nKeyError: 'session_id'",
+                exit_code: 1,
+                expected_file: Some("labs/runner.py"),
+                expected_symbol: Some("parse_payload"),
+                expected_error: Some("KeyError"),
+            },
+            // 20. Python IndexError
+            ReplayCase {
+                command: "python scripts/benchmark.py",
+                stdout: "",
+                stderr: "Traceback (most recent call last):\n  File \"scripts/benchmark.py\", line 33, in extract_top_p\nIndexError: list index out of range",
+                exit_code: 1,
+                expected_file: Some("scripts/benchmark.py"),
+                expected_symbol: Some("extract_top_p"),
+                expected_error: Some("IndexError"),
+            },
+            // 21. Python ValueError
+            ReplayCase {
+                command: "python labs/config.py",
+                stdout: "",
+                stderr: "Traceback (most recent call last):\n  File \"labs/config.py\", line 12, in load_port\nValueError: invalid literal for int() with base 10: 'abc'",
+                exit_code: 1,
+                expected_file: Some("labs/config.py"),
+                expected_symbol: Some("load_port"),
+                expected_error: Some("ValueError"),
+            },
+            // 22. Python FileNotFoundError
+            ReplayCase {
+                command: "python labs/loader.py",
+                stdout: "",
+                stderr: "Traceback (most recent call last):\n  File \"labs/loader.py\", line 20, in load_weights\nFileNotFoundError: [Errno 2] No such file or directory: 'model.bin'",
+                exit_code: 1,
+                expected_file: Some("labs/loader.py"),
+                expected_symbol: Some("load_weights"),
+                expected_error: Some("FileNotFoundError"),
+            },
+            // 23. Python ZeroDivisionError
+            ReplayCase {
+                command: "python scripts/eval.py",
+                stdout: "",
+                stderr: "Traceback (most recent call last):\n  File \"scripts/eval.py\", line 90, in compute_f1\nZeroDivisionError: division by zero",
+                exit_code: 1,
+                expected_file: Some("scripts/eval.py"),
+                expected_symbol: Some("compute_f1"),
+                expected_error: Some("ZeroDivisionError"),
+            },
+            // 24. Pytest assertion error
+            ReplayCase {
+                command: "pytest tests/test_auth.py",
+                stdout: "FAILED tests/test_auth.py::test_login_flow - AssertionError: assert 401 == 200",
+                stderr: "",
+                exit_code: 1,
+                expected_file: Some("tests/test_auth.py"),
+                expected_symbol: Some("test_login_flow"),
+                expected_error: Some("AssertionError"),
+            },
+            // 25. Pytest runtime error
+            ReplayCase {
+                command: "pytest tests/test_pyramid.py",
+                stdout: "FAILED tests/test_pyramid.py::test_slm_bridge - RuntimeError: CUDA out of memory",
+                stderr: "",
+                exit_code: 1,
+                expected_file: Some("tests/test_pyramid.py"),
+                expected_symbol: Some("test_slm_bridge"),
+                expected_error: Some("RuntimeError"),
+            },
+            // 26. TypeScript TS2322
+            ReplayCase {
+                command: "tsc --noEmit",
+                stdout: "src/index.ts(12,5): error TS2322: Type 'string' is not assignable to type 'number'.",
+                stderr: "",
+                exit_code: 2,
+                expected_file: Some("src/index.ts"),
+                expected_symbol: None,
+                expected_error: Some("TS2322"),
+            },
+            // 27. TypeScript TS2345
+            ReplayCase {
+                command: "tsc --noEmit",
+                stdout: "src/api.ts:25:7 - error TS2345: Argument of type 'number' is not assignable to parameter of type 'string'.",
+                stderr: "",
+                exit_code: 2,
+                expected_file: Some("src/api.ts"),
+                expected_symbol: None,
+                expected_error: Some("TS2345"),
+            },
+            // 28. TypeScript TS2554
+            ReplayCase {
+                command: "tsc --noEmit",
+                stdout: "src/client.ts(40,10): error TS2554: Expected 2 arguments, but got 1.",
+                stderr: "",
+                exit_code: 2,
+                expected_file: Some("src/client.ts"),
+                expected_symbol: None,
+                expected_error: Some("TS2554"),
+            },
+            // 29. Node MODULE_NOT_FOUND
+            ReplayCase {
+                command: "node packages/core/src/index.ts",
+                stdout: "",
+                stderr: "Error: Cannot find module '@strata/memory-core'\n    at Module._resolveFilename (node:internal/modules/cjs/loader:1077:15)",
+                exit_code: 1,
+                expected_file: None,
+                expected_symbol: None,
+                expected_error: Some("MODULE_NOT_FOUND"),
+            },
+            // 30. Node TypeError stack trace
+            ReplayCase {
+                command: "npm test",
+                stdout: "",
+                stderr: "TypeError: Cannot read properties of undefined (reading 'token')\n    at Object.processPayload (src/worker.ts:42:15)",
+                exit_code: 1,
+                expected_file: Some("src/worker.ts"),
+                expected_symbol: Some("processPayload"),
+                expected_error: Some("TypeError"),
+            },
+            // 31. Jest test failure
+            ReplayCase {
+                command: "jest tests",
+                stdout: "FAIL src/auth.test.ts\n  ● auth > should fail on bad password\n    expect(received).toBe(expected)",
+                stderr: "",
+                exit_code: 1,
+                expected_file: Some("src/auth.test.ts"),
+                expected_symbol: None,
+                expected_error: None,
+            },
+            // 32. Network EADDRINUSE port collision
+            ReplayCase {
+                command: "cargo run --bin server",
+                stdout: "",
+                stderr: "Error: listen EADDRINUSE: address already in use :::8080",
+                exit_code: 1,
+                expected_file: None,
+                expected_symbol: None,
+                expected_error: Some("EADDRINUSE"),
+            },
+        ];
+
+        assert!(dataset.len() >= 30, "Replay benchmark requires at least 30 real historical failures, got {}", dataset.len());
+
+        let store = Arc::new(SqliteStore::open_in_memory().expect("open memory store"));
+        let mut correct_precision_count = 0;
+        let mut parsed_patterns = Vec::new();
+
+        for case in &dataset {
+            let parsed = AntiPatternParser::parse(
+                case.command,
+                case.stdout,
+                case.stderr,
+                case.exit_code,
+                None,
+                None,
+            );
+            assert!(parsed.is_some(), "Parser failed to produce FailurePattern for: {}", case.command);
+            let p = parsed.unwrap();
+
+            // 1. Verify Precision of symbol/file/error extraction
+            let mut matched = false;
+            if let Some(expected_f) = case.expected_file {
+                if let Some(actual_f) = p.file_path() {
+                    if actual_f.contains(expected_f) || expected_f.contains(actual_f) {
+                        matched = true;
+                    }
+                }
+            }
+            if let Some(expected_s) = case.expected_symbol {
+                if let Some(actual_s) = p.symbol_name() {
+                    if actual_s.contains(expected_s) || expected_s.contains(actual_s) {
+                        matched = true;
+                    }
+                }
+            }
+            if let Some(expected_e) = case.expected_error {
+                let actual_e = p.error_class().unwrap_or(&p.error_type);
+                if actual_e.contains(expected_e) {
+                    matched = true;
+                }
+            }
+            if matched {
+                correct_precision_count += 1;
+            }
+
+            // 2. Verify Dual-Polarity (every pattern has either verified correction or structured mitigation)
+            assert!(
+                p.verified_correction().is_some() || !p.mitigation.is_empty(),
+                "Pattern must have verified_correction or mitigation"
+            );
+
+            // 3. Verify Surgical Guardrail token length (< 50 tokens)
+            let guardrail = AntiPatternParser::format_surgical_guardrail(&p);
+            let word_count = guardrail.split_whitespace().count();
+            // 1 word is approx 1.3 tokens; 40 words is <= 50 tokens
+            let est_tokens = (word_count as f64 * 1.3).ceil() as usize;
+            assert!(
+                est_tokens < 50,
+                "Surgical guardrail must be < 50 tokens, got {} tokens (words={}): '{}'",
+                est_tokens, word_count, guardrail
+            );
+
+            // Seed into SQLite store for latency benchmark
+            store.upsert_failure_pattern(&p).expect("upsert failure into store");
+            parsed_patterns.push(p);
+        }
+
+        // Calculate precision
+        let precision = (correct_precision_count as f64) / (dataset.len() as f64);
+        println!(
+            "Replay Benchmark Precision: {:.2}% ({}/{} failures matched target file/symbol/error)",
+            precision * 100.0,
+            correct_precision_count,
+            dataset.len()
+        );
+        assert!(
+            precision >= 0.80,
+            "Replay precision must be >= 80%, got {:.2}%",
+            precision * 100.0
+        );
+
+        // 4. Benchmark Deterministic Gate Latency (p95 < 10ms)
+        let mut latencies_us = Vec::with_capacity(1000);
+        for i in 0..1000 {
+            let pat = &parsed_patterns[i % parsed_patterns.len()];
+            let target_file = pat.file_path().unwrap_or("src/auth.rs");
+            let target_symbol = pat.symbol_name();
+
+            let start = std::time::Instant::now();
+            let _ = store.find_symbol_anti_patterns(target_file, target_symbol, 3).unwrap();
+            latencies_us.push(start.elapsed().as_micros());
+        }
+
+        latencies_us.sort_unstable();
+        let p50 = latencies_us[(latencies_us.len() * 50) / 100];
+        let p95 = latencies_us[(latencies_us.len() * 95) / 100];
+        let p99 = latencies_us[(latencies_us.len() * 99) / 100];
+
+        println!(
+            "Deterministic Gate Latency across 1,000 queries: p50={}µs, p95={}µs, p99={}µs",
+            p50, p95, p99
+        );
+        assert!(
+            p95 < 10_000,
+            "Gate latency p95 must be < 10ms (10,000µs), got {}µs",
+            p95
+        );
     }
 }

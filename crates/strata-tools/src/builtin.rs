@@ -1449,3 +1449,80 @@ impl Tool for CoreTierPromoteTool {
         }
     }
 }
+
+// =========================================================================
+// Symbol-Level Anti-Pattern Guard Tool (Deterministic Pre-Action Gate)
+// =========================================================================
+
+pub struct SymbolGuardTool {
+    engine: Arc<dyn MemoryEngine>,
+}
+
+impl SymbolGuardTool {
+    pub fn new(engine: Arc<dyn MemoryEngine>) -> Self {
+        Self { engine }
+    }
+}
+
+#[async_trait]
+impl Tool for SymbolGuardTool {
+    fn name(&self) -> &str {
+        "symbol_guard"
+    }
+
+    fn description(&self) -> &str {
+        "Deterministic pre-action gate (<10ms): checks if a target file or symbol has known failure anti-patterns and returns surgical advisory guardrails (<50 tokens) with dual-polarity verified corrections."
+    }
+
+    fn parameters_schema(&self) -> serde_json::Value {
+        json!({
+            "type": "object",
+            "properties": {
+                "file": {
+                    "type": "string",
+                    "description": "Target file path being edited or inspected"
+                },
+                "symbol": {
+                    "type": "string",
+                    "description": "Optional function, struct, or symbol name"
+                },
+                "limit": {
+                    "type": "integer",
+                    "description": "Maximum number of anti-patterns to return (default: 3)"
+                }
+            },
+            "required": ["file"]
+        })
+    }
+
+    async fn execute(&self, params: serde_json::Value) -> Result<serde_json::Value, StrataError> {
+        let file = params
+            .get("file")
+            .and_then(|v| v.as_str())
+            .ok_or_else(|| StrataError::ValidationError("Missing 'file' parameter".to_string()))?;
+
+        let symbol = params.get("symbol").and_then(|v| v.as_str());
+        let limit = params.get("limit").and_then(|v| v.as_u64()).unwrap_or(3) as usize;
+
+        let start = Instant::now();
+        let anti_patterns = self.engine.get_symbol_anti_patterns(file, symbol, limit).await?;
+        let duration_us = start.elapsed().as_micros();
+
+        let advisory_guardrails: Vec<String> = anti_patterns
+            .iter()
+            .map(crate::interceptor::AntiPatternParser::format_surgical_guardrail)
+            .collect();
+
+        Ok(json!({
+            "status": "success",
+            "file": file,
+            "symbol": symbol,
+            "has_anti_patterns": !anti_patterns.is_empty(),
+            "count": anti_patterns.len(),
+            "latency_us": duration_us,
+            "advisory_guardrails": advisory_guardrails,
+            "anti_patterns": anti_patterns,
+        }))
+    }
+}
+

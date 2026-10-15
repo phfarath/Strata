@@ -29,16 +29,212 @@ pub struct AntiPatternParser;
 impl AntiPatternParser {
     /// Formats an actionable constraint into a surgical guardrail (< 50 tokens).
     pub fn format_surgical_guardrail(pattern: &FailurePattern) -> String {
-        format!(
-            "[KNOWN ANTI-PATTERN]: {} | Mitigation: {} (Target: {})",
-            pattern
+        let target = match (pattern.file_path(), pattern.symbol_name()) {
+            (Some(f), Some(s)) if !f.is_empty() && !s.is_empty() => format!("{f}::{s}"),
+            (Some(f), _) if !f.is_empty() => f.to_string(),
+            (_, Some(s)) if !s.is_empty() => s.to_string(),
+            _ => pattern
                 .description
                 .lines()
                 .next()
-                .unwrap_or(&pattern.pattern_name),
-            pattern.mitigation,
-            pattern.trigger_condition
-        )
+                .unwrap_or(&pattern.pattern_name)
+                .to_string(),
+        };
+
+        let err = pattern
+            .error_class()
+            .unwrap_or(&pattern.error_type);
+
+        let action = if let Some(corr) = pattern.verified_correction() {
+            format!("Verified Correction: {corr}")
+        } else {
+            format!("Mitigation: {}", pattern.mitigation)
+        };
+
+        let raw = format!("[KNOWN ANTI-PATTERN]: {target} ({err}) | {action}");
+        truncate_surgical_guardrail(&raw, 45)
+    }
+
+    /// Extracts (file, symbol, error_class) from compiler, runtime or test output.
+    pub fn extract_symbol_anchor(output: &str) -> (Option<String>, Option<String>, Option<String>) {
+        let mut file = None;
+        let mut symbol = None;
+        let mut error_class = None;
+
+        for line in output.lines() {
+            let trimmed = line.trim();
+
+            // 1. Error Class Extraction
+            if error_class.is_none() {
+                if let Some(pos) = trimmed.find("error[E") {
+                    if let Some(end) = trimmed[pos..].find(']') {
+                        error_class = Some(trimmed[pos + 6..pos + end].to_string());
+                    }
+                } else if trimmed.contains("error TS") {
+                    if let Some(pos) = trimmed.find("error TS") {
+                        let sub = &trimmed[pos + 8..];
+                        let code: String = sub.chars().take_while(|c| c.is_ascii_digit()).collect();
+                        if !code.is_empty() {
+                            error_class = Some(format!("TS{code}"));
+                        }
+                    }
+                } else if trimmed.contains("panicked at") || trimmed.contains("assertion `left == right` failed") {
+                    error_class = Some("AssertionFailure".to_string());
+                } else if let Some(py_err) = extract_python_error_class(trimmed) {
+                    error_class = Some(py_err);
+                } else if trimmed.contains("MODULE_NOT_FOUND") || trimmed.contains("Cannot find module") {
+                    error_class = Some("MODULE_NOT_FOUND".to_string());
+                } else if trimmed.contains("EADDRINUSE") || trimmed.contains("Address already in use") {
+                    error_class = Some("EADDRINUSE".to_string());
+                }
+            }
+
+            // 2. File Extraction
+            if file.is_none() {
+                if let Some(pos) = trimmed.find("--> ") {
+                    let path_part = trimmed[pos + 4..].trim_start();
+                    let f = path_part.split(':').next().unwrap_or("").trim();
+                    if !f.is_empty() {
+                        file = Some(normalize_file_path(f));
+                    }
+                } else if trimmed.starts_with("File \"") {
+                    if let Some(end_quote) = trimmed[6..].find('\"') {
+                        let f = &trimmed[6..6 + end_quote];
+                        file = Some(normalize_file_path(f));
+                    }
+                } else if trimmed.contains(".py::") {
+                    if let Some(idx) = trimmed.find(".py::") {
+                        let word_start = trimmed[..idx]
+                            .rfind(|c: char| c.is_whitespace())
+                            .map(|p| p + 1)
+                            .unwrap_or(0);
+                        let f = &trimmed[word_start..idx + 3];
+                        file = Some(normalize_file_path(f));
+                    }
+                } else if trimmed.contains("panicked at") {
+                    if let Some(comma_idx) = trimmed.rfind(',') {
+                        let candidate = trimmed[comma_idx + 1..].trim();
+                        if candidate.contains(".rs:") {
+                            let f = candidate.split(':').next().unwrap_or("").trim();
+                            if !f.is_empty() {
+                                file = Some(normalize_file_path(f));
+                            }
+                        }
+                    } else if let Some(at_idx) = trimmed.find("panicked at ") {
+                        let candidate = trimmed[at_idx + 12..].trim();
+                        if candidate.contains(".rs:") {
+                            let f = candidate.split(':').next().unwrap_or("").trim();
+                            if !f.is_empty() {
+                                file = Some(normalize_file_path(f));
+                            }
+                        }
+                    }
+                } else if trimmed.contains(".ts") || trimmed.contains(".js") || trimmed.contains(".tsx") || trimmed.contains(".jsx") {
+                    if let Some(f) = extract_js_ts_file(trimmed) {
+                        file = Some(normalize_file_path(&f));
+                    }
+                }
+            }
+
+            // 3. Symbol Extraction
+            if symbol.is_none() {
+                if trimmed.contains(", in ") {
+                    if let Some(in_idx) = trimmed.find(", in ") {
+                        let sym = trimmed[in_idx + 5..].trim();
+                        let clean_sym = sym
+                            .chars()
+                            .take_while(|c| c.is_alphanumeric() || *c == '_')
+                            .collect::<String>();
+                        if !clean_sym.is_empty() {
+                            symbol = Some(clean_sym);
+                        }
+                    }
+                } else if trimmed.contains("::") && (trimmed.contains(".py::") || trimmed.contains("FAILED") || trimmed.contains("test ")) {
+                    if let Some(colons) = trimmed.find("::") {
+                        let after = &trimmed[colons + 2..];
+                        let sym: String = after
+                            .chars()
+                            .take_while(|c| c.is_alphanumeric() || *c == '_' || *c == ':')
+                            .collect();
+                        if !sym.is_empty() {
+                            symbol = Some(sym);
+                        }
+                    }
+                } else if trimmed.starts_with("test ") && trimmed.contains(" ... FAILED") {
+                    let sym = &trimmed[5..trimmed.find(" ... FAILED").unwrap()].trim();
+                    symbol = Some(sym.to_string());
+                } else if trimmed.starts_with("thread '") && trimmed.contains("' panicked") {
+                    if let Some(end_q) = trimmed[8..].find('\'') {
+                        symbol = Some(trimmed[8..8 + end_q].to_string());
+                    }
+                } else if trimmed.contains("in initializer of `") {
+                    if let Some(st) = trimmed.find("in initializer of `") {
+                        let sub = &trimmed[st + 19..];
+                        if let Some(end) = sub.find('`') {
+                            symbol = Some(sub[..end].to_string());
+                        }
+                    }
+                } else if trimmed.contains("no method named `") && trimmed.contains("` found for ") {
+                    let m_start = trimmed.find("no method named `").unwrap() + 17;
+                    if let Some(m_end) = trimmed[m_start..].find('`') {
+                        let method = &trimmed[m_start..m_start + m_end];
+                        if let Some(f_idx) = trimmed.find("found for ") {
+                            let after_for = &trimmed[f_idx + 10..];
+                            if let Some(bt_start) = after_for.find('`') {
+                                if let Some(bt_end) = after_for[bt_start + 1..].find('`') {
+                                    let ty = &after_for[bt_start + 1..bt_start + 1 + bt_end];
+                                    symbol = Some(format!("{ty}::{method}"));
+                                }
+                            }
+                        }
+                        if symbol.is_none() {
+                            symbol = Some(method.to_string());
+                        }
+                    }
+                } else if trimmed.contains("cannot borrow `") && trimmed.contains("` as mutable") {
+                    let start_b = trimmed.find("cannot borrow `").unwrap() + 15;
+                    if let Some(end_b) = trimmed[start_b..].find('`') {
+                        symbol = Some(trimmed[start_b..start_b + end_b].to_string());
+                    }
+                } else if trimmed.starts_with("at ") {
+                    if let Some(open_p) = trimmed.find('(') {
+                        let func_part = trimmed[3..open_p].trim();
+                        let clean = func_part.trim_start_matches("async ").trim_start_matches("Object.");
+                        if !clean.is_empty() && !clean.contains('/') && !clean.contains('\\') {
+                            symbol = Some(clean.to_string());
+                        }
+                    }
+                }
+            }
+        }
+
+        (file, symbol, error_class)
+    }
+
+    /// Suggests verified correction for known error classes (Dual-Polarity).
+    pub fn suggest_verified_correction(error_class_or_type: &str, signature: &str) -> Option<&'static str> {
+        let key = error_class_or_type.to_uppercase();
+        if key.contains("E0502") || key.contains("BORROW") {
+            Some("Clone reference or narrow mutable borrow scope before await")
+        } else if key.contains("E0063") || key.contains("INITIALIZER") {
+            Some("Initialize all required struct fields or derive Default")
+        } else if key.contains("E0433") || key.contains("E0425") || key.contains("UNDECLARED") {
+            Some("Import missing symbol with `use` or verify crate dependencies")
+        } else if key.contains("E0308") || key.contains("MISMATCH") {
+            Some("Convert value with .into() or align expression type with signature")
+        } else if key.contains("E0599") || key.contains("NOMETHOD") {
+            Some("Implement required trait or check method name on type")
+        } else if key.contains("TS2322") || key.contains("TS2345") {
+            Some("Align type assignment or update interface type definition")
+        } else if key.contains("MODULENOTFOUND") || key.contains("MODULE_NOT_FOUND") {
+            Some("Install missing package in workspace or virtual environment")
+        } else if key.contains("EADDRINUSE") || key.contains("PORT") {
+            Some("Bind dynamically to PORT environment variable instead of static port")
+        } else if key.contains("ASSERTION") || signature.contains("test_failure") || signature.contains("pytest") {
+            Some("Align test assertion with actual returned value")
+        } else {
+            None
+        }
     }
 
     /// Analyzes command execution error and synthesizes a structured FailurePattern.
@@ -57,57 +253,72 @@ impl AntiPatternParser {
         let combined = format!("{stderr}\n{stdout}");
         let cmd_lower = command.to_lowercase();
 
-        // 1. Rust / Cargo test & build errors
+        let mut parsed_pattern = None;
+
         if cmd_lower.contains("cargo") || cmd_lower.contains("rustc") {
-            if let Some(fp) = Self::parse_rust_error(command, &combined, context, scope.clone()) {
-                return Some(fp);
-            }
+            parsed_pattern = Self::parse_rust_error(command, &combined, context, scope.clone());
         }
 
-        // 2. Node / NPM / Jest / Vitest / TSC errors
-        if cmd_lower.contains("npm")
-            || cmd_lower.contains("npx")
-            || cmd_lower.contains("yarn")
-            || cmd_lower.contains("pnpm")
-            || cmd_lower.contains("jest")
-            || cmd_lower.contains("vitest")
-            || cmd_lower.contains("tsc")
+        if parsed_pattern.is_none()
+            && (cmd_lower.contains("npm")
+                || cmd_lower.contains("npx")
+                || cmd_lower.contains("yarn")
+                || cmd_lower.contains("pnpm")
+                || cmd_lower.contains("jest")
+                || cmd_lower.contains("vitest")
+                || cmd_lower.contains("tsc"))
         {
-            if let Some(fp) = Self::parse_npm_error(command, &combined, context, scope.clone()) {
-                return Some(fp);
-            }
+            parsed_pattern = Self::parse_npm_error(command, &combined, context, scope.clone());
         }
 
-        // 3. Python / Pytest errors
-        if cmd_lower.contains("pytest") || cmd_lower.contains("python") || cmd_lower.contains("py")
+        if parsed_pattern.is_none()
+            && (cmd_lower.contains("pytest") || cmd_lower.contains("python") || cmd_lower.contains("py"))
         {
-            if let Some(fp) = Self::parse_python_error(command, &combined, context, scope.clone()) {
-                return Some(fp);
-            }
+            parsed_pattern = Self::parse_python_error(command, &combined, context, scope.clone());
         }
 
-        // 4. Port / Network / Docker conflicts
-        if combined.contains("Address already in use") || combined.contains("EADDRINUSE") {
-            let mut pattern = FailurePattern::new(
+        if parsed_pattern.is_none()
+            && (combined.contains("Address already in use") || combined.contains("EADDRINUSE"))
+        {
+            let mut p = FailurePattern::new(
                 "network_port_collision",
                 "Port Binding Collision",
                 "Address already in use / Static port collision",
                 "DO NOT hardcode static PORT. Always bind dynamically to std::env::var(\"PORT\") or random free port.",
             );
-            pattern.error_type = "PortCollisionError".to_string();
-            pattern.trigger_condition = command.to_string();
-            pattern.severity = FailureSeverity::High;
-            if let Some(s) = scope {
-                pattern.scope = s;
+            p.error_type = "PortCollisionError".to_string();
+            p.trigger_condition = command.to_string();
+            p.severity = FailureSeverity::High;
+            if let Some(s) = scope.clone() {
+                p.scope = s;
             }
             if let Some(ctx) = context {
-                pattern.metadata = serde_json::json!({ "context": ctx });
+                p.metadata = serde_json::json!({ "context": ctx });
             }
-            return Some(pattern);
+            parsed_pattern = Some(p);
         }
 
-        // 5. Generic Fallback Parser
-        Self::parse_generic_error(command, &combined, exit_code, context, scope)
+        let mut pattern = match parsed_pattern {
+            Some(p) => p,
+            None => Self::parse_generic_error(command, &combined, exit_code, context, scope.clone())?,
+        };
+
+        // Extract and anchor to symbol/file
+        let (file, symbol, error_class) = Self::extract_symbol_anchor(&combined);
+        if file.is_some() || symbol.is_some() || error_class.is_some() {
+            let f = file.unwrap_or_default();
+            pattern = pattern.with_symbol_anchor(f, symbol.as_deref(), error_class.as_deref());
+        }
+
+        // Dual-polarity: attach verified correction when available
+        if pattern.verified_correction().is_none() {
+            let err_class = pattern.error_class().unwrap_or(&pattern.error_type);
+            if let Some(corr) = Self::suggest_verified_correction(err_class, &pattern.signature) {
+                pattern = pattern.with_verified_correction(corr);
+            }
+        }
+
+        Some(pattern)
     }
 
     fn parse_rust_error(
@@ -588,3 +799,64 @@ impl CommandInterceptor {
         }
     }
 }
+
+fn truncate_surgical_guardrail(text: &str, max_tokens: usize) -> String {
+    let words: Vec<&str> = text.split_whitespace().collect();
+    let max_words = (max_tokens * 8) / 10;
+    if words.len() <= max_words {
+        text.to_string()
+    } else {
+        let truncated = words[..max_words].join(" ");
+        format!("{truncated}...")
+    }
+}
+
+fn normalize_file_path(p: &str) -> String {
+    let cleaned = p.trim().trim_matches(|c| c == '\'' || c == '\"' || c == '(' || c == ')' || c == ':');
+    let replaced = cleaned.replace('\\', "/");
+    replaced.trim_start_matches("./").to_string()
+}
+
+fn extract_python_error_class(line: &str) -> Option<String> {
+    let candidates = [
+        "AssertionError",
+        "ModuleNotFoundError",
+        "ImportError",
+        "AttributeError",
+        "TypeError",
+        "KeyError",
+        "IndexError",
+        "ValueError",
+        "ZeroDivisionError",
+        "RuntimeError",
+        "NameError",
+        "FileNotFoundError",
+        "PermissionError",
+        "TimeoutError",
+    ];
+    for &c in &candidates {
+        if line.contains(c) {
+            return Some(c.to_string());
+        }
+    }
+    None
+}
+
+fn extract_js_ts_file(line: &str) -> Option<String> {
+    let exts = [".ts", ".tsx", ".js", ".jsx", ".mjs", ".cjs"];
+    for ext in exts {
+        if let Some(ext_idx) = line.find(ext) {
+            let after_ext = ext_idx + ext.len();
+            let start = line[..ext_idx]
+                .rfind(|c: char| c.is_whitespace() || c == '(' || c == '"' || c == '\'')
+                .map(|p| p + 1)
+                .unwrap_or(0);
+            let path = &line[start..after_ext];
+            if !path.is_empty() && (path.contains('/') || path.contains('\\') || path.ends_with(ext)) {
+                return Some(path.to_string());
+            }
+        }
+    }
+    None
+}
+

@@ -429,6 +429,58 @@ impl FailurePattern {
             metadata: serde_json::Value::Null,
         }
     }
+
+    pub fn with_symbol_anchor(
+        mut self,
+        file: impl Into<String>,
+        symbol: Option<impl Into<String>>,
+        error_class: Option<impl Into<String>>,
+    ) -> Self {
+        let mut map = match self.metadata {
+            serde_json::Value::Object(m) => m,
+            _ => serde_json::Map::new(),
+        };
+        let norm_file = file.into().replace('\\', "/");
+        let norm_file = norm_file.trim_start_matches("./").to_string();
+        map.insert("file".to_string(), serde_json::Value::String(norm_file));
+        if let Some(s) = symbol {
+            map.insert("symbol".to_string(), serde_json::Value::String(s.into()));
+        }
+        if let Some(ec) = error_class {
+            map.insert("error_class".to_string(), serde_json::Value::String(ec.into()));
+        }
+        self.metadata = serde_json::Value::Object(map);
+        self
+    }
+
+    pub fn with_verified_correction(mut self, correction: impl Into<String>) -> Self {
+        let mut map = match self.metadata {
+            serde_json::Value::Object(m) => m,
+            _ => serde_json::Map::new(),
+        };
+        map.insert(
+            "verified_correction".to_string(),
+            serde_json::Value::String(correction.into()),
+        );
+        self.metadata = serde_json::Value::Object(map);
+        self
+    }
+
+    pub fn file_path(&self) -> Option<&str> {
+        self.metadata.get("file").and_then(|v| v.as_str())
+    }
+
+    pub fn symbol_name(&self) -> Option<&str> {
+        self.metadata.get("symbol").and_then(|v| v.as_str())
+    }
+
+    pub fn error_class(&self) -> Option<&str> {
+        self.metadata.get("error_class").and_then(|v| v.as_str())
+    }
+
+    pub fn verified_correction(&self) -> Option<&str> {
+        self.metadata.get("verified_correction").and_then(|v| v.as_str())
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -538,5 +590,25 @@ mod tests {
         assert_eq!(serialized, "\"core\"");
         let deserialized: MemoryTier = serde_json::from_str(&serialized).unwrap();
         assert_eq!(deserialized, MemoryTier::Core);
+    }
+
+    #[test]
+    fn test_failure_pattern_symbol_anchor_and_dual_polarity() {
+        let pattern = FailurePattern::new(
+            "borrow_error",
+            "Borrow checker conflict",
+            "cannot borrow as mutable",
+            "Separate borrow scopes",
+        )
+        .with_symbol_anchor(r".\src\auth.rs", Some("login_handler"), Some("E0502"))
+        .with_verified_correction("Clone the token reference before passing into async block");
+
+        assert_eq!(pattern.file_path(), Some("src/auth.rs"));
+        assert_eq!(pattern.symbol_name(), Some("login_handler"));
+        assert_eq!(pattern.error_class(), Some("E0502"));
+        assert_eq!(
+            pattern.verified_correction(),
+            Some("Clone the token reference before passing into async block")
+        );
     }
 }
