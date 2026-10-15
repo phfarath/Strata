@@ -6,6 +6,7 @@
 .DS_Store
 Thumbs.db
 *.jsonl
+!labs/episodic-pyramid-slm/data/*.jsonl
 *.db
 *.db-shm
 *.db-wal

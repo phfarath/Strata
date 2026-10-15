@@ -1,0 +1,110 @@
+{
+  "resumo": {
+    "n": 12,
+    "acerto_total_%": 50.0,
+    "acerto_factual_%": 80.0,
+    "acerto_sintese_%": 50.0,
+    "abstencao_correta_%": 0.0,
+    "abstencao_indevida_%": 0.0,
+    "latencia_media_s": 5.78,
+    "rota": "lora_r16_t23"
+  },
+  "detalhes": [
+    {
+      "id": 1,
+      "tipo": "factual",
+      "nivel": "t1_to_t2",
+      "acertou": true,
+      "absteve": false,
+      "resposta": "Milestone: Tokenization and Authorization with JWKS\n\nEpisódio Auth: Tokenization de usuário e senha, usando JWT com keypair RSA, Claims RS256, JWKS em /.well-known/jwks.json.\n\nOutcomes: Tokenization de usuário e senha, revogação de usuário em Redis, uso de JWKS para revogação. Falhas relevantes: uso de HS256, uso de Redis."
+    },
+    {
+      "id": 2,
+      "tipo": "factual",
+      "nivel": "t1_to_t2",
+      "acertou": true,
+      "absteve": false,
+      "resposta": "Milestone: \"Executor-based concurrent execution with high throughput and low latency\"\n\nCluster: \"WAL + busy_timeout, pool R2D2 16 readers, single-writer Mutex, falha DeadlockTimeout sob 100 writers, backoff jitter, métricas Prometheus\"\n\nOutcomes:\n- High throughput: 1000 transactions per second\n- Low latency: 100ms\n- High availability: 99.9% uptime\n- High reliability: 99.9% write success rate\n\nFalhas relevantes:\n- DeadlockTimeout: 100 writers\n- Busy_Timeout: 100 writers\n- Pool_Size: 16 readers\n- Mutex_Size: 16 readers\n- Backoff_Jitter: 10ms\n- Prometheus_Metric: 100 writers"
+    },
+    {
+      "id": 3,
+      "tipo": "factual",
+      "nivel": "t1_to_t2",
+      "acertou": true,
+      "absteve": false,
+      "resposta": "Milestone: \"Executor pipeline: batch 50 (Kafka, SKIP LOCKED, batch 3 retries)\" Tier 2: \"Batch 50 (Kafka, SKIP LOCKED, batch 3 retries)\""
+    },
+    {
+      "id": 4,
+      "tipo": "sintese",
+      "nivel": "t1_to_t2",
+      "acertou": false,
+      "absteve": false,
+      "resposta": "No cluster SQLite, o cluster SQLite é episódico de execução SQLite. Se o cluster estiver vazio ou não for episódico, o milestone Tier 2 deve ser:\n\n- Traces de execução SQLite: o cluster SQLite é episódico de execução SQLite. Se o cluster estiver vazio ou não for episódico, o milestone Tier 2 deve ser:\n  - Traces de execução SQLite: o cluster SQLite é episódico de execução SQLite. Se o cluster estiver vazio ou não for episódico, o milestone Tier 2 deve ser:\n  - Traces de execução SQLite: o cluster SQLite é episódico de execução SQLite. Se o cluster estiver vazio ou não for episódico, o milestone Tier 2 deve ser:\n  - Traces de execução SQLite: o cluster"
+    },
+    {
+      "id": 5,
+      "tipo": "sintese",
+      "nivel": "t2_to_t3",
+      "acertou": true,
+      "absteve": false,
+      "resposta": "Concluído:\n\nSe o usuário for autenticado com JWT RS256, o pool de pool SQLite com falha de carga e o outbox Kafka com outbox Kafka for cadastrados, o arco da sessão será:\n\n\"Auth JWT RS256 pool SQLite falha de carga outbox Kafka\"\n\nDesafio: Se o usuário for CDC outbox Kafka, o arco da sessão será:\n\n\"Auth JWT RS256 pool SQLite CDC outbox Kafka\"\n\nRiscos remanescentes:\n\n\"Auth JWT RS256 pool SQLite falha de carga outbox Kafka CDC outbox Kafka\"\n\nAjuda: Se o usuário for autenticado com JWT RS256, o pool de pool SQLite com falha de carga outbox Kafka for cadastrados, o arco da"
+    },
+    {
+      "id": 6,
+      "tipo": "sintese",
+      "nivel": "t1_to_t2",
+      "acertou": true,
+      "absteve": false,
+      "resposta": "O template heurístico '[Milestone Rollup] <medoid> | Invariants: N outcomes, M files' é insuficiente comparado a resumo gerado por SLM pois ele não inclui o tipo de resumo gerado por SLM. Se o cluster estiver vazio ou não for episódico, o resumo gerado por SLM é mais seguro."
+    },
+    {
+      "id": 7,
+      "tipo": "armadilha",
+      "nivel": "t1_to_t2",
+      "acertou": false,
+      "absteve": false,
+      "resposta": "Episódio: migração PostgreSQL sharding\n\nOutcomes:\n- Citus: Citus é a versão de sharding de PostgreSQL.\n- Rebalanceamento online de shards: Se o cluster estiver vazio ou não for episódico, o cluster é rebalanceado online de shards.\n\nFalhas relevantes:\n- Citus: Se o cluster estiver vazio ou não for episódico, o cluster não é criadável.\n- Rebalanceamento online de shards: Se o cluster estiver vazio ou não for episódico, o cluster não é rebalanceado online de shards."
+    },
+    {
+      "id": 8,
+      "tipo": "armadilha",
+      "nivel": "t1_to_t2",
+      "acertou": false,
+      "absteve": false,
+      "resposta": "Episódio: Task-graphql-federation\n\nMilestone: Federated GraphQL\n\nOutcomes:\n- Implement a GraphQL schema that supports multi-source queries and supports schema validation.\n- Implement a GraphQL resolver that supports multi-source queries and supports schema validation.\n- Implement a GraphQL query processor that supports multi-source queries and supports schema validation.\n\nFalhas relevantes:\n- Implement a GraphQL resolver that supports multi-source queries and supports schema validation.\n- Implement a GraphQL query processor that supports multi-source queries and supports schema validation.\n- Implement a GraphQL schema that supports multi-source queries and supports schema validation.\n\nMilestone: Federated GraphQL\n\nOutcomes:\n- Implement a GraphQL schema that supports multi-source queries and supports schema validation.\n- Implement a GraphQL resolver that supports multi-source queries and supports schema validation.\n- Implement a GraphQL query processor that supports multi-source queries and supports schema validation.\n\nF"
+    },
+    {
+      "id": 9,
+      "tipo": "factual",
+      "nivel": "t1_to_t2",
+      "acertou": false,
+      "absteve": false,
+      "resposta": "Se o cluster estiver vazio ou não for episódico, diga que não sabe."
+    },
+    {
+      "id": 10,
+      "tipo": "factual",
+      "nivel": "t1_to_t2",
+      "acertou": true,
+      "absteve": false,
+      "resposta": "Se o cluster estiver vazio ou não for episódico, diga que não sabe. Se o cluster estiver vazio, o resumo de milestone Tier 2 deve ser: \"Não sabe o que o cluster estiver vazio ou não for episódico.\" Se o cluster estiver episódico, o resumo de milestone Tier 2 deve ser: \"SKIP LOCKED é o tipo de lock que o cluster usa para evitar o erro de lock locked.\""
+    },
+    {
+      "id": 11,
+      "tipo": "sintese",
+      "nivel": "t2_to_t3",
+      "acertou": false,
+      "absteve": false,
+      "resposta": "Então, o comprimido é o processo de crescimento de memória episódica. Se o comprimido for crescido, o arco de memória é reduzido e o comprimido é reduzido. Se o comprimido for reduzido, o arco de memória é reduzido e o comprimido é reduzido. Se o comprimido for reduzido, o comprimido é reduzido. Se o comprimido for reduzido, o comprimido é reduzido. Se o comprimido for reduzido, o comprimido é reduzido. Se o comprimido for reduzido, o comprimido é reduzido. Se o comprimido for reduzido, o comprimido é reduzido. Se o comprimido for reduzido, o comprimido é reduzido. Se o comprimido for reduzido, o comprimido é reduz"
+    },
+    {
+      "id": 12,
+      "tipo": "armadilha",
+      "nivel": "t1_to_t2",
+      "acertou": false,
+      "absteve": false,
+      "resposta": "Episódios Tier 1:\n\n- Criou um cluster de 1000 episódios de bazel remoto.\n- Criou um arquivo de teste de bazel remoto.\n- Criou um arquivo de teste de bazel remoto.\n- Criou um arquivo de teste de bazel remoto.\n- Criou um arquivo de teste de bazel remoto.\n- Criou um arquivo de teste de bazel remoto.\n- Criou um arquivo de teste de bazel remoto.\n- Criou um arquivo de teste de bazel remoto.\n- Criou um arquivo de teste de bazel remoto.\n- Criou um arquivo de teste de bazel remoto.\n- Criou um arquivo de teste de baz"
+    }
+  ]
+}

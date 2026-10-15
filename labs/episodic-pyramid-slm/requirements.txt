@@ -1,0 +1,16 @@
+# IMPORTANTE: instale o PyTorch ANTES, com o índice CUDA correto:
+#
+#   pip install torch --index-url https://download.pytorch.org/whl/cu128
+#
+# Confira em https://pytorch.org/get-started/locally/
+# Sem o --index-url você recebe a build CPU.
+
+transformers>=4.46
+datasets>=3.0
+accelerate>=1.0
+peft>=0.13
+trl>=0.12
+numpy
+matplotlib
+huggingface_hub[cli]
+gradio>=4.0

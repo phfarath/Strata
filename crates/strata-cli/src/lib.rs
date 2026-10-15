@@ -1370,12 +1370,15 @@ export function login(username: string): boolean {
         store.write_episode(&ep1).unwrap();
         store.write_episode(&ep2).unwrap();
 
-        // 2. Test CLI Rollup
+        // 2. Test CLI Rollup (Tier 1 -> Tier 2)
         let cli_rollup_args = EpisodeArgs {
             command: EpisodeCommand::Rollup {
                 session: Some("sess-pyr".to_string()),
                 min_cluster: 2,
                 similarity: 0.70,
+                slm_narrative: false,
+                adapter_path: None,
+                python_bin: None,
                 json: true,
             },
         };
@@ -1384,6 +1387,24 @@ export function login(username: string): boolean {
         let rollups = store.list_episodes_by_tier(2, Some("sess-pyr"), 10).unwrap();
         assert_eq!(rollups.len(), 1);
         let rollup_id = rollups[0].id;
+
+        // 2b. Test CLI Rollup with --slm-narrative (Tier 2 -> Tier 3)
+        let cli_rollup_slm_args = EpisodeArgs {
+            command: EpisodeCommand::Rollup {
+                session: Some("sess-pyr".to_string()),
+                min_cluster: 2,
+                similarity: 0.70,
+                slm_narrative: true,
+                adapter_path: None,
+                python_bin: None,
+                json: true,
+            },
+        };
+        assert!(run_episode(cli_rollup_slm_args, Arc::clone(&store)).await.is_ok());
+        let tier3_list = store.list_episodes_by_tier(3, Some("sess-pyr"), 10).unwrap();
+        assert_eq!(tier3_list.len(), 1);
+        assert_eq!(tier3_list[0].tier, 3);
+        assert!(tier3_list[0].summary.starts_with("Narrativa:"));
 
         // 3. Test CLI DrillDown (both json and ascii)
         let cli_drill_json = EpisodeArgs {
