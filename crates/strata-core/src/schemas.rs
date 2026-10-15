@@ -633,6 +633,9 @@ impl SemanticFact {
 
     /// Check if this semantic fact matches or is accessible from a specific Git branch.
     pub fn matches_branch(&self, branch: &str) -> bool {
+        if branch == "*" || branch == "all" {
+            return true;
+        }
         self.code_anchor
             .as_ref()
             .map(|a| a.matches_branch(branch))
@@ -1716,6 +1719,9 @@ impl CodeAnchor {
     }
 
     pub fn matches_branch(&self, branch: &str) -> bool {
+        if branch == "*" || branch == "all" {
+            return true;
+        }
         match self.git_branch.as_deref() {
             Some(b) => b == branch || b == "main" || b == "master",
             None => true,

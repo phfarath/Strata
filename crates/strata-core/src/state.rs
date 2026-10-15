@@ -392,6 +392,9 @@ impl MemoryRecord {
     /// Check if this memory record matches or is accessible from a specific Git branch.
     /// Memories on 'main', 'master', or unassigned branch are considered baseline and accessible.
     pub fn matches_branch(&self, branch: &str) -> bool {
+        if branch == "*" || branch == "all" {
+            return true;
+        }
         match self.git_branch() {
             Some(b) => b == branch || b == "main" || b == "master",
             None => true,

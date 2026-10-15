@@ -502,10 +502,18 @@ impl WorkspaceBoundaryDetector {
 /// Attempts to detect the active Git branch of the workspace.
 /// Fast path reads .git/HEAD directly without spawning a subshell (< 1ms).
 pub fn detect_git_branch(root: &Path) -> Option<String> {
-    let mut curr = if root.is_file() {
-        root.parent().unwrap_or(root).to_path_buf()
+    let base_dir = if root.is_file() {
+        root.parent().unwrap_or(root)
     } else {
-        root.to_path_buf()
+        root
+    };
+
+    let mut curr = if base_dir.is_relative() {
+        std::env::current_dir()
+            .map(|cwd| cwd.join(base_dir))
+            .unwrap_or_else(|_| base_dir.to_path_buf())
+    } else {
+        base_dir.to_path_buf()
     };
 
     loop {
@@ -544,7 +552,7 @@ pub fn detect_git_branch(root: &Path) -> Option<String> {
     // Fallback: spawn `git rev-parse --abbrev-ref HEAD`
     if let Ok(output) = std::process::Command::new("git")
         .args(["rev-parse", "--abbrev-ref", "HEAD"])
-        .current_dir(root)
+        .current_dir(base_dir)
         .output()
     {
         if output.status.success() {
