@@ -6,7 +6,9 @@ use uuid::Uuid;
 
 use crate::ast::LanguageKind;
 use crate::call_graph::{CallEdge, CallGraph, CallGraphAnalyzer, CallType};
+use crate::store::SqliteStore;
 use strata_core::errors::StrataError;
+use strata_core::state::{MemoryRecord, Scope};
 
 /// Type of member node inside an architectural cluster.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
@@ -66,6 +68,18 @@ pub struct ArchitectureCluster {
     pub summary: Option<String>,
 }
 
+impl ArchitectureCluster {
+    /// Returns members that have outgoing connections to other clusters (bridge nodes).
+    pub fn bridge_members(&self) -> Vec<&ClusterMember> {
+        self.members.iter().filter(|m| m.external_degree > 0).collect()
+    }
+
+    /// Returns list of target cluster IDs this cluster depends on.
+    pub fn target_cluster_ids(&self) -> Vec<&str> {
+        self.dependencies.iter().map(|d| d.target_cluster_id.as_str()).collect()
+    }
+}
+
 /// Comprehensive high-level summary of the codebase architecture graph.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct ArchitectureGraphSummary {
@@ -80,6 +94,71 @@ pub struct ArchitectureGraphSummary {
     pub created_at: DateTime<Utc>,
 }
 
+impl ArchitectureGraphSummary {
+    /// Builds a bidirectional assignment cache mapping entity IDs (file and symbol) to cluster IDs.
+    pub fn build_assignment_cache(&self) -> ClusterAssignmentCache {
+        let mut entity_to_cluster = HashMap::new();
+        let mut cluster_to_entities = HashMap::new();
+
+        for cluster in &self.clusters {
+            let mut entities = HashSet::new();
+            for member in &cluster.members {
+                entity_to_cluster.insert(member.id.clone(), cluster.id.clone());
+                entity_to_cluster.insert(member.file_path.clone(), cluster.id.clone());
+                entities.insert(member.id.clone());
+                entities.insert(member.file_path.clone());
+            }
+            cluster_to_entities.insert(cluster.id.clone(), entities);
+        }
+
+        ClusterAssignmentCache {
+            entity_to_cluster,
+            cluster_to_entities,
+        }
+    }
+
+    /// Finds cluster containing a given file path or symbol.
+    pub fn find_cluster_for_file_or_symbol(
+        &self,
+        file_path: &str,
+        symbol: Option<&str>,
+    ) -> Option<&ArchitectureCluster> {
+        if let Some(sym) = symbol {
+            let full_symbol = format!("{}::{}", file_path, sym);
+            for cluster in &self.clusters {
+                if cluster.members.iter().any(|m| m.id == full_symbol) {
+                    return Some(cluster);
+                }
+            }
+        }
+
+        for cluster in &self.clusters {
+            if cluster.members.iter().any(|m| m.file_path == file_path) {
+                return Some(cluster);
+            }
+        }
+        None
+    }
+}
+
+/// Cache of code entity (file or symbol) to cluster assignment.
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+pub struct ClusterAssignmentCache {
+    /// Map from code entity ID (e.g. "src/auth/jwt.rs::generate_jwt" or "src/auth/jwt.rs") to cluster ID
+    pub entity_to_cluster: HashMap<String, String>,
+    /// Map from cluster ID to set of member entity IDs
+    pub cluster_to_entities: HashMap<String, HashSet<String>>,
+}
+
+/// Migration plan mapping cluster IDs from an old clustering run to a new clustering run.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ClusterMigrationPlan {
+    /// Mapping of old_cluster_id -> new_cluster_id based on maximum entity overlap.
+    pub mapping: HashMap<String, String>,
+    /// Old cluster IDs that have zero overlap with any new cluster.
+    pub unmapped_clusters: Vec<String>,
+}
+
 /// Configuration options for the Community Detection and Clustering algorithm.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ClusteringConfig {
@@ -91,6 +170,8 @@ pub struct ClusteringConfig {
     pub call_weight: f64,
     /// Weight multiplier for module imports (default: 1.0)
     pub import_weight: f64,
+    /// Random seed for deterministic LPA ordering and tie-breaking (default: 42)
+    pub seed: u64,
 }
 
 impl Default for ClusteringConfig {
@@ -100,6 +181,7 @@ impl Default for ClusteringConfig {
             min_cluster_size: 1,
             call_weight: 1.5,
             import_weight: 1.0,
+            seed: 42,
         }
     }
 }
@@ -286,8 +368,21 @@ impl CommunityDetector {
         for _iter in 0..self.config.max_iterations {
             let mut changed = false;
 
-            // Visit nodes in deterministic order (0..n)
-            for u in 0..n {
+            // Visit nodes in deterministic order derived from seed and iteration
+            let mut visit_order: Vec<usize> = (0..n).collect();
+            let mut rng_state = self
+                .config
+                .seed
+                .wrapping_add((_iter as u64).wrapping_mul(0x9E3779B97F4A7C15));
+            for i in (1..n).rev() {
+                rng_state = rng_state
+                    .wrapping_mul(6364136223846793005)
+                    .wrapping_add(1442695040888963407);
+                let j = ((rng_state >> 33) as usize) % (i + 1);
+                visit_order.swap(i, j);
+            }
+
+            for u in visit_order {
                 if adj[u].is_empty() {
                     continue;
                 }
@@ -814,6 +909,78 @@ impl CommunityDetector {
 
         lines.join("\n")
     }
+
+    /// Computes assignment migration plan between a previous architecture summary and a new summary.
+    /// Uses maximum member overlap (Jaccard similarity) to maintain stable cluster identities across code refactorings.
+    pub fn compute_migration_plan(
+        &self,
+        old_summary: &ArchitectureGraphSummary,
+        new_summary: &ArchitectureGraphSummary,
+    ) -> ClusterMigrationPlan {
+        let mut mapping = HashMap::new();
+        let mut unmapped = Vec::new();
+
+        for old_c in &old_summary.clusters {
+            let old_members: HashSet<&str> = old_c
+                .members
+                .iter()
+                .map(|m| m.id.as_str())
+                .chain(old_c.members.iter().map(|m| m.file_path.as_str()))
+                .collect();
+
+            let mut best_match: Option<(&str, f64)> = None;
+
+            for new_c in &new_summary.clusters {
+                let new_members: HashSet<&str> = new_c
+                    .members
+                    .iter()
+                    .map(|m| m.id.as_str())
+                    .chain(new_c.members.iter().map(|m| m.file_path.as_str()))
+                    .collect();
+
+                let intersection = old_members.intersection(&new_members).count();
+                let union = old_members.union(&new_members).count();
+
+                if union > 0 {
+                    let jaccard = (intersection as f64) / (union as f64);
+                    if jaccard > 0.0 {
+                        if best_match.map_or(true, |(_, best_j)| jaccard > best_j) {
+                            best_match = Some((&new_c.id, jaccard));
+                        }
+                    }
+                }
+            }
+
+            if let Some((new_id, _)) = best_match {
+                mapping.insert(old_c.id.clone(), new_id.to_string());
+            } else {
+                unmapped.push(old_c.id.clone());
+            }
+        }
+
+        ClusterMigrationPlan {
+            mapping,
+            unmapped_clusters: unmapped,
+        }
+    }
+
+    /// Migrates active memories in SqliteStore according to the migration plan.
+    /// Updates memory scopes to point to the new cluster IDs.
+    /// Returns total number of migrated memories.
+    pub fn migrate_active_memories(
+        &self,
+        store: &SqliteStore,
+        plan: &ClusterMigrationPlan,
+    ) -> Result<usize, StrataError> {
+        let mut total_migrated = 0;
+        for (old_id, new_id) in &plan.mapping {
+            if old_id != new_id {
+                let changed = store.migrate_community_scope(old_id, new_id)?;
+                total_migrated += changed;
+            }
+        }
+        Ok(total_migrated)
+    }
 }
 
 fn collect_source_files(dir: &Path, files: &mut Vec<PathBuf>) {
@@ -858,6 +1025,247 @@ fn sanitize_slug(s: &str) -> String {
         .filter(|part| !part.is_empty())
         .collect::<Vec<_>>()
         .join("-")
+}
+
+// ==========================================
+// Community Memory Router & Scoped Recall
+// ==========================================
+
+/// Result of a community-scoped memory recall operation.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct CommunityScopedRecallResult {
+    /// Retrieved top-k memories.
+    pub memories: Vec<MemoryRecord>,
+    /// Target architectural cluster ID.
+    pub target_community_id: String,
+    /// Total candidate memories evaluated during retrieval.
+    pub candidates_evaluated: usize,
+    /// Total memories in the database.
+    pub total_store_memories: usize,
+    /// Percentage reduction of candidate search pool (e.g. 75.0%).
+    pub candidate_reduction_pct: f64,
+    /// Whether transparent fallback to global recall was triggered (< k memories in cluster).
+    pub fallback_to_global: bool,
+    /// List of scopes that were evaluated.
+    pub allowed_scopes: Vec<Scope>,
+}
+
+/// Router that coordinates architectural community scoping for memory retrieval.
+#[derive(Debug, Clone)]
+pub struct CommunityMemoryRouter {
+    /// Minimum memories required in a community before strictly isolating recall.
+    /// If fewer than this exist, falls back to global recall.
+    pub min_memories_for_isolation: usize,
+    /// Whether explicit bridge dependencies are included in candidate retrieval.
+    pub include_cross_cluster_bridges: bool,
+}
+
+impl Default for CommunityMemoryRouter {
+    fn default() -> Self {
+        Self {
+            min_memories_for_isolation: 5,
+            include_cross_cluster_bridges: true,
+        }
+    }
+}
+
+impl CommunityMemoryRouter {
+    pub fn new(min_memories_for_isolation: usize, include_cross_cluster_bridges: bool) -> Self {
+        Self {
+            min_memories_for_isolation,
+            include_cross_cluster_bridges,
+        }
+    }
+
+    /// Resolves the architectural community Scope for an active file and optional symbol.
+    pub fn resolve_community_scope(
+        &self,
+        summary: &ArchitectureGraphSummary,
+        file_path: &str,
+        symbol: Option<&str>,
+    ) -> Option<Scope> {
+        summary
+            .find_cluster_for_file_or_symbol(file_path, symbol)
+            .map(|c| Scope::Community(c.id.clone()))
+    }
+
+    /// Performs community-scoped retrieval with transparent global fallback and candidate pool reduction.
+    pub async fn retrieve_scoped(
+        &self,
+        ranker: &crate::retrieval::HybridRanker,
+        store: &SqliteStore,
+        embedding_provider: Option<&dyn crate::embedding::EmbeddingProvider>,
+        query: &str,
+        community_id: &str,
+        summary: Option<&ArchitectureGraphSummary>,
+        memory_types: Option<&[strata_core::state::MemoryType]>,
+        limit: usize,
+    ) -> Result<CommunityScopedRecallResult, StrataError> {
+        let total_store_memories = store.count_all_memories()?;
+        let target_scope = Scope::Community(community_id.to_string());
+        let cluster_memory_count = store.count_memories_by_scope(&target_scope)?;
+
+        // Cold-start condition: if cluster has fewer than min_memories_for_isolation,
+        // execute transparent fallback to global recall.
+        if cluster_memory_count < self.min_memories_for_isolation {
+            let global_results = ranker
+                .retrieve(store, embedding_provider, query, None, memory_types, limit)
+                .await?;
+            let candidates = total_store_memories;
+
+            return Ok(CommunityScopedRecallResult {
+                memories: global_results,
+                target_community_id: community_id.to_string(),
+                candidates_evaluated: candidates,
+                total_store_memories,
+                candidate_reduction_pct: 0.0,
+                fallback_to_global: true,
+                allowed_scopes: vec![Scope::Global],
+            });
+        }
+
+        // Isolated Community Retrieval:
+        // Build allowed scopes starting with the target community
+        let mut allowed_scopes = vec![target_scope.clone()];
+
+        // Include explicit bridge dependencies if enabled
+        if self.include_cross_cluster_bridges {
+            if let Some(graph) = summary {
+                if let Some(cluster) = graph.clusters.iter().find(|c| c.id == community_id) {
+                    for dep in &cluster.dependencies {
+                        let bridge_scope = Scope::Community(dep.target_cluster_id.clone());
+                        if !allowed_scopes.contains(&bridge_scope) {
+                            allowed_scopes.push(bridge_scope);
+                        }
+                    }
+                }
+            }
+        }
+
+        // Always allow Global scope invariants
+        allowed_scopes.push(Scope::Global);
+
+        // Fetch scoped candidates using multi-scope FTS and store access
+        let candidate_limit = (limit * 3).max(20);
+        let fts_results = store.search_fts_scopes(query, &allowed_scopes, candidate_limit)?;
+
+        // Vector candidates
+        let mut vector_results: Vec<(MemoryRecord, f32)> = Vec::new();
+        if let Some(embedder) = embedding_provider {
+            if let Ok(query_embedding) = embedder.embed_text(query).await {
+                let scoped_candidates =
+                    store.get_memories_by_scopes(&allowed_scopes, memory_types, candidate_limit * 2)?;
+                for memory in scoped_candidates {
+                    if let Some(ref mem_emb) = memory.embedding {
+                        let sim = crate::embedding::cosine_similarity(&query_embedding, mem_emb);
+                        if sim >= ranker.config().min_similarity {
+                            vector_results.push((memory, sim));
+                        }
+                    }
+                }
+                vector_results
+                    .sort_by(|a, b| b.1.partial_cmp(&a.1).unwrap_or(std::cmp::Ordering::Equal));
+            }
+        }
+
+        // Graph spreading activation candidates
+        let mut graph_results: Vec<(MemoryRecord, f32)> = Vec::new();
+        if ranker.config().enable_spreading_activation {
+            if let Ok(graph) = ranker
+                .spreading_engine()
+                .build_graph_from_store(store, Some(&target_scope))
+            {
+                let mut seeds = ranker.spreading_engine().seed_from_query(&graph, query);
+                for (rec, fts_score) in fts_results.iter().take(5) {
+                    let norm_score = (1.0 / (1.0 + fts_score.abs())).clamp(0.2, 1.0);
+                    seeds.push((
+                        crate::spreading_activation::GraphNode::Memory(rec.id),
+                        norm_score,
+                    ));
+                }
+                for (rec, sim) in vector_results.iter().take(5) {
+                    seeds.push((crate::spreading_activation::GraphNode::Memory(rec.id), *sim));
+                }
+                if !seeds.is_empty() {
+                    let activations = ranker.spreading_engine().propagate(&graph, &seeds);
+                    let top_memories = ranker
+                        .spreading_engine()
+                        .extract_top_memories(&activations, candidate_limit);
+                    for (mem_id, act_score) in top_memories {
+                        if let Some((rec, _)) = fts_results.iter().find(|(r, _)| r.id == mem_id) {
+                            graph_results.push((rec.clone(), act_score));
+                        } else if let Some((rec, _)) =
+                            vector_results.iter().find(|(r, _)| r.id == mem_id)
+                        {
+                            graph_results.push((rec.clone(), act_score));
+                        } else if let Ok(Some(rec)) = store.get_memory(&mem_id) {
+                            if allowed_scopes.iter().any(|s| s.is_compatible(&rec.scope)) {
+                                graph_results.push((rec, act_score));
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        // If candidates are empty and query is blank, fetch recent in allowed scopes
+        if fts_results.is_empty() && vector_results.is_empty() && graph_results.is_empty() {
+            if query.trim().is_empty() {
+                let recs = store.get_memories_by_scopes(&allowed_scopes, memory_types, limit)?;
+                let count = recs.len();
+                let reduction = if total_store_memories > 0 {
+                    ((total_store_memories.saturating_sub(count)) as f64 / total_store_memories as f64) * 100.0
+                } else {
+                    0.0
+                };
+                return Ok(CommunityScopedRecallResult {
+                    memories: recs,
+                    target_community_id: community_id.to_string(),
+                    candidates_evaluated: count,
+                    total_store_memories,
+                    candidate_reduction_pct: (reduction * 10.0).round() / 10.0,
+                    fallback_to_global: false,
+                    allowed_scopes,
+                });
+            }
+        }
+
+        // Calculate unique candidate count evaluated
+        let candidates_evaluated = {
+            let mut unique_candidates = HashSet::new();
+            for (r, _) in &fts_results {
+                unique_candidates.insert(r.id);
+            }
+            for (r, _) in &vector_results {
+                unique_candidates.insert(r.id);
+            }
+            for (r, _) in &graph_results {
+                unique_candidates.insert(r.id);
+            }
+            unique_candidates.len()
+        };
+
+        let candidate_reduction_pct = if total_store_memories > 0 {
+            ((total_store_memories.saturating_sub(candidates_evaluated)) as f64
+                / total_store_memories as f64)
+                * 100.0
+        } else {
+            0.0
+        };
+
+        // Tri-Modal RRF fusion
+        let fused = ranker.fuse_tri_ranks(&fts_results, &vector_results, &graph_results, limit);
+
+        Ok(CommunityScopedRecallResult {
+            memories: fused,
+            target_community_id: community_id.to_string(),
+            candidates_evaluated,
+            total_store_memories,
+            candidate_reduction_pct: (candidate_reduction_pct * 10.0).round() / 10.0,
+            fallback_to_global: false,
+            allowed_scopes,
+        })
+    }
 }
 
 // ==========================================
@@ -996,5 +1404,310 @@ function sendJson(code: number) { return code; }
 
         assert!(summary.total_nodes >= 3);
         assert!(!summary.clusters.is_empty());
+    }
+
+    #[test]
+    fn test_community_clustering_determinism_with_fixed_seed() {
+        let analyzer = CallGraphAnalyzer::new();
+        let code = r#"
+pub fn a() { b(); }
+pub fn b() { c(); }
+pub fn c() { a(); }
+pub fn d() { e(); }
+pub fn e() { f(); }
+pub fn f() { d(); }
+"#;
+        let edges = analyzer
+            .analyze_source(code, LanguageKind::Rust, "src/graph.rs")
+            .unwrap();
+
+        let config = ClusteringConfig {
+            seed: 42,
+            ..Default::default()
+        };
+        let detector1 = CommunityDetector::new(config.clone());
+        let detector2 = CommunityDetector::new(config);
+
+        let summary1 = detector1.detect_from_edges(&edges, "det-workspace");
+        let summary2 = detector2.detect_from_edges(&edges, "det-workspace");
+
+        assert_eq!(summary1.clusters.len(), summary2.clusters.len());
+        assert_eq!(summary1.modularity, summary2.modularity);
+        for (c1, c2) in summary1.clusters.iter().zip(summary2.clusters.iter()) {
+            assert_eq!(c1.id, c2.id);
+            assert_eq!(c1.name, c2.name);
+            assert_eq!(c1.members.len(), c2.members.len());
+            for (m1, m2) in c1.members.iter().zip(c2.members.iter()) {
+                assert_eq!(m1.id, m2.id);
+            }
+        }
+    }
+
+    #[test]
+    fn test_assignment_cache_and_symbol_resolution() {
+        let edges = vec![
+            CallEdge::new(
+                "src/auth/jwt.rs",
+                "verify_token",
+                "decode_base64",
+                10,
+                CallType::FunctionCall,
+            ),
+            CallEdge::new(
+                "src/db/store.rs",
+                "get_user",
+                "execute_query",
+                20,
+                CallType::FunctionCall,
+            ),
+        ];
+
+        let detector = CommunityDetector::default();
+        let summary = detector.detect_from_edges(&edges, "cache-workspace");
+        let cache = summary.build_assignment_cache();
+
+        assert!(!cache.entity_to_cluster.is_empty());
+
+        let cluster_jwt = summary.find_cluster_for_file_or_symbol("src/auth/jwt.rs", Some("verify_token"));
+        assert!(cluster_jwt.is_some());
+
+        let cluster_db = summary.find_cluster_for_file_or_symbol("src/db/store.rs", None);
+        assert!(cluster_db.is_some());
+    }
+
+    #[test]
+    fn test_cluster_migration_plan_and_memory_reassignment() {
+        let store = SqliteStore::open_in_memory().unwrap();
+
+        let edge1 = CallEdge::new("src/auth/jwt.rs", "generate_jwt", "sign_token", 5, CallType::FunctionCall);
+        let edge2 = CallEdge::new("src/auth/login.rs", "handle_login", "generate_jwt", 10, CallType::FunctionCall);
+
+        let detector = CommunityDetector::default();
+        let summary_v1 = detector.detect_from_edges(&[edge1.clone(), edge2.clone()], "migration-workspace");
+        let old_cluster_id = summary_v1.clusters[0].id.clone();
+
+        // Create active memory scoped to old cluster
+        let mem = MemoryRecord::new(
+            strata_core::state::MemoryType::Semantic,
+            "JWT tokens expire in 15 minutes",
+            Scope::Community(old_cluster_id.clone()),
+        );
+        store.insert_or_update_memory(&mem).unwrap();
+
+        // Simulate re-clustering after adding new edge
+        let edge3 = CallEdge::new("src/auth/token.rs", "refresh_jwt", "generate_jwt", 15, CallType::FunctionCall);
+        let summary_v2 = detector.detect_from_edges(&[edge1, edge2, edge3], "migration-workspace");
+
+        let plan = detector.compute_migration_plan(&summary_v1, &summary_v2);
+        assert!(plan.mapping.contains_key(&old_cluster_id));
+        let new_cluster_id = plan.mapping.get(&old_cluster_id).unwrap();
+
+        let migrated_count = detector.migrate_active_memories(&store, &plan).unwrap();
+        // If IDs differed, migrated_count > 0, otherwise memory scope is already current
+        if &old_cluster_id != new_cluster_id {
+            assert_eq!(migrated_count, 1);
+        }
+
+        let updated_mem = store.get_memory(&mem.id).unwrap().unwrap();
+        assert_eq!(updated_mem.scope, Scope::Community(new_cluster_id.clone()));
+    }
+
+    #[tokio::test]
+    async fn test_community_scoped_recall_reduction_and_top_k() {
+        let store = SqliteStore::open_in_memory().unwrap();
+        let ranker = crate::retrieval::HybridRanker::with_default_config();
+
+        // Insert 10 Auth memories
+        for i in 0..10 {
+            let m = MemoryRecord::new(
+                strata_core::state::MemoryType::Semantic,
+                format!("Auth rule {i}: JWT bearer token signature verification in RSA 256"),
+                Scope::Community("cluster-1-auth".to_string()),
+            );
+            store.insert_or_update_memory(&m).unwrap();
+        }
+
+        // Insert 10 DB memories
+        for i in 0..10 {
+            let m = MemoryRecord::new(
+                strata_core::state::MemoryType::Semantic,
+                format!("Database invariant {i}: PostgreSQL connection pooling and WAL retention"),
+                Scope::Community("cluster-2-db".to_string()),
+            );
+            store.insert_or_update_memory(&m).unwrap();
+        }
+
+        // Insert 10 CDC memories
+        for i in 0..10 {
+            let m = MemoryRecord::new(
+                strata_core::state::MemoryType::Semantic,
+                format!("CDC sync worker {i}: Outbox transaction delta replication stream"),
+                Scope::Community("cluster-3-sync".to_string()),
+            );
+            store.insert_or_update_memory(&m).unwrap();
+        }
+
+        assert_eq!(store.count_all_memories().unwrap(), 30);
+
+        let router = CommunityMemoryRouter::new(5, true);
+        let result = router
+            .retrieve_scoped(
+                &ranker,
+                &store,
+                None,
+                "JWT bearer token signature",
+                "cluster-1-auth",
+                None,
+                None,
+                5,
+            )
+            .await
+            .unwrap();
+
+        assert!(!result.fallback_to_global);
+        assert_eq!(result.target_community_id, "cluster-1-auth");
+        // Candidate pool must be reduced by >= 60% (evaluated <= 12 out of 30)
+        assert!(
+            result.candidate_reduction_pct >= 60.0,
+            "Expected reduction >= 60%, got: {:.1}% (candidates: {}, total: {})",
+            result.candidate_reduction_pct,
+            result.candidates_evaluated,
+            result.total_store_memories
+        );
+        assert!(!result.memories.is_empty());
+        for m in &result.memories {
+            assert_eq!(m.scope, Scope::Community("cluster-1-auth".to_string()));
+            assert!(m.content.contains("Auth rule"));
+        }
+    }
+
+    #[tokio::test]
+    async fn test_transparent_global_fallback_on_cold_start() {
+        let store = SqliteStore::open_in_memory().unwrap();
+        let ranker = crate::retrieval::HybridRanker::with_default_config();
+
+        // Insert 10 global memories
+        for i in 0..10 {
+            let m = MemoryRecord::new(
+                strata_core::state::MemoryType::Semantic,
+                format!("General coding standard {i}: keep functions small and well typed"),
+                Scope::Global,
+            );
+            store.insert_or_update_memory(&m).unwrap();
+        }
+
+        // Insert only 2 memories in cluster-new (below k=5 threshold)
+        for i in 0..2 {
+            let m = MemoryRecord::new(
+                strata_core::state::MemoryType::Semantic,
+                format!("New feature note {i}"),
+                Scope::Community("cluster-new".to_string()),
+            );
+            store.insert_or_update_memory(&m).unwrap();
+        }
+
+        let router = CommunityMemoryRouter::new(5, true);
+        let result = router
+            .retrieve_scoped(
+                &ranker,
+                &store,
+                None,
+                "coding standard functions",
+                "cluster-new",
+                None,
+                None,
+                5,
+            )
+            .await
+            .unwrap();
+
+        // Transparent fallback triggered
+        assert!(result.fallback_to_global, "Cold start cluster must trigger fallback");
+        assert!(!result.memories.is_empty(), "Should return memories from global fallback");
+    }
+
+    #[tokio::test]
+    async fn test_cross_cluster_bridge_dependency_inclusion() {
+        let store = SqliteStore::open_in_memory().unwrap();
+        let ranker = crate::retrieval::HybridRanker::with_default_config();
+
+        // 6 memories in auth
+        for i in 0..6 {
+            let m = MemoryRecord::new(
+                strata_core::state::MemoryType::Semantic,
+                format!("Auth rule {i}: check user permission"),
+                Scope::Community("cluster-auth".to_string()),
+            );
+            store.insert_or_update_memory(&m).unwrap();
+        }
+
+        // 6 memories in db
+        for i in 0..6 {
+            let m = MemoryRecord::new(
+                strata_core::state::MemoryType::Semantic,
+                format!("DB schema {i}: users table indexed by email"),
+                Scope::Community("cluster-db".to_string()),
+            );
+            store.insert_or_update_memory(&m).unwrap();
+        }
+
+        // Construct summary where cluster-auth has explicit dependency on cluster-db
+        let summary = ArchitectureGraphSummary {
+            id: Uuid::new_v4(),
+            workspace_id: "test-workspace".to_string(),
+            total_nodes: 10,
+            total_edges: 10,
+            modularity: 0.5,
+            clusters: vec![
+                ArchitectureCluster {
+                    id: "cluster-auth".to_string(),
+                    name: "Auth Subsystem".to_string(),
+                    description: "Authentication".to_string(),
+                    members: Vec::new(),
+                    cohesion: 0.8,
+                    coupling: 0.2,
+                    dependencies: vec![ClusterDependency {
+                        target_cluster_id: "cluster-db".to_string(),
+                        target_cluster_name: "DB Subsystem".to_string(),
+                        edge_count: 5,
+                        sample_connections: vec!["auth -> db".to_string()],
+                    }],
+                    summary: None,
+                },
+                ArchitectureCluster {
+                    id: "cluster-db".to_string(),
+                    name: "DB Subsystem".to_string(),
+                    description: "Database".to_string(),
+                    members: Vec::new(),
+                    cohesion: 0.8,
+                    coupling: 0.2,
+                    dependencies: Vec::new(),
+                    summary: None,
+                },
+            ],
+            cross_cluster_edges_count: 5,
+            formatted_summary: String::new(),
+            created_at: Utc::now(),
+        };
+
+        let router = CommunityMemoryRouter::new(5, true);
+        let result = router
+            .retrieve_scoped(
+                &ranker,
+                &store,
+                None,
+                "users table indexed by email",
+                "cluster-auth",
+                Some(&summary),
+                None,
+                5,
+            )
+            .await
+            .unwrap();
+
+        assert!(!result.fallback_to_global);
+        assert!(result.allowed_scopes.contains(&Scope::Community("cluster-auth".to_string())));
+        assert!(result.allowed_scopes.contains(&Scope::Community("cluster-db".to_string())));
+        assert!(!result.memories.is_empty());
     }
 }

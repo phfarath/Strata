@@ -21,6 +21,7 @@ pub mod procedural_skill_distillation;
 pub mod silent_failure_avoidance;
 pub mod workspace_monorepo;
 pub mod world_model_causal;
+pub mod community_scoped_recall;
 
 pub use a2a_stigmergic_leases::*;
 pub use a2a_swarm_stress_benchmark::*;
@@ -45,3 +46,4 @@ pub use procedural_skill_distillation::*;
 pub use silent_failure_avoidance::*;
 pub use workspace_monorepo::*;
 pub use world_model_causal::*;
+pub use community_scoped_recall::*;

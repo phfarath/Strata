@@ -27,6 +27,11 @@ pub struct HybridRankerConfig {
     pub activation_config: SpreadingActivationConfig,
     /// Priority weighting for federated global store matches (default: 0.8)
     pub global_federation_weight: f32,
+    /// Minimum memories required in a community before strictly isolating recall (default: 5).
+    /// If fewer than this exist, falls back to global recall to avoid cold-start starvation.
+    pub min_community_memories_for_isolation: usize,
+    /// Whether explicit bridge dependencies are included when scoped to a community (default: true)
+    pub include_cross_cluster_bridges: bool,
 }
 
 impl Default for HybridRankerConfig {
@@ -40,6 +45,8 @@ impl Default for HybridRankerConfig {
             enable_spreading_activation: true,
             activation_config: SpreadingActivationConfig::default(),
             global_federation_weight: 0.8,
+            min_community_memories_for_isolation: 5,
+            include_cross_cluster_bridges: true,
         }
     }
 }
@@ -73,6 +80,7 @@ impl HybridRanker {
 
     /// Perform hybrid retrieval combining FTS5 BM25, Vector Cosine Similarity,
     /// and Knowledge Graph Spreading Activation via Tri-Modal RRF.
+    /// Transparently falls back to global recall if community scope has < k memories.
     pub async fn retrieve(
         &self,
         store: &SqliteStore,
@@ -84,8 +92,20 @@ impl HybridRanker {
     ) -> Result<Vec<MemoryRecord>, StrataError> {
         let candidate_limit = (limit * 3).max(20);
 
+        // Transparent cold-start fallback if community has < k memories
+        let effective_scope = if let Some(Scope::Community(ref c_id)) = scope {
+            let count = store.count_memories_by_scope(&Scope::Community(c_id.clone()))?;
+            if count < self.config.min_community_memories_for_isolation {
+                None
+            } else {
+                scope
+            }
+        } else {
+            scope
+        };
+
         // 1. Lexical retrieval via SQLite FTS5
-        let fts_results = store.search_fts(query, scope, candidate_limit)?;
+        let fts_results = store.search_fts(query, effective_scope, candidate_limit)?;
 
         // 2. Vector retrieval
         let mut vector_results: Vec<(MemoryRecord, f32)> = Vec::new();
@@ -93,7 +113,7 @@ impl HybridRanker {
             if let Ok(query_embedding) = embedder.embed_text(query).await {
                 // Fetch candidates in scope to score against
                 let all_candidates =
-                    store.get_all_memories(scope, memory_types, candidate_limit * 2)?;
+                    store.get_all_memories(effective_scope, memory_types, candidate_limit * 2)?;
                 for memory in all_candidates {
                     if let Some(ref mem_emb) = memory.embedding {
                         let sim = cosine_similarity(&query_embedding, mem_emb);
@@ -111,7 +131,7 @@ impl HybridRanker {
         // 3. Associative Graph Spreading Activation retrieval (HippoRAG style)
         let mut graph_results: Vec<(MemoryRecord, f32)> = Vec::new();
         if self.config.enable_spreading_activation {
-            if let Ok(graph) = self.spreading_engine.build_graph_from_store(store, scope) {
+            if let Ok(graph) = self.spreading_engine.build_graph_from_store(store, effective_scope) {
                 // Build initial seed activations
                 let mut seeds = self.spreading_engine.seed_from_query(&graph, query);
 
@@ -143,7 +163,7 @@ impl HybridRanker {
                             graph_results.push((rec.clone(), act_score));
                         } else if let Ok(Some(rec)) = store.get_memory(&mem_id) {
                             // Discovered via associative multi-hop jump!
-                            if scope.map_or(true, |s| s.is_compatible(&rec.scope))
+                            if effective_scope.map_or(true, |s| s.is_compatible(&rec.scope))
                                 && memory_types
                                     .map_or(true, |types| types.contains(&rec.memory_type))
                             {
@@ -158,7 +178,7 @@ impl HybridRanker {
         // If all candidate streams are empty, fall back to recent memories only if query is blank
         if fts_results.is_empty() && vector_results.is_empty() && graph_results.is_empty() {
             if query.trim().is_empty() {
-                return store.get_all_memories(scope, memory_types, limit);
+                return store.get_all_memories(effective_scope, memory_types, limit);
             } else {
                 return Ok(Vec::new());
             }
@@ -360,5 +380,35 @@ impl HybridRanker {
             .take(limit)
             .filter_map(|(id, _)| record_map.remove(&id))
             .collect()
+    }
+
+    /// Performs community-scoped hybrid retrieval using the CommunityMemoryRouter.
+    /// Provides candidate reduction statistics, bridge expansion, and transparent fallback.
+    pub async fn retrieve_community_scoped(
+        &self,
+        store: &SqliteStore,
+        embedding_provider: Option<&dyn EmbeddingProvider>,
+        query: &str,
+        community_id: &str,
+        summary: Option<&crate::community::ArchitectureGraphSummary>,
+        memory_types: Option<&[MemoryType]>,
+        limit: usize,
+    ) -> Result<crate::community::CommunityScopedRecallResult, StrataError> {
+        let router = crate::community::CommunityMemoryRouter::new(
+            self.config.min_community_memories_for_isolation,
+            self.config.include_cross_cluster_bridges,
+        );
+        router
+            .retrieve_scoped(
+                self,
+                store,
+                embedding_provider,
+                query,
+                community_id,
+                summary,
+                memory_types,
+                limit,
+            )
+            .await
     }
 }

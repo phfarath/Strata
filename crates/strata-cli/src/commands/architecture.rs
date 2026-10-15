@@ -50,6 +50,7 @@ pub async fn run_architecture(args: ArchitectureArgs) -> Result<(), StrataError>
         min_cluster_size: args.min_cluster_size,
         call_weight: 1.5,
         import_weight: 1.0,
+        seed: 42,
     };
 
     let detector = CommunityDetector::new(config);

@@ -1314,6 +1314,212 @@ impl SqliteStore {
         Ok(results)
     }
 
+    /// Search memories using FTS5 Porter stemmer across multiple allowed scopes (e.g. Community + Bridge + Global).
+    pub fn search_fts_scopes(
+        &self,
+        query_text: &str,
+        scopes: &[Scope],
+        limit: usize,
+    ) -> Result<Vec<(MemoryRecord, f32)>, StrataError> {
+        let conn = self
+            .conn
+            .lock()
+            .map_err(|_| StrataError::Database("Lock poisoned on SQLite connection".to_string()))?;
+
+        let sanitized = sanitize_fts5_query(query_text);
+        if sanitized.is_empty() {
+            return Ok(Vec::new());
+        }
+
+        let mut sql = "
+            SELECT m.id, m.memory_type, m.content, m.summary, m.scope, m.tier, m.approved_by_human, m.importance,
+                   m.confidence, m.tags_json, m.created_at, m.updated_at, m.access_count,
+                   m.last_accessed_at, m.evidence_ids_json, m.embedding, m.metadata_json,
+                   bm25(memories_fts) as rank
+            FROM memories_fts f
+            JOIN memories m ON m.id = f.id
+            WHERE memories_fts MATCH ?1
+        ".to_string();
+
+        let mut params_vec: Vec<Box<dyn rusqlite::ToSql>> = Vec::new();
+        params_vec.push(Box::new(sanitized));
+
+        let non_global_scopes: Vec<String> = scopes
+            .iter()
+            .filter(|s| **s != Scope::Global)
+            .map(|s| s.to_string())
+            .collect();
+
+        if !non_global_scopes.is_empty() {
+            let placeholders: Vec<String> = (0..non_global_scopes.len())
+                .map(|i| format!("?{}", i + 2))
+                .collect();
+            let placeholders_str = placeholders.join(",");
+            sql.push_str(&format!(" AND (m.scope IN ({placeholders_str}) OR m.scope = 'global')"));
+            for s in non_global_scopes {
+                params_vec.push(Box::new(s));
+            }
+        } else if !scopes.is_empty() && scopes.iter().all(|s| *s == Scope::Global) {
+            sql.push_str(" AND m.scope = 'global'");
+        }
+
+        sql.push_str(" ORDER BY rank ASC LIMIT ?");
+        params_vec.push(Box::new(limit as i64));
+
+        let mut stmt = conn
+            .prepare(&sql)
+            .map_err(|e| StrataError::Database(e.to_string()))?;
+
+        let params_slice: Vec<&dyn rusqlite::ToSql> =
+            params_vec.iter().map(|b| b.as_ref()).collect();
+
+        let rows = stmt
+            .query_map(params_slice.as_slice(), |row| {
+                let mem = Self::row_to_memory(row)?;
+                let rank: f64 = row.get(17)?;
+                Ok((mem, rank as f32))
+            })
+            .map_err(|e| StrataError::Database(e.to_string()))?;
+
+        let mut results = Vec::new();
+        for r in rows {
+            results.push(r.map_err(|e| StrataError::Database(e.to_string()))?);
+        }
+        Ok(results)
+    }
+
+    /// Retrieve memories across multiple allowed scopes (e.g. Community + Bridge clusters + Global).
+    pub fn get_memories_by_scopes(
+        &self,
+        scopes: &[Scope],
+        memory_types: Option<&[MemoryType]>,
+        limit: usize,
+    ) -> Result<Vec<MemoryRecord>, StrataError> {
+        let conn = self
+            .conn
+            .lock()
+            .map_err(|_| StrataError::Database("Lock poisoned on SQLite connection".to_string()))?;
+
+        let mut query =
+            "SELECT id, memory_type, content, summary, scope, tier, approved_by_human, importance,
+                                confidence, tags_json, created_at, updated_at, access_count,
+                                last_accessed_at, evidence_ids_json, embedding, metadata_json
+                         FROM memories WHERE 1=1"
+                .to_string();
+
+        let mut params_vec: Vec<Box<dyn rusqlite::ToSql>> = Vec::new();
+
+        let non_global_scopes: Vec<String> = scopes
+            .iter()
+            .filter(|s| **s != Scope::Global)
+            .map(|s| s.to_string())
+            .collect();
+
+        if !non_global_scopes.is_empty() {
+            let placeholders = vec!["?"; non_global_scopes.len()].join(",");
+            query.push_str(&format!(" AND (scope IN ({placeholders}) OR scope = 'global')"));
+            for s in non_global_scopes {
+                params_vec.push(Box::new(s));
+            }
+        } else if !scopes.is_empty() && scopes.iter().all(|s| *s == Scope::Global) {
+            query.push_str(" AND scope = 'global'");
+        }
+
+        if let Some(types) = memory_types {
+            if !types.is_empty() {
+                let type_strs: Vec<String> = types.iter().map(|t| t.to_string()).collect();
+                let placeholders = vec!["?"; type_strs.len()].join(",");
+                query.push_str(&format!(" AND memory_type IN ({placeholders})"));
+                for t in type_strs {
+                    params_vec.push(Box::new(t));
+                }
+            }
+        }
+
+        query.push_str(" ORDER BY created_at DESC LIMIT ?");
+        params_vec.push(Box::new(limit as i64));
+
+        let mut stmt = conn
+            .prepare(&query)
+            .map_err(|e| StrataError::Database(e.to_string()))?;
+
+        let params_slice: Vec<&dyn rusqlite::ToSql> =
+            params_vec.iter().map(|b| b.as_ref()).collect();
+
+        let rows = stmt
+            .query_map(params_slice.as_slice(), |row| Self::row_to_memory(row))
+            .map_err(|e| StrataError::Database(e.to_string()))?;
+
+        let mut results = Vec::new();
+        for r in rows {
+            results.push(r.map_err(|e| StrataError::Database(e.to_string()))?);
+        }
+        Ok(results)
+    }
+
+    /// Count memories belonging to a specific scope.
+    pub fn count_memories_by_scope(&self, scope: &Scope) -> Result<usize, StrataError> {
+        let conn = self
+            .conn
+            .lock()
+            .map_err(|_| StrataError::Database("Lock poisoned on SQLite connection".to_string()))?;
+        let count: i64 = conn
+            .query_row(
+                "SELECT COUNT(*) FROM memories WHERE scope = ?1",
+                rusqlite::params![scope.to_string()],
+                |r| r.get(0),
+            )
+            .map_err(|e| StrataError::Database(e.to_string()))?;
+        Ok(count as usize)
+    }
+
+    /// Count all active memories in the store.
+    pub fn count_all_memories(&self) -> Result<usize, StrataError> {
+        let conn = self
+            .conn
+            .lock()
+            .map_err(|_| StrataError::Database("Lock poisoned on SQLite connection".to_string()))?;
+        let count: i64 = conn
+            .query_row("SELECT COUNT(*) FROM memories", [], |r| r.get(0))
+            .map_err(|e| StrataError::Database(e.to_string()))?;
+        Ok(count as usize)
+    }
+
+    /// Update scope of a specific memory record.
+    pub fn update_memory_scope(&self, id: &Uuid, new_scope: &Scope) -> Result<(), StrataError> {
+        let conn = self
+            .conn
+            .lock()
+            .map_err(|_| StrataError::Database("Lock poisoned on SQLite connection".to_string()))?;
+        conn.execute(
+            "UPDATE memories SET scope = ?1, updated_at = ?2 WHERE id = ?3",
+            rusqlite::params![new_scope.to_string(), Utc::now().to_rfc3339(), id.to_string()],
+        )
+        .map_err(|e| StrataError::Database(e.to_string()))?;
+        Ok(())
+    }
+
+    /// Batch migrate all memories from an old community cluster ID to a new cluster ID.
+    pub fn migrate_community_scope(
+        &self,
+        old_cluster_id: &str,
+        new_cluster_id: &str,
+    ) -> Result<usize, StrataError> {
+        let conn = self
+            .conn
+            .lock()
+            .map_err(|_| StrataError::Database("Lock poisoned on SQLite connection".to_string()))?;
+        let old_scope_str = format!("community:{}", old_cluster_id);
+        let new_scope_str = format!("community:{}", new_cluster_id);
+        let changed = conn
+            .execute(
+                "UPDATE memories SET scope = ?1, updated_at = ?2 WHERE scope = ?3",
+                rusqlite::params![new_scope_str, Utc::now().to_rfc3339(), old_scope_str],
+            )
+            .map_err(|e| StrataError::Database(e.to_string()))?;
+        Ok(changed)
+    }
+
     /// Promotes a memory record to permanent Core Tier (frozen retention, R=1.0).
     /// Enforces strict requirement for explicit human approval (`approved_by_human == true`).
     pub fn promote_memory_to_core(

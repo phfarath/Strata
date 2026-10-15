@@ -48,8 +48,9 @@ pub use call_graph::{
 };
 pub use clustering::{SpatialCluster, SpatialClusterer, VectorPoint};
 pub use community::{
-    ArchitectureCluster, ArchitectureGraphSummary, ClusterDependency, ClusterMember,
-    ClusteringConfig, CommunityDetector, MemberType,
+    ArchitectureCluster, ArchitectureGraphSummary, ClusterAssignmentCache, ClusterDependency,
+    ClusterMember, ClusterMigrationPlan, ClusteringConfig, CommunityDetector, CommunityMemoryRouter,
+    CommunityScopedRecallResult, MemberType,
 };
 pub use compiler::{
     estimate_tokens, HostCompileResult, MultiHostCompileReport, MultiHostCompiler,

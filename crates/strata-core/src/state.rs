@@ -97,6 +97,7 @@ pub enum Scope {
     Project(String),
     Organization(String),
     User(String),
+    Community(String),
 }
 
 impl fmt::Display for Scope {
@@ -107,6 +108,7 @@ impl fmt::Display for Scope {
             Scope::Project(id) => write!(f, "project:{}", id),
             Scope::Organization(id) => write!(f, "org:{}", id),
             Scope::User(id) => write!(f, "user:{}", id),
+            Scope::Community(id) => write!(f, "community:{}", id),
         }
     }
 }
@@ -130,11 +132,29 @@ impl FromStr for Scope {
         if let Some(rest) = s.strip_prefix("user:") {
             return Ok(Scope::User(rest.to_string()));
         }
+        if let Some(rest) = s.strip_prefix("community:") {
+            return Ok(Scope::Community(rest.to_string()));
+        }
         Ok(Scope::Project(s.to_string()))
     }
 }
 
 impl Scope {
+    pub fn community(id: impl Into<String>) -> Self {
+        Scope::Community(id.into())
+    }
+
+    pub fn as_community(&self) -> Option<&str> {
+        match self {
+            Scope::Community(id) => Some(id.as_str()),
+            _ => None,
+        }
+    }
+
+    pub fn is_community(&self) -> bool {
+        matches!(self, Scope::Community(_))
+    }
+
     pub fn is_compatible(&self, target: &Scope) -> bool {
         match (self, target) {
             (Scope::Global, _) | (_, Scope::Global) => true,
@@ -142,6 +162,7 @@ impl Scope {
             (Scope::Project(a), Scope::Project(b)) => a == b,
             (Scope::Organization(a), Scope::Organization(b)) => a == b,
             (Scope::User(a), Scope::User(b)) => a == b,
+            (Scope::Community(a), Scope::Community(b)) => a == b,
             _ => false,
         }
     }
@@ -251,6 +272,15 @@ impl MemoryRecord {
     pub fn with_metadata(mut self, metadata: serde_json::Value) -> Self {
         self.metadata = metadata;
         self
+    }
+
+    pub fn with_community_scope(mut self, cluster_id: impl Into<String>) -> Self {
+        self.scope = Scope::Community(cluster_id.into());
+        self
+    }
+
+    pub fn community_id(&self) -> Option<&str> {
+        self.scope.as_community()
     }
 
     pub fn mark_accessed(&mut self) {
@@ -610,5 +640,33 @@ mod tests {
             pattern.verified_correction(),
             Some("Clone the token reference before passing into async block")
         );
+    }
+
+    #[test]
+    fn test_scope_community_serde_compatibility_and_helpers() {
+        let sc = Scope::community("cluster-1-auth");
+        assert_eq!(sc.to_string(), "community:cluster-1-auth");
+        assert_eq!(sc.as_community(), Some("cluster-1-auth"));
+        assert!(sc.is_community());
+
+        let parsed: Scope = "community:cluster-1-auth".parse().unwrap();
+        assert_eq!(parsed, sc);
+
+        // Global compatibility
+        assert!(sc.is_compatible(&Scope::Global));
+        assert!(Scope::Global.is_compatible(&sc));
+
+        // Same community compatibility
+        assert!(sc.is_compatible(&Scope::community("cluster-1-auth")));
+
+        // Different community isolation
+        assert!(!sc.is_compatible(&Scope::community("cluster-2-db")));
+        assert!(!sc.is_compatible(&Scope::Project("strata".to_string())));
+
+        // MemoryRecord helper
+        let mem = MemoryRecord::new(MemoryType::Semantic, "JWT rotation rule", Scope::Global)
+            .with_community_scope("cluster-1-auth");
+        assert_eq!(mem.scope, Scope::community("cluster-1-auth"));
+        assert_eq!(mem.community_id(), Some("cluster-1-auth"));
     }
 }
