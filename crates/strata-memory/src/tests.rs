@@ -3825,3 +3825,176 @@ async fn test_symbol_anti_pattern_lookup_and_dual_polarity() {
     assert!(avg_us < 10_000, "Gate lookup latency must be < 10ms, got {}us", avg_us);
 }
 
+#[tokio::test]
+async fn test_bitemporal_time_travel_semantic_facts() {
+    let engine = SqliteMemoryEngine::open_in_memory(None).expect("init engine");
+    let store = engine.store_arc();
+    let embedder = MockEmbeddingProvider::new(384);
+
+    let t0 = Utc::now() - Duration::days(20);
+    let t1 = Utc::now() - Duration::days(10);
+    let t_past = Utc::now() - Duration::days(15);
+    let t_now = Utc::now();
+
+    // 1. Fact 1 (Old rule): Valid from t0 until t1
+    let mut fact1 = SemanticFact::new(
+        "Use synchronous SQLite connection with busy_timeout 5000ms.",
+        "database_rules",
+        Scope::Global,
+    )
+    .with_importance(0.85);
+    fact1.created_at = t0;
+    fact1.last_updated_at = t1;
+    fact1.status = FactStatus::Deprecated;
+    let anchor1 = CodeAnchor::new(
+        "src/db.rs",
+        "init_db",
+        SymbolType::Function,
+        "hash_1",
+        1,
+        20,
+    )
+    .with_git_commit("commit_v1_hash")
+    .with_validity(t0, Some(t1));
+    fact1.code_anchor = Some(anchor1);
+
+    let emb1 = embedder.embed_text(&fact1.statement).await.unwrap();
+    store.insert_or_update_semantic_fact(&fact1).expect("insert fact 1");
+    store.update_semantic_fact_embedding(&fact1.id, &emb1).expect("embed fact 1");
+
+    // 2. Fact 2 (New rule): Valid from t1 onwards
+    let mut fact2 = SemanticFact::new(
+        "Use asynchronous r2d2 SQLite connection pool with WAL mode.",
+        "database_rules",
+        Scope::Global,
+    )
+    .with_importance(0.95);
+    fact2.created_at = t1;
+    fact2.last_updated_at = t1;
+    fact2.status = FactStatus::Active;
+    let anchor2 = CodeAnchor::new(
+        "src/db.rs",
+        "init_db",
+        SymbolType::Function,
+        "hash_2",
+        1,
+        25,
+    )
+    .with_git_commit("commit_v2_hash")
+    .with_validity(t1, None);
+    fact2.code_anchor = Some(anchor2);
+
+    let emb2 = embedder.embed_text(&fact2.statement).await.unwrap();
+    store.insert_or_update_semantic_fact(&fact2).expect("insert fact 2");
+    store.update_semantic_fact_embedding(&fact2.id, &emb2).expect("embed fact 2");
+
+    // Query 1: Time-travel query at t_past (15 days ago)
+    // At t_past: fact1 was active, fact2 did not exist yet
+    let past_facts = store
+        .search_semantic_facts_as_of("SQLite", Some(t_past), None, 10)
+        .expect("search at t_past");
+    assert_eq!(past_facts.len(), 1, "Should only return fact1 at t_past");
+    assert_eq!(past_facts[0].0.id, fact1.id);
+    assert_eq!(past_facts[0].0.statement, fact1.statement);
+
+    // Query 2: Current query (or None as_of_time)
+    // At present: fact1 is deprecated (valid_until = t1 < t_now), fact2 is active
+    let present_facts = store
+        .search_semantic_facts_as_of("SQLite", Some(t_now), None, 10)
+        .expect("search at present");
+    assert_eq!(present_facts.len(), 1, "Should only return fact2 at present");
+    assert_eq!(present_facts[0].0.id, fact2.id);
+    assert_eq!(present_facts[0].0.statement, fact2.statement);
+
+    // Query 3: By commit anchoring
+    let v1_facts = store
+        .search_semantic_facts_as_of("SQLite", None, Some("commit_v1_hash"), 10)
+        .expect("search commit v1");
+    assert_eq!(v1_facts.len(), 1);
+    assert_eq!(v1_facts[0].0.id, fact1.id);
+
+    let v2_facts = store
+        .search_semantic_facts_as_of("SQLite", None, Some("commit_v2_hash"), 10)
+        .expect("search commit v2");
+    assert_eq!(v2_facts.len(), 1);
+    assert_eq!(v2_facts[0].0.id, fact2.id);
+}
+
+#[tokio::test]
+async fn test_bitemporal_time_travel_memory_records() {
+    let engine = SqliteMemoryEngine::open_in_memory(None).expect("init engine");
+
+    let t0 = Utc::now() - Duration::days(30);
+    let t1 = Utc::now() - Duration::days(15);
+    let t_past = Utc::now() - Duration::days(20);
+    let t_now = Utc::now();
+
+    // Record 1: Old architecture guideline valid from t0 to t1
+    let mut rec1 = MemoryRecord::new(
+        MemoryType::Semantic,
+        "Guideline: Store tokens in localStorage for single-page applications.",
+        Scope::Global,
+    )
+    .with_summary("Auth guideline v1");
+    rec1.created_at = t0;
+    rec1.updated_at = t1;
+    rec1.metadata["valid_from"] = serde_json::json!(t0.to_rfc3339());
+    rec1.metadata["valid_until"] = serde_json::json!(t1.to_rfc3339());
+    rec1.metadata["git_commit_hash"] = serde_json::json!("sha_auth_v1");
+
+    let h1 = engine.write(&rec1).await.expect("write rec1");
+
+    // Record 2: New architecture guideline valid from t1 onwards
+    let mut rec2 = MemoryRecord::new(
+        MemoryType::Semantic,
+        "Guideline: Store tokens in HttpOnly secure cookies to prevent XSS exfiltration.",
+        Scope::Global,
+    )
+    .with_summary("Auth guideline v2");
+    rec2.created_at = t1;
+    rec2.updated_at = t1;
+    rec2.metadata["valid_from"] = serde_json::json!(t1.to_rfc3339());
+    rec2.metadata["git_commit_hash"] = serde_json::json!("sha_auth_v2");
+
+    let h2 = engine.write(&rec2).await.expect("write rec2");
+
+    // Test 1: get_as_of for rec1
+    let fetched_past = engine.get_as_of(&h1.id, Some(t_past), None).await.expect("get rec1 at t_past");
+    assert!(fetched_past.is_some(), "rec1 should be active at t_past");
+    assert_eq!(fetched_past.unwrap().id, h1.id);
+
+    let fetched_now = engine.get_as_of(&h1.id, Some(t_now), None).await.expect("get rec1 at t_now");
+    assert!(fetched_now.is_none(), "rec1 should be expired/invalidated at t_now");
+
+    // Test 2: search_as_of via engine
+    let search_past = engine
+        .search_as_of("tokens", Some(&Scope::Global), Some(t_past), None, 10)
+        .await
+        .expect("search at t_past");
+    assert_eq!(search_past.len(), 1, "Only rec1 should be found at t_past");
+    assert_eq!(search_past[0].id, h1.id);
+
+    let search_now = engine
+        .search_as_of("tokens", Some(&Scope::Global), Some(t_now), None, 10)
+        .await
+        .expect("search at t_now");
+    assert_eq!(search_now.len(), 1, "Only rec2 should be found at t_now");
+    assert_eq!(search_now[0].id, h2.id);
+
+    // Test 3: search_as_of with commit filtering
+    let search_commit1 = engine
+        .search_as_of("tokens", Some(&Scope::Global), None, Some("sha_auth_v1"), 10)
+        .await
+        .expect("search sha_auth_v1");
+    assert_eq!(search_commit1.len(), 1);
+    assert_eq!(search_commit1[0].id, h1.id);
+
+    let search_commit2 = engine
+        .search_as_of("tokens", Some(&Scope::Global), None, Some("sha_auth_v2"), 10)
+        .await
+        .expect("search sha_auth_v2");
+    assert_eq!(search_commit2.len(), 1);
+    assert_eq!(search_commit2[0].id, h2.id);
+}
+
+

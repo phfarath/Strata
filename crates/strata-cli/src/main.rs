@@ -116,6 +116,18 @@ enum Commands {
         )]
         memory_type: Option<String>,
 
+        #[arg(
+            long,
+            help = "Optional ISO 8601 / RFC 3339 timestamp for historical bi-temporal time-travel queries (e.g. '2026-08-01T12:00:00Z')"
+        )]
+        as_of_time: Option<String>,
+
+        #[arg(
+            long,
+            help = "Optional Git commit hash (SHA) to anchor historical playback queries"
+        )]
+        as_of_commit: Option<String>,
+
         #[arg(long, help = "Output as raw JSON")]
         json: bool,
 
@@ -589,6 +601,8 @@ async fn main() -> Result<()> {
             limit,
             scope,
             memory_type,
+            as_of_time,
+            as_of_commit,
             json,
             graph,
         } => {
@@ -598,6 +612,8 @@ async fn main() -> Result<()> {
                     limit,
                     scope,
                     memory_type,
+                    as_of_time,
+                    as_of_commit,
                     json,
                     graph,
                 },

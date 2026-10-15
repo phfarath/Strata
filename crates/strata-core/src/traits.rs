@@ -1,4 +1,5 @@
 use async_trait::async_trait;
+use chrono::{DateTime, Utc};
 use std::sync::Arc;
 use uuid::Uuid;
 
@@ -35,7 +36,39 @@ pub trait MemoryEngine: Send + Sync {
         limit: usize,
     ) -> Result<Vec<MemoryRecord>, StrataError>;
 
+    async fn search_as_of(
+        &self,
+        query: &str,
+        scope: Option<&Scope>,
+        as_of_time: Option<DateTime<Utc>>,
+        as_of_commit: Option<&str>,
+        limit: usize,
+    ) -> Result<Vec<MemoryRecord>, StrataError> {
+        if as_of_time.is_none() && as_of_commit.is_none() {
+            self.search(query, scope, limit).await
+        } else {
+            Err(StrataError::Validation(
+                "Bi-temporal search_as_of is not supported by this engine".to_string(),
+            ))
+        }
+    }
+
     async fn get(&self, id: &Uuid) -> Result<Option<MemoryRecord>, StrataError>;
+
+    async fn get_as_of(
+        &self,
+        id: &Uuid,
+        as_of_time: Option<DateTime<Utc>>,
+        as_of_commit: Option<&str>,
+    ) -> Result<Option<MemoryRecord>, StrataError> {
+        if as_of_time.is_none() && as_of_commit.is_none() {
+            self.get(id).await
+        } else {
+            Err(StrataError::Validation(
+                "Bi-temporal get_as_of is not supported by this engine".to_string(),
+            ))
+        }
+    }
 
     async fn write(&self, record: &MemoryRecord) -> Result<MemoryHandle, StrataError>;
 

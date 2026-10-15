@@ -1,3 +1,4 @@
+use chrono::{DateTime, Utc};
 use std::sync::Arc;
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 use tracing::{debug, error, info};
@@ -107,6 +108,14 @@ impl McpServer {
                         "graph_recall": {
                             "type": "boolean",
                             "description": "Whether to augment retrieval with associative Knowledge Graph spreading activation (default: true)"
+                        },
+                        "as_of_time": {
+                            "type": "string",
+                            "description": "Optional ISO 8601 / RFC 3339 timestamp for historical bi-temporal time-travel queries (e.g. '2026-08-01T12:00:00Z')"
+                        },
+                        "as_of_commit": {
+                            "type": "string",
+                            "description": "Optional Git commit hash (SHA) to anchor historical playback queries"
                         }
                     },
                     "required": ["query"]
@@ -143,6 +152,14 @@ impl McpServer {
                         "id": {
                             "type": "string",
                             "description": "The UUID of the memory record to retrieve"
+                        },
+                        "as_of_time": {
+                            "type": "string",
+                            "description": "Optional ISO 8601 / RFC 3339 timestamp for historical bi-temporal time-travel queries"
+                        },
+                        "as_of_commit": {
+                            "type": "string",
+                            "description": "Optional Git commit hash (SHA) to anchor historical playback queries"
                         }
                     },
                     "required": ["id"]
@@ -916,9 +933,23 @@ impl McpServer {
                     .and_then(|v| v.as_str())
                     .and_then(|s| s.parse::<MemoryType>().ok());
 
+                let as_of_time = match args.get("as_of_time").and_then(|v| v.as_str()) {
+                    Some(s) => match DateTime::parse_from_rfc3339(s) {
+                        Ok(dt) => Some(dt.with_timezone(&Utc)),
+                        Err(e) => {
+                            return CallToolResult::error(format!(
+                                "Invalid RFC3339 timestamp for as_of_time '{s}': {e}"
+                            ))
+                        }
+                    },
+                    None => None,
+                };
+
+                let as_of_commit = args.get("as_of_commit").and_then(|v| v.as_str());
+
                 match self
                     .memory_engine
-                    .search(query, scope.as_ref(), limit)
+                    .search_as_of(query, scope.as_ref(), as_of_time, as_of_commit, limit)
                     .await
                 {
                     Ok(records) => {
@@ -1035,7 +1066,21 @@ impl McpServer {
                     Err(e) => return CallToolResult::error(format!("Invalid UUID format: {e}")),
                 };
 
-                match self.memory_engine.get(&uuid).await {
+                let as_of_time = match args.get("as_of_time").and_then(|v| v.as_str()) {
+                    Some(s) => match DateTime::parse_from_rfc3339(s) {
+                        Ok(dt) => Some(dt.with_timezone(&Utc)),
+                        Err(e) => {
+                            return CallToolResult::error(format!(
+                                "Invalid RFC3339 timestamp for as_of_time '{s}': {e}"
+                            ))
+                        }
+                    },
+                    None => None,
+                };
+
+                let as_of_commit = args.get("as_of_commit").and_then(|v| v.as_str());
+
+                match self.memory_engine.get_as_of(&uuid, as_of_time, as_of_commit).await {
                     Ok(Some(record)) => match serde_json::to_string_pretty(&record) {
                         Ok(json) => CallToolResult::text(json),
                         Err(e) => CallToolResult::error(format!("Serialization error: {e}")),

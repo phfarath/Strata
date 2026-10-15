@@ -584,6 +584,30 @@ impl SemanticFact {
         self.last_updated_at = Utc::now();
     }
 
+    /// Check if this semantic fact was active and valid at a specific point in time (bi-temporal valid time).
+    pub fn is_active_at(&self, time: DateTime<Utc>) -> bool {
+        if let Some(ref anchor) = self.code_anchor {
+            anchor.is_active_at(time)
+        } else {
+            if time < self.created_at {
+                return false;
+            }
+            if self.status == FactStatus::Deprecated || self.replaced_by.is_some() {
+                time < self.last_updated_at
+            } else {
+                true
+            }
+        }
+    }
+
+    /// Check if this semantic fact is anchored to a specific git commit hash.
+    pub fn matches_commit(&self, commit: &str) -> bool {
+        self.code_anchor
+            .as_ref()
+            .and_then(|a| a.git_commit_hash.as_deref())
+            == Some(commit)
+    }
+
     pub fn is_stale(&self) -> bool {
         self.status == FactStatus::Stale
     }
@@ -1661,16 +1685,13 @@ impl CodeAnchor {
     }
 
     pub fn is_active_at(&self, time: DateTime<Utc>) -> bool {
-        if !self.is_valid {
-            return false;
-        }
         if time < self.valid_from {
             return false;
         }
         if let Some(until) = self.valid_until {
-            time <= until
+            time < until
         } else {
-            true
+            self.is_valid
         }
     }
 

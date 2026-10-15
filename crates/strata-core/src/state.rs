@@ -288,6 +288,61 @@ impl MemoryRecord {
         self.last_accessed_at = Some(Utc::now());
     }
 
+    /// Check if this memory record was active and valid at a specific point in time (bi-temporal valid time).
+    pub fn is_active_at(&self, time: DateTime<Utc>) -> bool {
+        let valid_from = self
+            .metadata
+            .get("valid_from")
+            .and_then(|v| v.as_str())
+            .and_then(|s| DateTime::parse_from_rfc3339(s).ok())
+            .map(|dt| dt.with_timezone(&Utc))
+            .unwrap_or(self.created_at);
+
+        if time < valid_from {
+            return false;
+        }
+
+        let valid_until = self
+            .metadata
+            .get("valid_until")
+            .and_then(|v| v.as_str())
+            .and_then(|s| DateTime::parse_from_rfc3339(s).ok())
+            .map(|dt| dt.with_timezone(&Utc))
+            .or_else(|| {
+                if self
+                    .metadata
+                    .get("status")
+                    .and_then(|v| v.as_str())
+                    .map_or(false, |s| s.eq_ignore_ascii_case("deprecated"))
+                {
+                    Some(self.updated_at)
+                } else {
+                    None
+                }
+            });
+
+        if let Some(until) = valid_until {
+            time < until
+        } else {
+            true
+        }
+    }
+
+    /// Check if this memory record matches a specific git commit hash.
+    pub fn matches_commit(&self, commit: &str) -> bool {
+        self.metadata
+            .get("git_commit_hash")
+            .or_else(|| self.metadata.get("commit"))
+            .and_then(|v| v.as_str())
+            == Some(commit)
+            || self
+                .metadata
+                .get("code_anchor")
+                .and_then(|ca| ca.get("git_commit_hash"))
+                .and_then(|v| v.as_str())
+                == Some(commit)
+    }
+
     pub fn to_handle(&self, score: Option<f32>) -> MemoryHandle {
         let title = self.summary.clone().unwrap_or_else(|| {
             let lines = self.content.lines().next().unwrap_or("Untitled");

@@ -1,4 +1,5 @@
 use async_trait::async_trait;
+use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use serde_json::json;
 use std::sync::Arc;
@@ -47,6 +48,14 @@ impl Tool for MemorySearchTool {
                 "scope": {
                     "type": "string",
                     "description": "Optional scope filter: 'global', 'org:<name>', 'project:<name>', 'user:<name>', 'session:<id>'"
+                },
+                "as_of_time": {
+                    "type": "string",
+                    "description": "Optional ISO 8601 / RFC 3339 timestamp for historical bi-temporal time-travel queries (e.g. '2026-08-01T12:00:00Z')"
+                },
+                "as_of_commit": {
+                    "type": "string",
+                    "description": "Optional Git commit hash (SHA) to anchor historical playback queries"
                 }
             },
             "required": ["query"]
@@ -68,7 +77,27 @@ impl Tool for MemorySearchTool {
             .transpose()
             .map_err(|e| StrataError::ValidationError(format!("Invalid scope: {:?}", e)))?;
 
-        let results = self.engine.search(query, scope.as_ref(), limit).await?;
+        let as_of_time = params
+            .get("as_of_time")
+            .and_then(|v| v.as_str())
+            .map(|s| {
+                DateTime::parse_from_rfc3339(s)
+                    .map(|dt| dt.with_timezone(&Utc))
+                    .map_err(|e| {
+                        StrataError::ValidationError(format!(
+                            "Invalid RFC3339 timestamp for as_of_time '{}': {}",
+                            s, e
+                        ))
+                    })
+            })
+            .transpose()?;
+
+        let as_of_commit = params.get("as_of_commit").and_then(|v| v.as_str());
+
+        let results = self
+            .engine
+            .search_as_of(query, scope.as_ref(), as_of_time, as_of_commit, limit)
+            .await?;
 
         Ok(json!(results))
     }
@@ -102,6 +131,14 @@ impl Tool for MemoryGetTool {
                 "id": {
                     "type": "string",
                     "description": "The unique UUID identifier of the memory record"
+                },
+                "as_of_time": {
+                    "type": "string",
+                    "description": "Optional ISO 8601 / RFC 3339 timestamp for historical bi-temporal time-travel queries"
+                },
+                "as_of_commit": {
+                    "type": "string",
+                    "description": "Optional Git commit hash (SHA) to anchor historical playback queries"
                 }
             },
             "required": ["id"]
@@ -118,7 +155,27 @@ impl Tool for MemoryGetTool {
             StrataError::ValidationError(format!("Invalid UUID '{}': {}", id_str, e))
         })?;
 
-        let record = self.engine.get(&uuid).await?;
+        let as_of_time = params
+            .get("as_of_time")
+            .and_then(|v| v.as_str())
+            .map(|s| {
+                DateTime::parse_from_rfc3339(s)
+                    .map(|dt| dt.with_timezone(&Utc))
+                    .map_err(|e| {
+                        StrataError::ValidationError(format!(
+                            "Invalid RFC3339 timestamp for as_of_time '{}': {}",
+                            s, e
+                        ))
+                    })
+            })
+            .transpose()?;
+
+        let as_of_commit = params.get("as_of_commit").and_then(|v| v.as_str());
+
+        let record = self
+            .engine
+            .get_as_of(&uuid, as_of_time, as_of_commit)
+            .await?;
         match record {
             Some(rec) => Ok(json!(rec)),
             None => Err(StrataError::NotFound(format!(
