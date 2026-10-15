@@ -116,6 +116,10 @@ impl McpServer {
                         "as_of_commit": {
                             "type": "string",
                             "description": "Optional Git commit hash (SHA) to anchor historical playback queries"
+                        },
+                        "as_of_branch": {
+                            "type": "string",
+                            "description": "Optional Git branch namespace filter (e.g. 'main', 'feat/xyz'). Defaults to current branch if detected."
                         }
                     },
                     "required": ["query"]
@@ -160,6 +164,10 @@ impl McpServer {
                         "as_of_commit": {
                             "type": "string",
                             "description": "Optional Git commit hash (SHA) to anchor historical playback queries"
+                        },
+                        "as_of_branch": {
+                            "type": "string",
+                            "description": "Optional Git branch namespace filter (e.g. 'main', 'feat/xyz')"
                         }
                     },
                     "required": ["id"]
@@ -946,10 +954,11 @@ impl McpServer {
                 };
 
                 let as_of_commit = args.get("as_of_commit").and_then(|v| v.as_str());
+                let as_of_branch = args.get("as_of_branch").and_then(|v| v.as_str());
 
                 match self
                     .memory_engine
-                    .search_as_of(query, scope.as_ref(), as_of_time, as_of_commit, limit)
+                    .search_as_of(query, scope.as_ref(), as_of_time, as_of_commit, as_of_branch, limit)
                     .await
                 {
                     Ok(records) => {
@@ -1079,8 +1088,9 @@ impl McpServer {
                 };
 
                 let as_of_commit = args.get("as_of_commit").and_then(|v| v.as_str());
+                let as_of_branch = args.get("as_of_branch").and_then(|v| v.as_str());
 
-                match self.memory_engine.get_as_of(&uuid, as_of_time, as_of_commit).await {
+                match self.memory_engine.get_as_of(&uuid, as_of_time, as_of_commit, as_of_branch).await {
                     Ok(Some(record)) => match serde_json::to_string_pretty(&record) {
                         Ok(json) => CallToolResult::text(json),
                         Err(e) => CallToolResult::error(format!("Serialization error: {e}")),

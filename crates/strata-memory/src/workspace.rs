@@ -488,15 +488,74 @@ impl WorkspaceBoundaryDetector {
             let rest = &json_str[pos + key.len()..];
             if let Some(colon) = rest.find(':') {
                 let val_part = rest[colon + 1..].trim();
-                if val_part.starts_with('"') {
-                    if let Some(end) = val_part[1..].find('"') {
-                        return Some(val_part[1..1 + end].to_string());
+                if let Some(stripped) = val_part.strip_prefix('"') {
+                    if let Some(end) = stripped.find('"') {
+                        return Some(stripped[..end].to_string());
                     }
                 }
             }
         }
         None
     }
+}
+
+/// Attempts to detect the active Git branch of the workspace.
+/// Fast path reads .git/HEAD directly without spawning a subshell (< 1ms).
+pub fn detect_git_branch(root: &Path) -> Option<String> {
+    let mut curr = if root.is_file() {
+        root.parent().unwrap_or(root).to_path_buf()
+    } else {
+        root.to_path_buf()
+    };
+
+    loop {
+        let head_path = curr.join(".git").join("HEAD");
+        if head_path.is_file() {
+            if let Ok(content) = std::fs::read_to_string(&head_path) {
+                let content = content.trim();
+                if let Some(branch) = content.strip_prefix("ref: refs/heads/") {
+                    return Some(branch.trim().to_string());
+                }
+            }
+        }
+
+        // Submodules might have .git as a file pointing to the gitdir
+        let git_file = curr.join(".git");
+        if git_file.is_file() {
+            if let Ok(content) = std::fs::read_to_string(&git_file) {
+                if let Some(git_dir) = content.trim().strip_prefix("gitdir:") {
+                    let git_dir_path = curr.join(git_dir.trim());
+                    let sub_head = git_dir_path.join("HEAD");
+                    if let Ok(h_content) = std::fs::read_to_string(&sub_head) {
+                        let h_content = h_content.trim();
+                        if let Some(branch) = h_content.strip_prefix("ref: refs/heads/") {
+                            return Some(branch.trim().to_string());
+                        }
+                    }
+                }
+            }
+        }
+
+        if !curr.pop() {
+            break;
+        }
+    }
+
+    // Fallback: spawn `git rev-parse --abbrev-ref HEAD`
+    if let Ok(output) = std::process::Command::new("git")
+        .args(["rev-parse", "--abbrev-ref", "HEAD"])
+        .current_dir(root)
+        .output()
+    {
+        if output.status.success() {
+            let s = String::from_utf8_lossy(&output.stdout).trim().to_string();
+            if !s.is_empty() && s != "HEAD" {
+                return Some(s);
+            }
+        }
+    }
+
+    None
 }
 
 // =========================================================================

@@ -9,10 +9,11 @@ use strata_core::events::{
     DataClassification, Event, EventId, EventPayload, Provenance, RetentionPolicy,
 };
 use strata_core::schemas::{
-    CodeAnchor, EpisodeRecord, EpisodeReplay, EpisodeStep, EpisodicMemory, EvidenceRef,
-    FactDependency, FactStatus, FeedbackEvent, FeedbackRating, HippocampalConsolidationResult,
-    ImplicitSignal, JtmsAuditRow, MemoryFeedback, ParameterDef, PreferencePair, ProceduralExample,
-    ProceduralSkill, ProceduralStep, SemanticFact, SignalKind, SignalScores, SyncDelta,
+    BranchMergeReport, CodeAnchor, EpisodeRecord, EpisodeReplay, EpisodeStep, EpisodicMemory,
+    EvidenceRef, FactDependency, FactStatus, FeedbackEvent, FeedbackRating,
+    HippocampalConsolidationResult, ImplicitSignal, JtmsAuditRow, MemoryFeedback, ParameterDef,
+    PreferencePair, ProceduralExample, ProceduralSkill, ProceduralStep, SemanticFact, SignalKind,
+    SignalScores, SyncDelta,
 };
 
 use strata_core::a2a::{
@@ -163,6 +164,31 @@ impl SqliteStore {
             "ALTER TABLE semantic_facts ADD COLUMN git_commit_hash TEXT DEFAULT NULL",
             [],
         );
+        let _ = conn.execute(
+            "ALTER TABLE events ADD COLUMN git_branch TEXT DEFAULT NULL",
+            [],
+        );
+        let _ = conn.execute(
+            "ALTER TABLE memories ADD COLUMN git_branch TEXT DEFAULT NULL",
+            [],
+        );
+        let _ = conn.execute(
+            "ALTER TABLE semantic_facts ADD COLUMN git_branch TEXT DEFAULT NULL",
+            [],
+        );
+        let _ = conn.execute(
+            "ALTER TABLE episodic_memories ADD COLUMN git_branch TEXT DEFAULT NULL",
+            [],
+        );
+        let _ = conn.execute(
+            "ALTER TABLE episodes ADD COLUMN git_branch TEXT DEFAULT NULL",
+            [],
+        );
+        let _ = conn.execute("CREATE INDEX IF NOT EXISTS idx_events_branch ON events(git_branch)", []);
+        let _ = conn.execute("CREATE INDEX IF NOT EXISTS idx_memories_branch ON memories(git_branch)", []);
+        let _ = conn.execute("CREATE INDEX IF NOT EXISTS idx_facts_branch ON semantic_facts(git_branch)", []);
+        let _ = conn.execute("CREATE INDEX IF NOT EXISTS idx_episodic_branch ON episodic_memories(git_branch)", []);
+        let _ = conn.execute("CREATE INDEX IF NOT EXISTS idx_episodes_branch ON episodes(git_branch)", []);
 
         // Idempotently backfill valid_until for legacy deprecated records
         let _ = conn.execute(
@@ -189,11 +215,13 @@ impl SqliteStore {
                 provenance_json TEXT NOT NULL,
                 classification TEXT NOT NULL,
                 retention TEXT NOT NULL,
-                metadata_json TEXT NOT NULL
+                metadata_json TEXT NOT NULL,
+                git_branch TEXT
             );
 
             CREATE INDEX IF NOT EXISTS idx_events_session ON events(session_id, sequence_num);
             CREATE INDEX IF NOT EXISTS idx_events_timestamp ON events(timestamp);
+            CREATE INDEX IF NOT EXISTS idx_events_branch ON events(git_branch);
 
             -- Memories table
             CREATE TABLE IF NOT EXISTS memories (
@@ -216,7 +244,8 @@ impl SqliteStore {
                 metadata_json TEXT NOT NULL DEFAULT '{}',
                 valid_from TEXT,
                 valid_until TEXT,
-                git_commit_hash TEXT
+                git_commit_hash TEXT,
+                git_branch TEXT
             );
 
             CREATE INDEX IF NOT EXISTS idx_memories_scope ON memories(scope);
@@ -227,6 +256,7 @@ impl SqliteStore {
             CREATE INDEX IF NOT EXISTS idx_memories_valid_from ON memories(valid_from);
             CREATE INDEX IF NOT EXISTS idx_memories_valid_until ON memories(valid_until);
             CREATE INDEX IF NOT EXISTS idx_memories_commit ON memories(git_commit_hash);
+            CREATE INDEX IF NOT EXISTS idx_memories_branch ON memories(git_branch);
 
             -- Full-text search virtual table for memories
             CREATE VIRTUAL TABLE IF NOT EXISTS memories_fts USING fts5(
@@ -386,12 +416,14 @@ impl SqliteStore {
                 signals_json TEXT NOT NULL,
                 tags_json TEXT NOT NULL DEFAULT '[]',
                 raw_event_ids_json TEXT NOT NULL DEFAULT '[]',
-                embedding BLOB
+                embedding BLOB,
+                git_branch TEXT
             );
 
             CREATE INDEX IF NOT EXISTS idx_episodic_session ON episodic_memories(session_id);
             CREATE INDEX IF NOT EXISTS idx_episodic_created ON episodic_memories(created_at);
             CREATE INDEX IF NOT EXISTS idx_episodic_project ON episodic_memories(project);
+            CREATE INDEX IF NOT EXISTS idx_episodic_branch ON episodic_memories(git_branch);
 
             -- Full-text search virtual table for episodic memories
             CREATE VIRTUAL TABLE IF NOT EXISTS episodic_memories_fts USING fts5(
@@ -444,7 +476,8 @@ impl SqliteStore {
                 embedding BLOB,
                 valid_from TEXT,
                 valid_until TEXT,
-                git_commit_hash TEXT
+                git_commit_hash TEXT,
+                git_branch TEXT
             );
 
             CREATE INDEX IF NOT EXISTS idx_facts_scope ON semantic_facts(scope);
@@ -456,6 +489,7 @@ impl SqliteStore {
             CREATE INDEX IF NOT EXISTS idx_facts_valid_from ON semantic_facts(valid_from);
             CREATE INDEX IF NOT EXISTS idx_facts_valid_until ON semantic_facts(valid_until);
             CREATE INDEX IF NOT EXISTS idx_facts_commit ON semantic_facts(git_commit_hash);
+            CREATE INDEX IF NOT EXISTS idx_facts_branch ON semantic_facts(git_branch);
 
             -- Full-text search virtual table for semantic facts
             CREATE VIRTUAL TABLE IF NOT EXISTS semantic_facts_fts USING fts5(
@@ -776,7 +810,8 @@ impl SqliteStore {
                 tier INTEGER NOT NULL DEFAULT 1,
                 parent_id TEXT,
                 child_ids_json TEXT NOT NULL DEFAULT '[]',
-                created_at INTEGER NOT NULL
+                created_at INTEGER NOT NULL,
+                git_branch TEXT
             );
 
             CREATE INDEX IF NOT EXISTS idx_episodes_session ON episodes(session_id);
@@ -784,6 +819,7 @@ impl SqliteStore {
             CREATE INDEX IF NOT EXISTS idx_episodes_consolidated ON episodes(consolidated);
             CREATE INDEX IF NOT EXISTS idx_episodes_tier ON episodes(tier);
             CREATE INDEX IF NOT EXISTS idx_episodes_parent ON episodes(parent_id);
+            CREATE INDEX IF NOT EXISTS idx_episodes_branch ON episodes(git_branch);
 
             -- Tripartite Synapse Modulated Edges Table
             CREATE TABLE IF NOT EXISTS memory_edges (
@@ -884,8 +920,8 @@ impl SqliteStore {
             "INSERT INTO events (
                 id, timestamp, session_id, agent_id, organization_id,
                 event_type, payload_json, provenance_json, classification,
-                retention, metadata_json
-            ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11)",
+                retention, metadata_json, git_branch
+            ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12)",
             params![
                 id_str,
                 ts_str,
@@ -898,6 +934,7 @@ impl SqliteStore {
                 classification_str,
                 retention_str,
                 metadata_json,
+                event.git_branch,
             ],
         )
         .map_err(|e| StrataError::Database(format!("Failed to insert event: {e}")))?;
@@ -923,7 +960,7 @@ impl SqliteStore {
             .prepare(
                 "SELECT id, sequence_num, timestamp, session_id, agent_id,
                         organization_id, payload_json, provenance_json,
-                        classification, retention, metadata_json
+                        classification, retention, metadata_json, git_branch
                  FROM events
                  WHERE session_id = ?1 AND sequence_num >= ?2
                  ORDER BY sequence_num ASC
@@ -944,6 +981,7 @@ impl SqliteStore {
                 let class_json: String = row.get(8)?;
                 let ret_json: String = row.get(9)?;
                 let meta_json: String = row.get(10)?;
+                let git_branch: Option<String> = row.get(11)?;
 
                 Ok((
                     id_str,
@@ -957,6 +995,7 @@ impl SqliteStore {
                     class_json,
                     ret_json,
                     meta_json,
+                    git_branch,
                 ))
             })
             .map_err(|e| StrataError::Database(format!("Query failed: {e}")))?;
@@ -975,6 +1014,7 @@ impl SqliteStore {
                 class_json,
                 ret_json,
                 meta_json,
+                git_branch,
             ) = row.map_err(|e| StrataError::Database(e.to_string()))?;
 
             let id = id_str
@@ -1002,6 +1042,7 @@ impl SqliteStore {
                 retention,
                 payload,
                 metadata,
+                git_branch,
             });
         }
 
@@ -1041,7 +1082,7 @@ impl SqliteStore {
             .prepare(
                 "SELECT id, sequence_num, timestamp, session_id, agent_id,
                         organization_id, payload_json, provenance_json,
-                        classification, retention, metadata_json
+                        classification, retention, metadata_json, git_branch
                  FROM events
                  ORDER BY sequence_num ASC",
             )
@@ -1060,6 +1101,7 @@ impl SqliteStore {
                 let class_json: String = row.get(8)?;
                 let ret_json: String = row.get(9)?;
                 let meta_json: String = row.get(10)?;
+                let git_branch: Option<String> = row.get(11)?;
 
                 Ok((
                     id_str,
@@ -1073,6 +1115,7 @@ impl SqliteStore {
                     class_json,
                     ret_json,
                     meta_json,
+                    git_branch,
                 ))
             })
             .map_err(|e| StrataError::Database(format!("Query failed: {e}")))?;
@@ -1091,6 +1134,7 @@ impl SqliteStore {
                 class_json,
                 ret_json,
                 meta_json,
+                git_branch,
             ) = row.map_err(|e| StrataError::Database(e.to_string()))?;
 
             let id = id_str
@@ -1118,6 +1162,7 @@ impl SqliteStore {
                 retention,
                 payload,
                 metadata,
+                git_branch,
             });
         }
 
@@ -1188,12 +1233,32 @@ impl SqliteStore {
                     .map(|s| s.to_string())
             });
 
+        let git_branch_str = memory
+            .git_branch()
+            .map(|s| s.to_string())
+            .or_else(|| {
+                memory
+                    .metadata
+                    .get("git_branch")
+                    .or_else(|| memory.metadata.get("branch"))
+                    .and_then(|v| v.as_str())
+                    .map(|s| s.to_string())
+            })
+            .or_else(|| {
+                memory
+                    .metadata
+                    .get("code_anchor")
+                    .and_then(|ca| ca.get("git_branch"))
+                    .and_then(|v| v.as_str())
+                    .map(|s| s.to_string())
+            });
+
         conn.execute(
             "INSERT INTO memories (
                 id, memory_type, content, summary, scope, tier, approved_by_human, importance, confidence,
                 tags_json, created_at, updated_at, access_count, last_accessed_at,
-                evidence_ids_json, embedding, metadata_json, valid_from, valid_until, git_commit_hash
-            ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18, ?19, ?20)
+                evidence_ids_json, embedding, metadata_json, valid_from, valid_until, git_commit_hash, git_branch
+            ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18, ?19, ?20, ?21)
             ON CONFLICT(id) DO UPDATE SET
                 memory_type = excluded.memory_type,
                 content = excluded.content,
@@ -1212,7 +1277,8 @@ impl SqliteStore {
                 metadata_json = excluded.metadata_json,
                 valid_from = excluded.valid_from,
                 valid_until = excluded.valid_until,
-                git_commit_hash = excluded.git_commit_hash",
+                git_commit_hash = excluded.git_commit_hash,
+                git_branch = COALESCE(excluded.git_branch, memories.git_branch)",
             params![
                 id_str,
                 mem_type_str,
@@ -1234,6 +1300,7 @@ impl SqliteStore {
                 valid_from_str,
                 valid_until_str,
                 git_commit_str,
+                git_branch_str,
             ],
         )
         .map_err(|e| StrataError::Database(format!("Failed to persist memory: {e}")))?;
@@ -1242,7 +1309,7 @@ impl SqliteStore {
     }
 
     pub fn get_memory(&self, id: &Uuid) -> Result<Option<MemoryRecord>, StrataError> {
-        self.get_memory_as_of(id, None, None)
+        self.get_memory_as_of(id, None, None, None)
     }
 
     pub fn get_memory_as_of(
@@ -1250,6 +1317,7 @@ impl SqliteStore {
         id: &Uuid,
         as_of_time: Option<DateTime<Utc>>,
         as_of_commit: Option<&str>,
+        as_of_branch: Option<&str>,
     ) -> Result<Option<MemoryRecord>, StrataError> {
         let conn = self
             .conn
@@ -1277,6 +1345,15 @@ impl SqliteStore {
             params_vec.push(Box::new(c.to_string()));
             params_vec.push(Box::new(c.to_string()));
             params_vec.push(Box::new(c.to_string()));
+        }
+
+        if let Some(b) = as_of_branch {
+            if b == "main" || b == "master" {
+                sql.push_str(" AND (git_branch IS NULL OR git_branch = 'main' OR git_branch = 'master')");
+            } else if b != "*" && b != "all" {
+                sql.push_str(" AND (git_branch IS NULL OR git_branch = 'main' OR git_branch = 'master' OR git_branch = ?)");
+                params_vec.push(Box::new(b.to_string()));
+            }
         }
 
         let mut stmt = conn
@@ -1320,7 +1397,7 @@ impl SqliteStore {
         memory_types: Option<&[MemoryType]>,
         limit: usize,
     ) -> Result<Vec<MemoryRecord>, StrataError> {
-        self.get_all_memories_as_of(scope, memory_types, None, None, limit)
+        self.get_all_memories_as_of(scope, memory_types, None, None, None, limit)
     }
 
     pub fn get_all_memories_as_of(
@@ -1329,6 +1406,7 @@ impl SqliteStore {
         memory_types: Option<&[MemoryType]>,
         as_of_time: Option<DateTime<Utc>>,
         as_of_commit: Option<&str>,
+        as_of_branch: Option<&str>,
         limit: usize,
     ) -> Result<Vec<MemoryRecord>, StrataError> {
         let conn = self
@@ -1378,6 +1456,15 @@ impl SqliteStore {
             params_vec.push(Box::new(c.to_string()));
         }
 
+        if let Some(b) = as_of_branch {
+            if b == "main" || b == "master" {
+                query.push_str(" AND (git_branch IS NULL OR git_branch = 'main' OR git_branch = 'master')");
+            } else if b != "*" && b != "all" {
+                query.push_str(" AND (git_branch IS NULL OR git_branch = 'main' OR git_branch = 'master' OR git_branch = ?)");
+                params_vec.push(Box::new(b.to_string()));
+            }
+        }
+
         query.push_str(" ORDER BY created_at DESC LIMIT ?");
         params_vec.push(Box::new(limit as i64));
 
@@ -1407,16 +1494,17 @@ impl SqliteStore {
         scope: Option<&Scope>,
         limit: usize,
     ) -> Result<Vec<(MemoryRecord, f32)>, StrataError> {
-        self.search_fts_as_of(query_text, scope, None, None, limit)
+        self.search_fts_as_of(query_text, scope, None, None, None, limit)
     }
 
-    /// Search memories using FTS5 Porter stemmer with bi-temporal filters (as_of_time, as_of_commit).
+    /// Search memories using FTS5 Porter stemmer with bi-temporal filters (as_of_time, as_of_commit, as_of_branch).
     pub fn search_fts_as_of(
         &self,
         query_text: &str,
         scope: Option<&Scope>,
         as_of_time: Option<DateTime<Utc>>,
         as_of_commit: Option<&str>,
+        as_of_branch: Option<&str>,
         limit: usize,
     ) -> Result<Vec<(MemoryRecord, f32)>, StrataError> {
         let conn = self
@@ -1462,6 +1550,15 @@ impl SqliteStore {
             params_vec.push(Box::new(c.to_string()));
             params_vec.push(Box::new(c.to_string()));
             params_vec.push(Box::new(c.to_string()));
+        }
+
+        if let Some(b) = as_of_branch {
+            if b == "main" || b == "master" {
+                sql.push_str(" AND (m.git_branch IS NULL OR m.git_branch = 'main' OR m.git_branch = 'master')");
+            } else if b != "*" && b != "all" {
+                sql.push_str(" AND (m.git_branch IS NULL OR m.git_branch = 'main' OR m.git_branch = 'master' OR m.git_branch = ?)");
+                params_vec.push(Box::new(b.to_string()));
+            }
         }
 
         sql.push_str(" ORDER BY rank ASC LIMIT ?");
@@ -2453,8 +2550,8 @@ impl SqliteStore {
             "INSERT INTO episodic_memories (
                 id, session_id, created_at, time_start, time_end, actor, project,
                 files_json, tools_used_json, summary, goals_json, obstacles_json,
-                outcomes_json, signals_json, tags_json, raw_event_ids_json
-            ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16)
+                outcomes_json, signals_json, tags_json, raw_event_ids_json, git_branch
+            ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17)
             ON CONFLICT(id) DO UPDATE SET
                 session_id = excluded.session_id,
                 time_start = excluded.time_start,
@@ -2469,7 +2566,8 @@ impl SqliteStore {
                 outcomes_json = excluded.outcomes_json,
                 signals_json = excluded.signals_json,
                 tags_json = excluded.tags_json,
-                raw_event_ids_json = excluded.raw_event_ids_json",
+                raw_event_ids_json = excluded.raw_event_ids_json,
+                git_branch = COALESCE(excluded.git_branch, episodic_memories.git_branch)",
             params![
                 id_str,
                 memory.session_id,
@@ -2487,6 +2585,7 @@ impl SqliteStore {
                 signals_json,
                 tags_json,
                 raw_events_json,
+                memory.git_branch,
             ],
         )
         .map_err(|e| StrataError::Database(format!("Failed to insert episodic memory: {e}")))?;
@@ -2504,7 +2603,7 @@ impl SqliteStore {
             .prepare(
                 "SELECT id, session_id, created_at, time_start, time_end, actor, project,
                         files_json, tools_used_json, summary, goals_json, obstacles_json,
-                        outcomes_json, signals_json, tags_json, raw_event_ids_json
+                        outcomes_json, signals_json, tags_json, raw_event_ids_json, git_branch
                  FROM episodic_memories
                  WHERE id = ?1",
             )
@@ -2535,7 +2634,7 @@ impl SqliteStore {
             .prepare(
                 "SELECT id, session_id, created_at, time_start, time_end, actor, project,
                         files_json, tools_used_json, summary, goals_json, obstacles_json,
-                        outcomes_json, signals_json, tags_json, raw_event_ids_json
+                        outcomes_json, signals_json, tags_json, raw_event_ids_json, git_branch
                  FROM episodic_memories
                  WHERE session_id = ?1
                  ORDER BY created_at ASC",
@@ -2558,6 +2657,15 @@ impl SqliteStore {
         project: Option<&str>,
         limit: usize,
     ) -> Result<Vec<EpisodicMemory>, StrataError> {
+        self.get_all_episodic_memories_as_of(project, None, limit)
+    }
+
+    pub fn get_all_episodic_memories_as_of(
+        &self,
+        project: Option<&str>,
+        as_of_branch: Option<&str>,
+        limit: usize,
+    ) -> Result<Vec<EpisodicMemory>, StrataError> {
         let conn = self
             .conn
             .lock()
@@ -2565,7 +2673,7 @@ impl SqliteStore {
 
         let mut sql = "SELECT id, session_id, created_at, time_start, time_end, actor, project,
                               files_json, tools_used_json, summary, goals_json, obstacles_json,
-                              outcomes_json, signals_json, tags_json, raw_event_ids_json
+                              outcomes_json, signals_json, tags_json, raw_event_ids_json, git_branch
                        FROM episodic_memories WHERE 1=1"
             .to_string();
 
@@ -2573,6 +2681,15 @@ impl SqliteStore {
         if let Some(p) = project {
             sql.push_str(" AND (project = ? OR project IS NULL)");
             params_vec.push(Box::new(p.to_string()));
+        }
+
+        if let Some(b) = as_of_branch {
+            if b == "main" || b == "master" {
+                sql.push_str(" AND (git_branch IS NULL OR git_branch = 'main' OR git_branch = 'master')");
+            } else if b != "*" && b != "all" {
+                sql.push_str(" AND (git_branch IS NULL OR git_branch = 'main' OR git_branch = 'master' OR git_branch = ?)");
+                params_vec.push(Box::new(b.to_string()));
+            }
         }
 
         sql.push_str(" ORDER BY created_at DESC LIMIT ?");
@@ -2600,6 +2717,15 @@ impl SqliteStore {
         query_text: &str,
         limit: usize,
     ) -> Result<Vec<(EpisodicMemory, f32)>, StrataError> {
+        self.search_episodic_memories_fts_as_of(query_text, None, limit)
+    }
+
+    pub fn search_episodic_memories_fts_as_of(
+        &self,
+        query_text: &str,
+        as_of_branch: Option<&str>,
+        limit: usize,
+    ) -> Result<Vec<(EpisodicMemory, f32)>, StrataError> {
         let conn = self
             .conn
             .lock()
@@ -2610,24 +2736,41 @@ impl SqliteStore {
             return Ok(Vec::new());
         }
 
-        let sql = "
+        let mut sql = "
             SELECT m.id, m.session_id, m.created_at, m.time_start, m.time_end, m.actor, m.project,
                    m.files_json, m.tools_used_json, m.summary, m.goals_json, m.obstacles_json,
-                   m.outcomes_json, m.signals_json, m.tags_json, m.raw_event_ids_json,
+                   m.outcomes_json, m.signals_json, m.tags_json, m.raw_event_ids_json, m.git_branch,
                    bm25(episodic_memories_fts) as rank
             FROM episodic_memories_fts f
             JOIN episodic_memories m ON m.id = f.id
             WHERE episodic_memories_fts MATCH ?1
-            ORDER BY rank ASC LIMIT ?2
-        ";
+        ".to_string();
+
+        let mut params_vec: Vec<Box<dyn rusqlite::ToSql>> = Vec::new();
+        params_vec.push(Box::new(sanitized));
+
+        if let Some(b) = as_of_branch {
+            if b == "main" || b == "master" {
+                sql.push_str(" AND (m.git_branch IS NULL OR m.git_branch = 'main' OR m.git_branch = 'master')");
+            } else if b != "*" && b != "all" {
+                sql.push_str(" AND (m.git_branch IS NULL OR m.git_branch = 'main' OR m.git_branch = 'master' OR m.git_branch = ?)");
+                params_vec.push(Box::new(b.to_string()));
+            }
+        }
+
+        sql.push_str(" ORDER BY rank ASC LIMIT ?");
+        params_vec.push(Box::new(limit as i64));
 
         let mut stmt = conn
-            .prepare(sql)
+            .prepare(&sql)
             .map_err(|e| StrataError::Database(e.to_string()))?;
+        let params_slice: Vec<&dyn rusqlite::ToSql> =
+            params_vec.iter().map(|b| b.as_ref()).collect();
+
         let rows = stmt
-            .query_map(params![sanitized, limit as i64], |row| {
+            .query_map(params_slice.as_slice(), |row| {
                 let ep = Self::row_to_episodic(row)?;
-                let rank: f64 = row.get(16)?;
+                let rank: f64 = row.get(17)?;
                 Ok((ep, rank as f32))
             })
             .map_err(|e| StrataError::Database(e.to_string()))?;
@@ -2705,13 +2848,15 @@ impl SqliteStore {
                 )
             };
 
+        let git_branch_str = fact.git_branch().map(|s| s.to_string());
+
         conn.execute(
             "INSERT INTO semantic_facts (
                 id, project, scope, statement, category, evidence_json,
                 importance, confidence, tier, approved_by_human, created_at, last_updated_at, status,
                 version, replaced_by, tags_json, code_anchor_json, depends_on_json,
-                valid_from, valid_until, git_commit_hash
-            ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18, ?19, ?20, ?21)
+                valid_from, valid_until, git_commit_hash, git_branch
+            ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18, ?19, ?20, ?21, ?22)
             ON CONFLICT(id) DO UPDATE SET
                 project = excluded.project,
                 scope = excluded.scope,
@@ -2731,7 +2876,8 @@ impl SqliteStore {
                 depends_on_json = excluded.depends_on_json,
                 valid_from = excluded.valid_from,
                 valid_until = excluded.valid_until,
-                git_commit_hash = excluded.git_commit_hash",
+                git_commit_hash = excluded.git_commit_hash,
+                git_branch = COALESCE(excluded.git_branch, semantic_facts.git_branch)",
             params![
                 id_str,
                 fact.project,
@@ -2754,6 +2900,7 @@ impl SqliteStore {
                 valid_from_str,
                 valid_until_str,
                 git_commit_str,
+                git_branch_str,
             ],
         )
         .map_err(|e| StrataError::Database(format!("Failed to persist semantic fact: {e}")))?;
@@ -2773,7 +2920,7 @@ impl SqliteStore {
     }
 
     pub fn get_semantic_fact(&self, id: &Uuid) -> Result<Option<SemanticFact>, StrataError> {
-        self.get_semantic_fact_as_of(id, None, None)
+        self.get_semantic_fact_as_of(id, None, None, None)
     }
 
     pub fn get_semantic_fact_as_of(
@@ -2781,6 +2928,7 @@ impl SqliteStore {
         id: &Uuid,
         as_of_time: Option<DateTime<Utc>>,
         as_of_commit: Option<&str>,
+        as_of_branch: Option<&str>,
     ) -> Result<Option<SemanticFact>, StrataError> {
         let conn = self
             .conn
@@ -2806,6 +2954,15 @@ impl SqliteStore {
             sql.push_str(" AND (git_commit_hash = ? OR json_extract(code_anchor_json, '$.git_commit_hash') = ?)");
             params_vec.push(Box::new(c.to_string()));
             params_vec.push(Box::new(c.to_string()));
+        }
+
+        if let Some(b) = as_of_branch {
+            if b == "main" || b == "master" {
+                sql.push_str(" AND (git_branch IS NULL OR git_branch = 'main' OR git_branch = 'master')");
+            } else if b != "*" && b != "all" {
+                sql.push_str(" AND (git_branch IS NULL OR git_branch = 'main' OR git_branch = 'master' OR git_branch = ?)");
+                params_vec.push(Box::new(b.to_string()));
+            }
         }
 
         let mut stmt = conn
@@ -2852,7 +3009,7 @@ impl SqliteStore {
         status: Option<FactStatus>,
         limit: usize,
     ) -> Result<Vec<SemanticFact>, StrataError> {
-        self.get_all_semantic_facts_as_of(project, status, None, None, limit)
+        self.get_all_semantic_facts_as_of(project, status, None, None, None, limit)
     }
 
     pub fn get_all_semantic_facts_as_of(
@@ -2861,6 +3018,7 @@ impl SqliteStore {
         status: Option<FactStatus>,
         as_of_time: Option<DateTime<Utc>>,
         as_of_commit: Option<&str>,
+        as_of_branch: Option<&str>,
         limit: usize,
     ) -> Result<Vec<SemanticFact>, StrataError> {
         let conn = self
@@ -2896,6 +3054,15 @@ impl SqliteStore {
             sql.push_str(" AND (git_commit_hash = ? OR json_extract(code_anchor_json, '$.git_commit_hash') = ?)");
             params_vec.push(Box::new(c.to_string()));
             params_vec.push(Box::new(c.to_string()));
+        }
+
+        if let Some(b) = as_of_branch {
+            if b == "main" || b == "master" {
+                sql.push_str(" AND (git_branch IS NULL OR git_branch = 'main' OR git_branch = 'master')");
+            } else if b != "*" && b != "all" {
+                sql.push_str(" AND (git_branch IS NULL OR git_branch = 'main' OR git_branch = 'master' OR git_branch = ?)");
+                params_vec.push(Box::new(b.to_string()));
+            }
         }
 
         sql.push_str(" ORDER BY last_updated_at DESC LIMIT ?");
@@ -2972,15 +3139,16 @@ impl SqliteStore {
         query_text: &str,
         limit: usize,
     ) -> Result<Vec<(SemanticFact, f32)>, StrataError> {
-        self.search_semantic_facts_as_of(query_text, None, None, limit)
+        self.search_semantic_facts_as_of(query_text, None, None, None, limit)
     }
 
-    /// Search semantic facts using FTS5 Porter stemmer with bi-temporal filters (as_of_time, as_of_commit).
+    /// Search semantic facts using FTS5 Porter stemmer with bi-temporal and branch filters (as_of_time, as_of_commit, as_of_branch).
     pub fn search_semantic_facts_as_of(
         &self,
         query_text: &str,
         as_of_time: Option<DateTime<Utc>>,
         as_of_commit: Option<&str>,
+        as_of_branch: Option<&str>,
         limit: usize,
     ) -> Result<Vec<(SemanticFact, f32)>, StrataError> {
         let conn = self
@@ -3017,6 +3185,15 @@ impl SqliteStore {
             sql.push_str(" AND (m.git_commit_hash = ? OR json_extract(m.code_anchor_json, '$.git_commit_hash') = ?)");
             params_vec.push(Box::new(c.to_string()));
             params_vec.push(Box::new(c.to_string()));
+        }
+
+        if let Some(b) = as_of_branch {
+            if b == "main" || b == "master" {
+                sql.push_str(" AND (m.git_branch IS NULL OR m.git_branch = 'main' OR m.git_branch = 'master')");
+            } else if b != "*" && b != "all" {
+                sql.push_str(" AND (m.git_branch IS NULL OR m.git_branch = 'main' OR m.git_branch = 'master' OR m.git_branch = ?)");
+                params_vec.push(Box::new(b.to_string()));
+            }
         }
 
         sql.push_str(" ORDER BY rank ASC LIMIT ?");
@@ -3792,6 +3969,7 @@ impl SqliteStore {
         let signals_json: String = row.get(13)?;
         let tags_json: String = row.get(14)?;
         let raw_events_json: String = row.get(15)?;
+        let git_branch: Option<String> = row.get(16).ok().flatten();
 
         let id = Uuid::parse_str(&id_str).map_err(|_| rusqlite::Error::InvalidQuery)?;
         let created_at = DateTime::parse_from_rfc3339(&created_at_str)
@@ -3830,6 +4008,7 @@ impl SqliteStore {
             signals,
             tags,
             raw_event_ids,
+            git_branch,
         })
     }
 
@@ -6619,8 +6798,8 @@ impl SqliteStore {
             "INSERT INTO episodes (
                 id, session_id, agent_id, task_id, summary, event_trace_json,
                 outcomes_json, salience_score, state_snapshot_json, causal_provenance,
-                consolidated, tier, parent_id, child_ids_json, created_at
-            ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15)
+                consolidated, tier, parent_id, child_ids_json, created_at, git_branch
+            ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16)
             ON CONFLICT(id) DO UPDATE SET
                 summary = excluded.summary,
                 event_trace_json = excluded.event_trace_json,
@@ -6631,7 +6810,8 @@ impl SqliteStore {
                 consolidated = excluded.consolidated,
                 tier = excluded.tier,
                 parent_id = excluded.parent_id,
-                child_ids_json = excluded.child_ids_json",
+                child_ids_json = excluded.child_ids_json,
+                git_branch = COALESCE(excluded.git_branch, episodes.git_branch)",
             params![
                 id_str,
                 episode.session_id,
@@ -6648,6 +6828,7 @@ impl SqliteStore {
                 episode.parent_id.map(|p| p.to_string()),
                 child_ids_json,
                 episode.created_at,
+                episode.git_branch,
             ],
         )
         .map_err(|e| StrataError::Database(format!("Failed to insert episode: {e}")))?;
@@ -6689,8 +6870,8 @@ impl SqliteStore {
             "INSERT INTO episodes (
                 id, session_id, agent_id, task_id, summary, event_trace_json,
                 outcomes_json, salience_score, state_snapshot_json, causal_provenance,
-                consolidated, tier, parent_id, child_ids_json, created_at
-            ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15)
+                consolidated, tier, parent_id, child_ids_json, created_at, git_branch
+            ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16)
             ON CONFLICT(id) DO UPDATE SET
                 summary = excluded.summary,
                 event_trace_json = excluded.event_trace_json,
@@ -6701,7 +6882,8 @@ impl SqliteStore {
                 consolidated = excluded.consolidated,
                 tier = excluded.tier,
                 parent_id = excluded.parent_id,
-                child_ids_json = excluded.child_ids_json",
+                child_ids_json = excluded.child_ids_json,
+                git_branch = COALESCE(excluded.git_branch, episodes.git_branch)",
             params![
                 id_str,
                 rollup.session_id,
@@ -6718,6 +6900,7 @@ impl SqliteStore {
                 rollup.parent_id.map(|p| p.to_string()),
                 child_ids_json,
                 rollup.created_at,
+                rollup.git_branch,
             ],
         )
         .map_err(|e| StrataError::Database(format!("Failed to insert episode rollup: {e}")))?;
@@ -6752,7 +6935,7 @@ impl SqliteStore {
             .prepare(
                 "SELECT id, session_id, agent_id, task_id, summary, event_trace_json,
                         outcomes_json, salience_score, state_snapshot_json, causal_provenance,
-                        consolidated, created_at, tier, parent_id, child_ids_json
+                        consolidated, created_at, tier, parent_id, child_ids_json, git_branch
                  FROM episodes WHERE id = ?1",
             )
             .map_err(|e| StrataError::Database(e.to_string()))?;
@@ -6780,7 +6963,7 @@ impl SqliteStore {
         let mut query = String::from(
             "SELECT id, session_id, agent_id, task_id, summary, event_trace_json,
                     outcomes_json, salience_score, state_snapshot_json, causal_provenance,
-                    consolidated, created_at, tier, parent_id, child_ids_json
+                    consolidated, created_at, tier, parent_id, child_ids_json, git_branch
              FROM episodes WHERE 1=1",
         );
 
@@ -6829,7 +7012,7 @@ impl SqliteStore {
         let mut query = String::from(
             "SELECT id, session_id, agent_id, task_id, summary, event_trace_json,
                     outcomes_json, salience_score, state_snapshot_json, causal_provenance,
-                    consolidated, created_at, tier, parent_id, child_ids_json
+                    consolidated, created_at, tier, parent_id, child_ids_json, git_branch
              FROM episodes WHERE tier = ?",
         );
 
@@ -6876,7 +7059,7 @@ impl SqliteStore {
         let mut query = String::from(
             "SELECT id, session_id, agent_id, task_id, summary, event_trace_json,
                     outcomes_json, salience_score, state_snapshot_json, causal_provenance,
-                    consolidated, created_at, tier, parent_id, child_ids_json
+                    consolidated, created_at, tier, parent_id, child_ids_json, git_branch
              FROM episodes WHERE tier = ?",
         );
 
@@ -6936,7 +7119,7 @@ impl SqliteStore {
         let mut query = String::from(
             "SELECT id, session_id, agent_id, task_id, summary, event_trace_json,
                     outcomes_json, salience_score, state_snapshot_json, causal_provenance,
-                    consolidated, created_at, tier, parent_id, child_ids_json
+                    consolidated, created_at, tier, parent_id, child_ids_json, git_branch
              FROM episodes WHERE tier = ? AND parent_id IS NULL",
         );
 
@@ -6977,7 +7160,7 @@ impl SqliteStore {
             .prepare(
                 "SELECT id, session_id, agent_id, task_id, summary, event_trace_json,
                         outcomes_json, salience_score, state_snapshot_json, causal_provenance,
-                        consolidated, created_at, tier, parent_id, child_ids_json
+                        consolidated, created_at, tier, parent_id, child_ids_json, git_branch
                  FROM episodes WHERE parent_id = ?1 ORDER BY created_at ASC",
             )
             .map_err(|e| StrataError::Database(e.to_string()))?;
@@ -7013,7 +7196,7 @@ impl SqliteStore {
                 )
                 SELECT id, session_id, agent_id, task_id, summary, event_trace_json,
                        outcomes_json, salience_score, state_snapshot_json, causal_provenance,
-                       consolidated, created_at, tier, parent_id, child_ids_json
+                       consolidated, created_at, tier, parent_id, child_ids_json, git_branch
                 FROM episodes
                 WHERE id IN (SELECT id FROM episode_tree)
                 ORDER BY tier DESC, created_at ASC",
@@ -7093,6 +7276,7 @@ impl SqliteStore {
             serde_json::from_str(&event_trace_json).unwrap_or_default();
         let outcomes: Vec<String> = serde_json::from_str(&outcomes_json).unwrap_or_default();
         let state_snapshot = state_snapshot_json.and_then(|s| serde_json::from_str(&s).ok());
+        let git_branch: Option<String> = row.get(15).ok().flatten();
 
         Ok(EpisodeRecord {
             id,
@@ -7110,6 +7294,7 @@ impl SqliteStore {
             parent_id,
             child_ids,
             created_at,
+            git_branch,
         })
     }
 
@@ -7310,6 +7495,91 @@ impl SqliteStore {
         }
 
         Ok(result)
+    }
+
+    /// Merges and promotes memories from a feature branch into a target branch (e.g. main/master)
+    /// within an atomic SQLite transaction. Updates all 5 memory and event tables.
+    pub fn merge_branch_memories(
+        &self,
+        source_branch: &str,
+        target_branch: &str,
+    ) -> Result<BranchMergeReport, StrataError> {
+        let mut conn = self
+            .conn
+            .lock()
+            .map_err(|_| StrataError::Database("Lock poisoned on SQLite connection".to_string()))?;
+
+        let tx = conn
+            .transaction()
+            .map_err(|e| StrataError::Database(format!("Failed to begin branch merge transaction: {e}")))?;
+
+        let now_str = Utc::now().to_rfc3339();
+        let mut report = BranchMergeReport::new(source_branch, target_branch);
+
+        // 1. memories
+        let memories_merged = tx.execute(
+            "UPDATE memories
+             SET git_branch = ?1,
+                 metadata_json = json_set(metadata_json, '$.git_branch', ?1),
+                 updated_at = ?2
+             WHERE git_branch = ?3",
+            params![target_branch, now_str, source_branch],
+        ).map_err(|e| StrataError::Database(format!("Failed to merge memories for branch '{source_branch}': {e}")))?;
+        report.memories_merged = memories_merged;
+
+        // 2. semantic_facts
+        let facts_merged = tx.execute(
+            "UPDATE semantic_facts
+             SET git_branch = ?1,
+                 code_anchor_json = CASE
+                     WHEN code_anchor_json IS NOT NULL THEN json_set(code_anchor_json, '$.git_branch', ?1)
+                     ELSE NULL
+                 END,
+                 last_updated_at = ?2
+             WHERE git_branch = ?3",
+            params![target_branch, now_str, source_branch],
+        ).map_err(|e| StrataError::Database(format!("Failed to merge semantic facts for branch '{source_branch}': {e}")))?;
+        report.semantic_facts_merged = facts_merged;
+
+        // 3. events
+        let events_merged = tx.execute(
+            "UPDATE events
+             SET git_branch = ?1
+             WHERE git_branch = ?2",
+            params![target_branch, source_branch],
+        ).map_err(|e| StrataError::Database(format!("Failed to merge events for branch '{source_branch}': {e}")))?;
+        report.events_merged = events_merged;
+
+        // 4. episodic_memories
+        let episodic_merged = tx.execute(
+            "UPDATE episodic_memories
+             SET git_branch = ?1
+             WHERE git_branch = ?2",
+            params![target_branch, source_branch],
+        ).map_err(|e| StrataError::Database(format!("Failed to merge episodic memories for branch '{source_branch}': {e}")))?;
+        report.episodic_memories_merged = episodic_merged;
+
+        // 5. episodes
+        let episodes_merged = tx.execute(
+            "UPDATE episodes
+             SET git_branch = ?1
+             WHERE git_branch = ?2",
+            params![target_branch, source_branch],
+        ).map_err(|e| StrataError::Database(format!("Failed to merge episodes for branch '{source_branch}': {e}")))?;
+        report.episodes_merged = episodes_merged;
+
+        tx.commit().map_err(|e| {
+            StrataError::Database(format!("Failed to commit branch merge transaction: {e}"))
+        })?;
+
+        tracing::info!(
+            source_branch = source_branch,
+            target_branch = target_branch,
+            total_merged = report.total_merged(),
+            "Successfully merged branch memories"
+        );
+
+        Ok(report)
     }
 }
 

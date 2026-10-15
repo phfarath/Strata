@@ -128,6 +128,13 @@ enum Commands {
         )]
         as_of_commit: Option<String>,
 
+        #[arg(
+            long = "branch",
+            alias = "as-of-branch",
+            help = "Optional Git branch namespace filter (e.g. 'main', 'feat/xyz'). Defaults to current branch if detected."
+        )]
+        as_of_branch: Option<String>,
+
         #[arg(long, help = "Output as raw JSON")]
         json: bool,
 
@@ -603,6 +610,7 @@ async fn main() -> Result<()> {
             memory_type,
             as_of_time,
             as_of_commit,
+            as_of_branch,
             json,
             graph,
         } => {
@@ -614,6 +622,7 @@ async fn main() -> Result<()> {
                     memory_type,
                     as_of_time,
                     as_of_commit,
+                    as_of_branch,
                     json,
                     graph,
                 },

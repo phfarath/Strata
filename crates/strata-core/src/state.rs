@@ -98,6 +98,7 @@ pub enum Scope {
     Organization(String),
     User(String),
     Community(String),
+    Branch(String),
 }
 
 impl fmt::Display for Scope {
@@ -109,6 +110,7 @@ impl fmt::Display for Scope {
             Scope::Organization(id) => write!(f, "org:{}", id),
             Scope::User(id) => write!(f, "user:{}", id),
             Scope::Community(id) => write!(f, "community:{}", id),
+            Scope::Branch(id) => write!(f, "branch:{}", id),
         }
     }
 }
@@ -135,6 +137,9 @@ impl FromStr for Scope {
         if let Some(rest) = s.strip_prefix("community:") {
             return Ok(Scope::Community(rest.to_string()));
         }
+        if let Some(rest) = s.strip_prefix("branch:") {
+            return Ok(Scope::Branch(rest.to_string()));
+        }
         Ok(Scope::Project(s.to_string()))
     }
 }
@@ -142,6 +147,21 @@ impl FromStr for Scope {
 impl Scope {
     pub fn community(id: impl Into<String>) -> Self {
         Scope::Community(id.into())
+    }
+
+    pub fn branch(id: impl Into<String>) -> Self {
+        Scope::Branch(id.into())
+    }
+
+    pub fn as_branch(&self) -> Option<&str> {
+        match self {
+            Scope::Branch(id) => Some(id.as_str()),
+            _ => None,
+        }
+    }
+
+    pub fn is_branch(&self) -> bool {
+        matches!(self, Scope::Branch(_))
     }
 
     pub fn as_community(&self) -> Option<&str> {
@@ -163,6 +183,7 @@ impl Scope {
             (Scope::Organization(a), Scope::Organization(b)) => a == b,
             (Scope::User(a), Scope::User(b)) => a == b,
             (Scope::Community(a), Scope::Community(b)) => a == b,
+            (Scope::Branch(a), Scope::Branch(b)) => a == b,
             _ => false,
         }
     }
@@ -341,6 +362,40 @@ impl MemoryRecord {
                 .and_then(|ca| ca.get("git_commit_hash"))
                 .and_then(|v| v.as_str())
                 == Some(commit)
+    }
+
+    /// Attach a specific Git branch namespace to this memory record.
+    pub fn with_branch(mut self, branch: impl Into<String>) -> Self {
+        let b = branch.into();
+        if self.metadata.is_null() {
+            self.metadata = serde_json::json!({ "git_branch": b });
+        } else if let Some(obj) = self.metadata.as_object_mut() {
+            obj.insert("git_branch".to_string(), serde_json::json!(b));
+        }
+        self
+    }
+
+    /// Retrieve the Git branch namespace associated with this memory record, if any.
+    pub fn git_branch(&self) -> Option<&str> {
+        self.metadata
+            .get("git_branch")
+            .or_else(|| self.metadata.get("branch"))
+            .and_then(|v| v.as_str())
+            .or_else(|| {
+                self.metadata
+                    .get("code_anchor")
+                    .and_then(|ca| ca.get("git_branch"))
+                    .and_then(|v| v.as_str())
+            })
+    }
+
+    /// Check if this memory record matches or is accessible from a specific Git branch.
+    /// Memories on 'main', 'master', or unassigned branch are considered baseline and accessible.
+    pub fn matches_branch(&self, branch: &str) -> bool {
+        match self.git_branch() {
+            Some(b) => b == branch || b == "main" || b == "master",
+            None => true,
+        }
     }
 
     pub fn to_handle(&self, score: Option<f32>) -> MemoryHandle {

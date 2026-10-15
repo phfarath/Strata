@@ -13,6 +13,7 @@ pub struct SearchOptions {
     pub memory_type: Option<String>,
     pub as_of_time: Option<String>,
     pub as_of_commit: Option<String>,
+    pub as_of_branch: Option<String>,
     pub json: bool,
     pub graph: bool,
 }
@@ -38,12 +39,28 @@ pub async fn run_search(options: SearchOptions, engine: Arc<dyn MemoryEngine>) -
         })
         .transpose()?;
 
+    let detected_branch = if options.as_of_branch.is_none() {
+        if let Ok(curr) = std::env::current_dir() {
+            strata_memory::workspace::detect_git_branch(&curr)
+        } else {
+            None
+        }
+    } else {
+        None
+    };
+
+    let effective_branch = options
+        .as_of_branch
+        .as_deref()
+        .or(detected_branch.as_deref());
+
     let results = engine
         .search_as_of(
             &options.query,
             parsed_scope.as_ref(),
             as_of_time,
             options.as_of_commit.as_deref(),
+            effective_branch,
             options.limit,
         )
         .await?;

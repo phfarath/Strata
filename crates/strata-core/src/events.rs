@@ -236,6 +236,8 @@ pub struct Event {
     pub payload: EventPayload,
     #[serde(default)]
     pub metadata: serde_json::Value,
+    #[serde(default)]
+    pub git_branch: Option<String>,
 }
 
 pub type CanonicalEvent = Event;
@@ -261,7 +263,13 @@ impl Event {
             retention: RetentionPolicy::default(),
             payload,
             metadata: serde_json::Value::Null,
+            git_branch: None,
         }
+    }
+
+    pub fn with_git_branch(mut self, branch: impl Into<String>) -> Self {
+        self.git_branch = Some(branch.into());
+        self
     }
 
     pub fn with_provenance(mut self, provenance: Provenance) -> Self {
