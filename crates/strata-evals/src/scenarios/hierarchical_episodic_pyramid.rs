@@ -5,7 +5,9 @@ use std::time::Instant;
 use uuid::Uuid;
 
 use strata_core::schemas::{EpisodeRecord, EpisodeStep};
-use strata_memory::{EpisodicPyramidEngine, PyramidConfig, SqliteStore};
+use strata_memory::{
+    EpisodicPyramidEngine, EpisodicPyramidStore, PyramidConfig, PyramidFilter, SqliteStore,
+};
 
 /// Evaluation scenario metrics report for Hierarchical Episodic Memory Pyramid.
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -851,7 +853,7 @@ pub async fn run_hierarchical_episodic_pyramid_eval() -> Result<HierarchicalPyra
     }
 
     // -------------------------------------------------------------------------
-    // Assertion 1: Memory Compression (>= 70%)
+    // Assertion 1: Memory Compression (>= 85%)
     // -------------------------------------------------------------------------
     let rollup_tier2_tokens: usize = rollups1.iter().map(estimate_rollup_tokens).sum();
     let compression_ratio = 1.0 - (rollup_tier2_tokens as f64 / raw_tier1_tokens as f64);
@@ -860,15 +862,15 @@ pub async fn run_hierarchical_episodic_pyramid_eval() -> Result<HierarchicalPyra
     println!("\n📊 [Assertion 1: Memory Compression]");
     println!("  • Raw Tier 1 Steps Tokens:    ~{} tokens", raw_tier1_tokens);
     println!("  • Tier 2 Rollups Tokens:      ~{} tokens", rollup_tier2_tokens);
-    println!("  • Memory Compression Ratio:   {:.1}% (Target: >= 70.0%)", compression_pct);
+    println!("  • Memory Compression Ratio:   {:.1}% (Target: >= 85.0%)", compression_pct);
 
-    if compression_pct < 70.0 {
+    if compression_pct < 85.0 {
         bail!(
-            "Memory compression failed: achieved {:.2}%, required >= 70.0%",
+            "Memory compression failed: achieved {:.2}%, required >= 85.0%",
             compression_pct
         );
     }
-    println!("  ✓ Memory compression assertion PASSED ({:.1}% >= 70%)", compression_pct);
+    println!("  ✓ Memory compression assertion PASSED ({:.1}% >= 85%)", compression_pct);
 
     // -------------------------------------------------------------------------
     // Assertion 2: Drill-Down Accuracy (100% Precision)
@@ -1009,8 +1011,86 @@ pub async fn run_hierarchical_episodic_pyramid_eval() -> Result<HierarchicalPyra
     }
     println!("  ✓ Determinism assertion PASSED (100% identical outputs)");
 
+    // -------------------------------------------------------------------------
+    // Assertion 4: Progressive Drill-Down & Temporal Filtering (EpisodicPyramidStore)
+    // -------------------------------------------------------------------------
+    println!("\n🔍 [Assertion 4: Progressive Drill-Down & Temporal Filtering]");
+
+    let pyramid_store = EpisodicPyramidStore::new(store1.clone()).with_config(config.clone());
+
+    // 4a. Compact view: expand_episodes = false
+    let compact_filter = PyramidFilter::new().with_session_id(session_id);
+    let compact_report = pyramid_store.drill_down_progressive(&compact_filter, false)?;
+
+    if compact_report.expanded {
+        bail!("Expected compact report to have expanded = false");
+    }
+    if compact_report.rollups_count != 3 {
+        bail!("Expected 3 rollups in compact report, got {}", compact_report.rollups_count);
+    }
+    if compact_report.total_steps != 0 {
+        bail!("Expected zero execution steps emitted in compact report, got {}", compact_report.total_steps);
+    }
+    if !compact_report.trees.is_empty() {
+        bail!("Expected empty trees in compact report");
+    }
+    println!("  • Compact Tier 2 View: 3 rollups, 0 raw steps emitted (Tokens preserved: {:.1}%)", compression_pct);
+
+    // 4b. On-demand expansion: expand_episodes = true for task-sqlite-pool
+    let expand_filter = PyramidFilter::new()
+        .with_session_id(session_id)
+        .with_cluster_id("task-sqlite-pool");
+    let expanded_report = pyramid_store.drill_down_progressive(&expand_filter, true)?;
+
+    if !expanded_report.expanded {
+        bail!("Expected expanded report to have expanded = true");
+    }
+    if expanded_report.rollups_count != 1 {
+        bail!("Expected 1 rollup for task-sqlite-pool, got {}", expanded_report.rollups_count);
+    }
+    if expanded_report.trees.len() != 1 {
+        bail!("Expected 1 tree for task-sqlite-pool, got {}", expanded_report.trees.len());
+    }
+
+    let sqlite_tree = &expanded_report.trees[0];
+    let failing_leaves_exp: Vec<&EpisodeRecord> = sqlite_tree
+        .leaves
+        .iter()
+        .filter(|ep| ep.event_trace.iter().any(|s| s.error.is_some()))
+        .collect();
+
+    if failing_leaves_exp.len() != 1 {
+        bail!("Expected exactly 1 failing leaf in on-demand expansion, got {}", failing_leaves_exp.len());
+    }
+    let fail_ep = failing_leaves_exp[0];
+    if fail_ep.id != expected_fail_ep_id {
+        bail!("On-demand expansion failed to pinpoint expected failure episode: {} vs {}", fail_ep.id, expected_fail_ep_id);
+    }
+    let fail_step = fail_ep.event_trace.iter().find(|s| s.error.is_some()).unwrap();
+    if fail_step.step_index != expected_fail_step_idx {
+        bail!("On-demand expansion failed to pinpoint step index: {} vs {}", fail_step.step_index, expected_fail_step_idx);
+    }
+    println!("  • On-demand Progressive Expansion: Pinpointed failing episode {} (Step {}) with 100% precision", fail_ep.id, fail_step.step_index);
+
+    // 4c. Temporal interval filtering
+    // Episodes: auth (1700000000..1700000300), sqlite (1700001000..1700001300), cdc (1700002000..1700002300)
+    let time_filter = PyramidFilter::new()
+        .with_session_id(session_id)
+        .with_start_time(1700000000 + 800)
+        .with_end_time(1700000000 + 1600);
+    let time_report = pyramid_store.drill_down_progressive(&time_filter, false)?;
+    if time_report.rollups_count != 1 {
+        bail!("Expected temporal filter to isolate exactly 1 rollup (SQLite pool), got {}", time_report.rollups_count);
+    }
+    if time_report.summaries[0].task_id.as_deref() != Some("task-sqlite-pool") {
+        bail!("Expected isolated rollup to be task-sqlite-pool, got {:?}", time_report.summaries[0].task_id);
+    }
+    println!("  • Temporal Interval Filtering: Accurately isolated cluster '{}' across timestamp window", time_report.summaries[0].task_id.as_deref().unwrap_or(""));
+
+    println!("  ✓ Progressive drill-down and temporal filtering assertion PASSED (100% precision)");
+
     println!("\n================================================================================");
-    println!("🎉 HIERARCHICAL EPISODIC MEMORY PYRAMID EVALUATION PASSED (ALL 3/3 ASSERTIONS)");
+    println!("🎉 HIERARCHICAL EPISODIC MEMORY PYRAMID EVALUATION PASSED (ALL 4/4 ASSERTIONS)");
     println!("================================================================================\n");
 
     Ok(HierarchicalPyramidEvalReport {
@@ -1042,8 +1122,8 @@ mod tests {
             .await
             .expect("Hierarchical episodic pyramid eval failed");
         assert!(
-            report.compression_ratio >= 0.70,
-            "Compression ratio must be >= 0.70, was {:.2}",
+            report.compression_ratio >= 0.85,
+            "Compression ratio must be >= 0.85 (85%+), was {:.2}",
             report.compression_ratio
         );
         assert_eq!(

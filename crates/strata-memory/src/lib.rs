@@ -75,7 +75,10 @@ pub use metaplasticity::{
 };
 pub use pipeline::{ConsolidationPipeline, ConsolidationResult, PipelineConfig};
 pub use procedural_mining::TrajectoryMiner;
-pub use pyramid::{DrillDownTree, EpisodicPyramidEngine, PyramidConfig};
+pub use pyramid::{
+    DrillDownTree, EpisodicPyramidEngine, EpisodicPyramidStore, PyramidConfig,
+    PyramidDrillDownReport, PyramidFilter, RollupSummary,
+};
 pub use retrieval::{HybridRanker, HybridRankerConfig};
 pub use spreading_activation::{
     EdgeKind, GraphEdge, GraphNode, KnowledgeGraph, SpreadingActivationConfig,

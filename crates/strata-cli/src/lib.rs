@@ -1465,6 +1465,58 @@ export function login(username: string): boolean {
             )
             .await;
         assert!(mcp_rollup.is_error != Some(true));
+
+        // 9. Test MCP memory_pyramid_drilldown compact (expand_episodes = false)
+        let mcp_p_compact = server
+            .execute_tool(
+                "memory_pyramid_drilldown",
+                serde_json::json!({
+                    "session_id": "sess-pyr",
+                    "expand_episodes": false
+                }),
+            )
+            .await;
+        assert!(mcp_p_compact.is_error != Some(true));
+        assert!(mcp_p_compact.content[0].text.contains("Hierarchical Pyramid Rollups (Compact Tier 2)"));
+        let val_compact: serde_json::Value = serde_json::from_str(&mcp_p_compact.structured_content.unwrap().to_string()).unwrap();
+        assert_eq!(val_compact["expanded"], false);
+        assert_eq!(val_compact["rollups_count"], 1);
+        assert_eq!(val_compact["total_steps"], 0);
+        assert_eq!(val_compact["summaries"][0]["id"], rollup_id.to_string());
+
+        // 10. Test MCP memory_pyramid_drilldown expanded (expand_episodes = true)
+        let mcp_p_expanded = server
+            .execute_tool(
+                "memory_pyramid_drilldown",
+                serde_json::json!({
+                    "cluster_id": "task-cluster-1",
+                    "expand_episodes": true
+                }),
+            )
+            .await;
+        assert!(mcp_p_expanded.is_error != Some(true));
+        assert!(mcp_p_expanded.content[0].text.contains("Hierarchical Pyramid Drill-Down (Expanded)"));
+        let val_expanded: serde_json::Value = serde_json::from_str(&mcp_p_expanded.structured_content.unwrap().to_string()).unwrap();
+        assert_eq!(val_expanded["expanded"], true);
+        assert_eq!(val_expanded["rollups_count"], 1);
+        assert_eq!(val_expanded["total_steps"], 2);
+        assert_eq!(val_expanded["trees"][0]["root"]["id"], rollup_id.to_string());
+        assert_eq!(val_expanded["trees"][0]["leaves"].as_array().unwrap().len(), 2);
+
+        // 11. Test MCP memory_pyramid_drilldown by rollup_id
+        let mcp_p_id = server
+            .execute_tool(
+                "memory_pyramid_drilldown",
+                serde_json::json!({
+                    "rollup_id": rollup_id.to_string(),
+                    "expand_episodes": true
+                }),
+            )
+            .await;
+        assert!(mcp_p_id.is_error != Some(true));
+        let val_id: serde_json::Value = serde_json::from_str(&mcp_p_id.structured_content.unwrap().to_string()).unwrap();
+        assert_eq!(val_id["rollups_count"], 1);
+        assert_eq!(val_id["trees"][0]["root"]["id"], rollup_id.to_string());
     }
 
     #[tokio::test]
