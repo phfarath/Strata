@@ -320,7 +320,10 @@ impl StrataConfig {
         cfg.token.filter(|t| !t.trim().is_empty())
     }
 
-    /// Resolve the workspace ID: CLI arg > ENV `STRATA_WORKSPACE_ID` > Config file > "default"
+    /// Resolve the workspace ID: CLI arg > ENV `STRATA_WORKSPACE_ID` > Config file > "default".
+    ///
+    /// Prefers the cloud UUID (`workspace_id`) over `workspace_slug`. Slugs are for display /
+    /// local labeling; sync outbox + API routes expect the UUID from `strata login`.
     pub fn resolve_workspace(arg: Option<&str>) -> String {
         if let Some(a) = arg {
             if !a.trim().is_empty() && a.trim() != "default" {
@@ -332,9 +335,14 @@ impl StrataConfig {
                 return ws.trim().to_string();
             }
         }
-        let cfg = Self::load();
-        cfg.workspace_slug
-            .or(cfg.workspace_id)
+        Self::load().preferred_workspace()
+    }
+
+    /// Cloud UUID first, then slug (legacy / display), then `"default"`.
+    pub fn preferred_workspace(&self) -> String {
+        self.workspace_id
+            .clone()
+            .or_else(|| self.workspace_slug.clone())
             .unwrap_or_else(|| "default".to_string())
     }
 }
@@ -373,5 +381,24 @@ mod tests {
 
         assert_eq!(base.provider, Some("ollama".to_string()));
         assert_eq!(base.model, Some("openrouter/free".to_string()));
+    }
+
+    #[test]
+    fn preferred_workspace_prefers_uuid_over_slug() {
+        let cfg = StrataConfig {
+            workspace_id: Some("64a5f3f5-b942-4d7b-a29d-f047cc4918a0".into()),
+            workspace_slug: Some("dogfood-workspace".into()),
+            ..Default::default()
+        };
+        assert_eq!(
+            cfg.preferred_workspace(),
+            "64a5f3f5-b942-4d7b-a29d-f047cc4918a0"
+        );
+
+        let slug_only = StrataConfig {
+            workspace_slug: Some("legacy-slug".into()),
+            ..Default::default()
+        };
+        assert_eq!(slug_only.preferred_workspace(), "legacy-slug");
     }
 }
