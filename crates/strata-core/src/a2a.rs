@@ -37,6 +37,158 @@ impl AgentPresence {
     }
 }
 
+/// Declarative capability card announced by an agent upon entering the local workspace.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct AgentCard {
+    pub agent_id: String,
+    pub host: String, // "cursor", "claude-code", "gemini-cli", "antigravity", etc.
+    pub memory_capabilities: Vec<String>, // ["episodic", "semantic", "procedural"]
+    pub domain_scopes: Vec<String>, // ["crates/strata-memory", "crates/strata-core"]
+    pub memory_persistence: String, // "longterm", "ephemeral", "session"
+    pub tenant_scopes: Vec<String>, // ["project:strata", "global"]
+    pub memory_privacy_mode: String, // "isolated", "shared", "read_only"
+    pub confidence_score: f32, // Calibrated domain confidence [0.0, 1.0]
+    pub updated_at: i64,
+}
+
+impl AgentCard {
+    pub fn new(agent_id: impl Into<String>, host: impl Into<String>) -> Self {
+        Self {
+            agent_id: agent_id.into(),
+            host: host.into(),
+            memory_capabilities: vec!["episodic".into(), "semantic".into(), "procedural".into()],
+            domain_scopes: Vec::new(),
+            memory_persistence: "longterm".into(),
+            tenant_scopes: vec!["project:default".into()],
+            memory_privacy_mode: "shared".into(),
+            confidence_score: 1.0,
+            updated_at: Utc::now().timestamp(),
+        }
+    }
+
+    pub fn with_domain_scopes(mut self, scopes: Vec<String>) -> Self {
+        self.domain_scopes = scopes;
+        self
+    }
+
+    pub fn with_memory_capabilities(mut self, caps: Vec<String>) -> Self {
+        self.memory_capabilities = caps;
+        self
+    }
+
+    pub fn with_tenant_scopes(mut self, scopes: Vec<String>) -> Self {
+        self.tenant_scopes = scopes;
+        self
+    }
+
+    pub fn with_confidence(mut self, confidence: f32) -> Self {
+        self.confidence_score = confidence.clamp(0.0, 1.0);
+        self
+    }
+}
+
+/// Authoritative mapping between a code domain/topic space and the specialist agent.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct DomainAuthority {
+    pub domain: String, // e.g. "crates/strata-memory", "src/auth"
+    pub authoritative_agent: String, // e.g. "agent-claude-1"
+    pub confidence_score: f32, // Calibrated confidence [0.0, 1.0]
+    pub lease_held: bool, // Whether the agent currently holds an exclusive lease
+    pub active_tasks_count: u32,
+    pub last_active_at: i64,
+}
+
+impl DomainAuthority {
+    pub fn new(domain: impl Into<String>, agent: impl Into<String>, confidence: f32) -> Self {
+        Self {
+            domain: domain.into(),
+            authoritative_agent: agent.into(),
+            confidence_score: confidence.clamp(0.0, 1.0),
+            lease_held: false,
+            active_tasks_count: 0,
+            last_active_at: Utc::now().timestamp(),
+        }
+    }
+
+    pub fn with_lease(mut self, held: bool) -> Self {
+        self.lease_held = held;
+        self
+    }
+
+    pub fn with_active_tasks(mut self, count: u32) -> Self {
+        self.active_tasks_count = count;
+        self
+    }
+}
+
+/// Query routed via the transactive memory directory to the domain authority.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct TransactiveQuery {
+    pub query_id: String,
+    pub from_agent: String,
+    pub domain_topic: String,
+    pub query_text: String,
+    pub timeout_ms: u64,
+    pub timestamp_us: i64,
+}
+
+impl TransactiveQuery {
+    pub fn new(
+        query_id: impl Into<String>,
+        from_agent: impl Into<String>,
+        domain_topic: impl Into<String>,
+        query_text: impl Into<String>,
+    ) -> Self {
+        Self {
+            query_id: query_id.into(),
+            from_agent: from_agent.into(),
+            domain_topic: domain_topic.into(),
+            query_text: query_text.into(),
+            timeout_ms: 5000,
+            timestamp_us: Utc::now().timestamp_micros(),
+        }
+    }
+
+    pub fn with_timeout_ms(mut self, timeout_ms: u64) -> Self {
+        self.timeout_ms = timeout_ms;
+        self
+    }
+}
+
+/// Response returned by the domain authority agent to a transactive query.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct TransactiveResponse {
+    pub query_id: String,
+    pub responder_agent: String,
+    pub confidence_score: f32,
+    pub answer: String,
+    pub references: Vec<String>,
+    pub timestamp_us: i64,
+}
+
+impl TransactiveResponse {
+    pub fn new(
+        query_id: impl Into<String>,
+        responder_agent: impl Into<String>,
+        confidence_score: f32,
+        answer: impl Into<String>,
+    ) -> Self {
+        Self {
+            query_id: query_id.into(),
+            responder_agent: responder_agent.into(),
+            confidence_score: confidence_score.clamp(0.0, 1.0),
+            answer: answer.into(),
+            references: Vec::new(),
+            timestamp_us: Utc::now().timestamp_micros(),
+        }
+    }
+
+    pub fn with_references(mut self, references: Vec<String>) -> Self {
+        self.references = references;
+        self
+    }
+}
+
 /// Represents an exclusive temporal lease on a resource (file, directory, or module).
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ResourceLease {
@@ -90,7 +242,7 @@ pub enum LeaseAcquireResult {
 }
 
 /// Real-time event transmitted across the local A2A IPC bus.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(tag = "type", content = "payload", rename_all = "snake_case")]
 pub enum IpcEvent {
     LeaseAcquired {
@@ -149,6 +301,22 @@ pub enum IpcEvent {
         agent_id: Option<String>,
         timestamp_us: i64,
     },
+    AgentAnnounced {
+        card: AgentCard,
+        timestamp_us: i64,
+    },
+    DomainAuthorityUpdated {
+        authority: DomainAuthority,
+        timestamp_us: i64,
+    },
+    TransactiveQueryRouted {
+        query: TransactiveQuery,
+        timestamp_us: i64,
+    },
+    TransactiveResponseReturned {
+        response: TransactiveResponse,
+        timestamp_us: i64,
+    },
 }
 
 impl IpcEvent {
@@ -162,6 +330,10 @@ impl IpcEvent {
             Self::DirectMessage { timestamp_us, .. } => *timestamp_us,
             Self::TaskBroadcast { timestamp_us, .. } => *timestamp_us,
             Self::TaskStateChanged { timestamp_us, .. } => *timestamp_us,
+            Self::AgentAnnounced { timestamp_us, .. } => *timestamp_us,
+            Self::DomainAuthorityUpdated { timestamp_us, .. } => *timestamp_us,
+            Self::TransactiveQueryRouted { timestamp_us, .. } => *timestamp_us,
+            Self::TransactiveResponseReturned { timestamp_us, .. } => *timestamp_us,
         }
     }
 }
@@ -227,7 +399,7 @@ impl A2aMessage {
 }
 
 /// Top-level framed message on the local IPC transport.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(tag = "kind", rename_all = "snake_case")]
 pub enum IpcMessage {
     Event { event: IpcEvent },
@@ -351,6 +523,71 @@ mod tests {
             .with_kind("handoff");
         assert_eq!(a2a_msg.kind, "handoff");
         assert_eq!(a2a_msg.to_agent.as_deref(), Some("agent-b"));
+    }
+
+    #[test]
+    fn test_transactive_directory_schemas_and_roundtrip() {
+        let card = AgentCard::new("agent-gemini-pro", "gemini-cli")
+            .with_domain_scopes(vec!["crates/strata-memory".into(), "crates/strata-core".into()])
+            .with_memory_capabilities(vec!["episodic".into(), "procedural".into()])
+            .with_tenant_scopes(vec!["project:strata".into()])
+            .with_confidence(0.95);
+
+        assert_eq!(card.agent_id, "agent-gemini-pro");
+        assert_eq!(card.host, "gemini-cli");
+        assert_eq!(card.domain_scopes.len(), 2);
+        assert_eq!(card.confidence_score, 0.95);
+
+        let card_json = serde_json::to_string(&card).expect("serialize AgentCard");
+        let card_de: AgentCard = serde_json::from_str(&card_json).expect("deserialize AgentCard");
+        assert_eq!(card, card_de);
+
+        let authority = DomainAuthority::new("crates/strata-memory", "agent-gemini-pro", 0.92)
+            .with_lease(true)
+            .with_active_tasks(1);
+
+        assert!(authority.lease_held);
+        assert_eq!(authority.active_tasks_count, 1);
+        assert_eq!(authority.authoritative_agent, "agent-gemini-pro");
+
+        let auth_json = serde_json::to_string(&authority).expect("serialize DomainAuthority");
+        let auth_de: DomainAuthority = serde_json::from_str(&auth_json).expect("deserialize DomainAuthority");
+        assert_eq!(authority, auth_de);
+
+        let query = TransactiveQuery::new(
+            "q-101",
+            "agent-cursor-1",
+            "crates/strata-memory",
+            "How does JTMS belief revision invalidate code anchors?",
+        ).with_timeout_ms(3000);
+
+        assert_eq!(query.timeout_ms, 3000);
+
+        let response = TransactiveResponse::new(
+            "q-101",
+            "agent-gemini-pro",
+            0.96,
+            "JTMS traverses non-monotonic dependency edges and triggers Blake3 Merkle diff checks.",
+        ).with_references(vec!["crates/strata-memory/src/jtms.rs".into()]);
+
+        assert_eq!(response.references.len(), 1);
+
+        let event_q = IpcEvent::TransactiveQueryRouted {
+            query: query.clone(),
+            timestamp_us: 1700000000000100,
+        };
+        let event_r = IpcEvent::TransactiveResponseReturned {
+            response: response.clone(),
+            timestamp_us: 1700000000000200,
+        };
+
+        assert_eq!(event_q.timestamp_us(), 1700000000000100);
+        assert_eq!(event_r.timestamp_us(), 1700000000000200);
+
+        let q_json = serde_json::to_string(&event_q).unwrap();
+        assert!(q_json.contains("\"type\":\"transactive_query_routed\""));
+        let r_json = serde_json::to_string(&event_r).unwrap();
+        assert!(r_json.contains("\"type\":\"transactive_response_returned\""));
     }
 }
 

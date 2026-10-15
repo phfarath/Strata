@@ -8,7 +8,9 @@ use std::sync::Arc;
 use serde_json::{json, Value};
 use uuid::Uuid;
 
-use strata_core::a2a::{A2aMessage, IpcEvent};
+use strata_core::a2a::{
+    A2aMessage, AgentCard, DomainAuthority, IpcEvent, TransactiveQuery,
+};
 use strata_core::blackboard::{TaskArtifact, TaskFilter, TaskStatus};
 use strata_memory::{IpcClient, StigmergyCoordinator};
 
@@ -103,6 +105,33 @@ pub fn definitions() -> Vec<ToolDefinition> {
             "Read this agent's A2A mailbox (direct + broadcast). Returned messages are marked as read.",
             &[("unread", "boolean", "Only unread messages (default true)")],
             &[],
+        ),
+        tool(
+            "a2a_directory",
+            "Query the transactive memory directory. With 'resolve_domain', finds the best specialist agent for a code path or domain via hierarchical prefix matching.",
+            &[
+                ("resolve_domain", "string", "Code path or domain to resolve (e.g. 'crates/strata-memory/src/jtms.rs')"),
+            ],
+            &[],
+        ),
+        tool(
+            "a2a_announce",
+            "Announce agent capabilities, specialization, and domain authorities to the multi-agent transactive directory.",
+            &[
+                ("domains", "string", "Comma-separated domains or file paths this agent specializes in"),
+                ("confidence", "number", "Confidence score between 0.0 and 1.0 (default 1.0)"),
+                ("host", "string", "Host environment (e.g. 'antigravity', 'claude-code', 'cursor')"),
+            ],
+            &[],
+        ),
+        tool(
+            "a2a_query_transactive",
+            "Route a transactive query to the authoritative specialist agent for a domain or code path.",
+            &[
+                ("domain", "string", "Target domain or file path (e.g. 'crates/strata-core')"),
+                ("question", "string", "Question or request for domain expertise"),
+            ],
+            &["domain", "question"],
         ),
     ]
 }
@@ -293,6 +322,117 @@ async fn run(
                 coordinator.mark_a2a_read(&ids).map_err(err)?;
             }
             Ok(json!(messages))
+        }
+
+        "a2a_directory" => {
+            if let Some(domain) = opt(args, "resolve_domain") {
+                let authority = coordinator.find_best_authority_for_domain(domain).map_err(err)?;
+                Ok(json!({
+                    "resolved_domain": domain,
+                    "authority": authority
+                }))
+            } else {
+                let agents = coordinator.list_agent_cards().map_err(err)?;
+                let authorities = coordinator.list_domain_authorities().map_err(err)?;
+                Ok(json!({
+                    "agents": agents,
+                    "authorities": authorities
+                }))
+            }
+        }
+
+        "a2a_announce" => {
+            let host = opt(args, "host").unwrap_or("generic");
+            let mut card = AgentCard::new(&agent, host);
+            let confidence = args
+                .get("confidence")
+                .and_then(Value::as_f64)
+                .map(|f| f as f32)
+                .unwrap_or(1.0);
+
+            let domains_str = opt(args, "domains").unwrap_or("");
+            let domains: Vec<String> = domains_str
+                .split(',')
+                .map(|s| s.trim().to_string())
+                .filter(|s| !s.is_empty())
+                .collect();
+
+            card.domain_scopes = domains.clone();
+            card.confidence_score = confidence;
+            coordinator.register_agent_card(&card).map_err(err)?;
+
+            publish(
+                ipc,
+                IpcEvent::AgentAnnounced {
+                    card: card.clone(),
+                    timestamp_us: chrono::Utc::now().timestamp_micros(),
+                },
+            )
+            .await;
+
+            let mut registered_authorities = Vec::new();
+            for d in &domains {
+                let auth = DomainAuthority::new(d, &agent, confidence);
+                coordinator.set_domain_authority(&auth).map_err(err)?;
+                publish(
+                    ipc,
+                    IpcEvent::DomainAuthorityUpdated {
+                        authority: auth.clone(),
+                        timestamp_us: chrono::Utc::now().timestamp_micros(),
+                    },
+                )
+                .await;
+                registered_authorities.push(auth);
+            }
+
+            Ok(json!({
+                "status": "announced",
+                "agent_card": card,
+                "authorities": registered_authorities
+            }))
+        }
+
+        "a2a_query_transactive" => {
+            let domain = req(args, "domain")?;
+            let question = req(args, "question")?;
+            let query_id = new_id("query");
+
+            let best_auth = coordinator.find_best_authority_for_domain(domain).map_err(err)?;
+
+            let target_agent = best_auth.as_ref().map(|a| a.authoritative_agent.clone());
+            let query = TransactiveQuery::new(
+                &query_id,
+                &agent,
+                domain,
+                question,
+            );
+
+            // Persist as A2A message in sqlite inbox so recipient receives it
+            let msg_id = new_id("msg");
+            let a2a_msg = match &target_agent {
+                Some(to) => A2aMessage::direct(&msg_id, &agent, to, question)
+                    .with_kind("transactive_query"),
+                None => A2aMessage::broadcast(&msg_id, &agent, question)
+                    .with_kind("transactive_query"),
+            };
+            coordinator.save_a2a_message(&a2a_msg).map_err(err)?;
+
+            publish(
+                ipc,
+                IpcEvent::TransactiveQueryRouted {
+                    query: query.clone(),
+                    timestamp_us: chrono::Utc::now().timestamp_micros(),
+                },
+            )
+            .await;
+
+            Ok(json!({
+                "query_id": query_id,
+                "routed_to": target_agent,
+                "domain": domain,
+                "matched_authority": best_auth,
+                "status": if best_auth.is_some() { "routed" } else { "broadcast_unresolved" }
+            }))
         }
 
         other => Err(format!("Unknown tool: '{other}'")),

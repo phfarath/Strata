@@ -3,7 +3,10 @@ use clap::{Args, Subcommand};
 use std::time::Duration;
 use uuid::Uuid;
 
-use strata_core::a2a::{A2aMessage, AgentPresence, IpcEvent, LeaseAcquireResult, ResourceLease};
+use strata_core::a2a::{
+    A2aMessage, AgentCard, AgentPresence, DomainAuthority, IpcEvent, LeaseAcquireResult,
+    ResourceLease, TransactiveQuery, TransactiveResponse,
+};
 use strata_memory::StigmergyCoordinator;
 
 use crate::agent_env::{is_json_mode, resolve_agent_id, resolve_task_id};
@@ -155,6 +158,51 @@ pub enum A2aAction {
 
         #[arg(long, default_value_t = 30, help = "Timeout in seconds before exiting (default: 30s)")]
         timeout: u64,
+
+        #[arg(long)]
+        json: bool,
+    },
+
+    /// Inspect or resolve domains in the transactive memory directory
+    Directory {
+        #[arg(long, help = "Resolve the best specialist agent for this domain/path")]
+        resolve: Option<String>,
+
+        #[arg(long)]
+        json: bool,
+    },
+
+    /// Register or update agent specialization and domain authority
+    Announce {
+        #[arg(long, help = "Agent identifier (defaults to STRATA_AGENT_ID)")]
+        agent: Option<String>,
+
+        #[arg(long, help = "Agent host runner (defaults to STRATA_AGENT_HOST or auto-detected)")]
+        host: Option<String>,
+
+        #[arg(long, help = "Comma-separated domains or code partitions (e.g. 'crates/strata-memory,db')")]
+        domains: Option<String>,
+
+        #[arg(long, default_value_t = 1.0, help = "Confidence score (0.0 - 1.0)")]
+        confidence: f32,
+
+        #[arg(long)]
+        json: bool,
+    },
+
+    /// Route a transactive query to the specialist agent for a domain
+    Query {
+        #[arg(help = "Domain or code partition to query")]
+        domain: String,
+
+        #[arg(help = "Question or context request")]
+        question: String,
+
+        #[arg(long, help = "Sender agent identifier")]
+        agent: Option<String>,
+
+        #[arg(long, default_value_t = 0, help = "Synchronous wait timeout in ms (0 for async)")]
+        timeout_ms: u64,
 
         #[arg(long)]
         json: bool,
@@ -426,6 +474,18 @@ pub async fn run_a2a(args: A2aArgs, coordinator: StigmergyCoordinator) -> Result
                                             let agent_str = agent_id.as_deref().unwrap_or("-");
                                             println!("📋 [TASK STATE] id='{}' status: {} -> {} (by {})", task_id, old_status, new_status, agent_str);
                                         }
+                                        strata_core::a2a::IpcEvent::AgentAnnounced { card, .. } => {
+                                            println!("🪪 [AGENT ANNOUNCED] agent='{}' host='{}' caps={:?} domains={:?}", card.agent_id, card.host, card.memory_capabilities, card.domain_scopes);
+                                        }
+                                        strata_core::a2a::IpcEvent::DomainAuthorityUpdated { authority, .. } => {
+                                            println!("🏛️ [DOMAIN AUTHORITY] domain='{}' agent='{}' conf={:.2} lease={}", authority.domain, authority.authoritative_agent, authority.confidence_score, authority.lease_held);
+                                        }
+                                        strata_core::a2a::IpcEvent::TransactiveQueryRouted { query, .. } => {
+                                            println!("🔍 [TRANSACTIVE QUERY] from='{}' domain='{}': {}", query.from_agent, query.domain_topic, query.query_text);
+                                        }
+                                        strata_core::a2a::IpcEvent::TransactiveResponseReturned { response, .. } => {
+                                            println!("💡 [TRANSACTIVE RESPONSE] responder='{}' conf={:.2}: {}", response.responder_agent, response.confidence_score, response.answer);
+                                        }
                                     }
                                 }
                             }
@@ -648,6 +708,227 @@ pub async fn run_a2a(args: A2aArgs, coordinator: StigmergyCoordinator) -> Result
                         println!("⏱️ Timeout reached ({}s) without matching event.", timeout);
                     }
                 }
+            }
+        }
+
+        Some(A2aAction::Directory { resolve, json }) => {
+            let json_mode = is_json_mode(json);
+            if let Some(domain) = resolve {
+                let auth_opt = coordinator.resolve_domain_authority(&domain)?;
+                if json_mode {
+                    println!("{}", serde_json::to_string_pretty(&auth_opt)?);
+                } else {
+                    println!("\n🔍 [Transactive Directory Resolution: '{}']", domain);
+                    println!("═════════════════════════════════════════════════════════════");
+                    match auth_opt {
+                        Some(auth) => {
+                            println!("  Specialist Agent : {}", auth.authoritative_agent);
+                            println!("  Matched Domain   : {}", auth.domain);
+                            println!("  Confidence Score : {:.2}", auth.confidence_score);
+                            println!("  Active Lease     : {}", if auth.lease_held { "YES (exclusive lock)" } else { "no" });
+                            println!("  Active Tasks     : {}", auth.active_tasks_count);
+                        }
+                        None => {
+                            println!("  (No specialist agent registered for this domain)");
+                        }
+                    }
+                    println!();
+                }
+            } else {
+                let agents = coordinator.list_agent_cards()?;
+                let authorities = coordinator.list_domain_authorities()?;
+                if json_mode {
+                    println!("{}", serde_json::to_string_pretty(&serde_json::json!({
+                        "agents": agents,
+                        "authorities": authorities,
+                    }))?);
+                } else {
+                    println!("\n📚 [Transactive Memory Directory]");
+                    println!("═════════════════════════════════════════════════════════════");
+                    println!("Registered Agents: {}", agents.len());
+                    if agents.is_empty() {
+                        println!("  (No agent capability cards announced)");
+                    } else {
+                        for a in &agents {
+                            let domains_str = if a.domain_scopes.is_empty() {
+                                "-".to_string()
+                            } else {
+                                a.domain_scopes.join(", ")
+                            };
+                            println!("  • {:<16} host={:<12} confidence={:.2} domains=[{}]", a.agent_id, a.host, a.confidence_score, domains_str);
+                        }
+                    }
+
+                    println!("\nDomain Authorities: {}", authorities.len());
+                    if authorities.is_empty() {
+                        println!("  (No domain authorities registered)");
+                    } else {
+                        for auth in &authorities {
+                            let lease_str = if auth.lease_held { " [LEASE HELD]" } else { "" };
+                            println!("  • {:<28} -> {:<16} (conf: {:.2}){}", auth.domain, auth.authoritative_agent, auth.confidence_score, lease_str);
+                        }
+                    }
+                    println!();
+                }
+            }
+        }
+
+        Some(A2aAction::Announce {
+            agent,
+            host,
+            domains,
+            confidence,
+            json,
+        }) => {
+            let json_mode = is_json_mode(json);
+            let agent_id = resolve_agent_id(agent.as_deref());
+            let host_name = host.unwrap_or_else(|| {
+                std::env::var("STRATA_AGENT_HOST").unwrap_or_else(|_| "generic".to_string())
+            });
+
+            let domain_list: Vec<String> = domains
+                .as_deref()
+                .unwrap_or("")
+                .split(',')
+                .map(|s| s.trim().to_string())
+                .filter(|s| !s.is_empty())
+                .collect();
+
+            let card = AgentCard::new(&agent_id, &host_name)
+                .with_domain_scopes(domain_list.clone())
+                .with_confidence(confidence);
+
+            coordinator.register_agent_card(&card)?;
+
+            let mut registered = Vec::new();
+            for d in &domain_list {
+                let auth = DomainAuthority::new(d, &agent_id, confidence);
+                coordinator.set_domain_authority(&auth)?;
+                registered.push(auth);
+            }
+
+            // Publish IPC events
+            let cwd = std::env::current_dir().unwrap_or_else(|_| std::path::PathBuf::from("."));
+            let (endpoint, _) = strata_memory::endpoint_for_workspace(&cwd);
+            if let Ok(ipc) = strata_memory::IpcClient::connect(&endpoint).await {
+                let now_us = chrono::Utc::now().timestamp_micros();
+                let _ = ipc
+                    .publish(IpcEvent::AgentAnnounced {
+                        card: card.clone(),
+                        timestamp_us: now_us,
+                    })
+                    .await;
+                for auth in &registered {
+                    let _ = ipc
+                        .publish(IpcEvent::DomainAuthorityUpdated {
+                            authority: auth.clone(),
+                            timestamp_us: now_us,
+                        })
+                        .await;
+                }
+            }
+
+            if json_mode {
+                println!("{}", serde_json::to_string_pretty(&serde_json::json!({
+                    "status": "announced",
+                    "agent_card": card,
+                    "authorities": registered,
+                }))?);
+            } else {
+                println!("✓ Agent '{}' announced capability card with {} domain authorities.", agent_id, registered.len());
+                for a in &registered {
+                    println!("  • Domain: {:<24} (conf: {:.2})", a.domain, a.confidence_score);
+                }
+            }
+        }
+
+        Some(A2aAction::Query {
+            domain,
+            question,
+            agent,
+            timeout_ms,
+            json,
+        }) => {
+            let json_mode = is_json_mode(json);
+            let from_agent = resolve_agent_id(agent.as_deref());
+            let query_id = format!("qry-{}", &Uuid::new_v4().simple().to_string()[..12]);
+
+            let best_auth = coordinator.resolve_domain_authority(&domain)?;
+            let target_agent = best_auth.as_ref().map(|a| a.authoritative_agent.clone());
+
+            let mut query = TransactiveQuery::new(&query_id, &from_agent, &domain, &question);
+            if timeout_ms > 0 {
+                query = query.with_timeout_ms(timeout_ms);
+            }
+
+            // Persist as A2A message in inbox
+            let message_id = format!("msg-{}", &Uuid::new_v4().simple().to_string()[..12]);
+            let a2a_msg = match &target_agent {
+                Some(to) => A2aMessage::direct(&message_id, &from_agent, to, &question).with_kind("transactive_query"),
+                None => A2aMessage::broadcast(&message_id, &from_agent, &question).with_kind("transactive_query"),
+            };
+            coordinator.save_a2a_message(&a2a_msg)?;
+
+            // Publish IPC event
+            let cwd = std::env::current_dir().unwrap_or_else(|_| std::path::PathBuf::from("."));
+            let (endpoint, _) = strata_memory::endpoint_for_workspace(&cwd);
+            let mut ipc_client = None;
+            if let Ok(ipc) = strata_memory::IpcClient::connect(&endpoint).await {
+                let _ = ipc
+                    .publish(IpcEvent::TransactiveQueryRouted {
+                        query: query.clone(),
+                        timestamp_us: chrono::Utc::now().timestamp_micros(),
+                    })
+                    .await;
+                ipc_client = Some(ipc);
+            }
+
+            // If synchronous wait requested:
+            let mut response_received: Option<TransactiveResponse> = None;
+            if timeout_ms > 0 {
+                if let Some(ipc) = ipc_client {
+                    let expected_query_id = query_id.clone();
+                    let event_opt = ipc
+                        .wait_for_event(
+                            move |event| match event {
+                                IpcEvent::TransactiveResponseReturned { response, .. } => response.query_id == expected_query_id,
+                                _ => false,
+                            },
+                            Duration::from_millis(timeout_ms),
+                        )
+                        .await?;
+
+                    if let Some(IpcEvent::TransactiveResponseReturned { response, .. }) = event_opt {
+                        response_received = Some(response);
+                    }
+                }
+            }
+
+            if json_mode {
+                println!("{}", serde_json::to_string_pretty(&serde_json::json!({
+                    "query_id": query_id,
+                    "domain": domain,
+                    "target_agent": target_agent,
+                    "authority": best_auth,
+                    "response": response_received,
+                }))?);
+            } else {
+                println!("\n📬 [Transactive Query Routed]");
+                println!("═════════════════════════════════════════════════════════════");
+                println!("  Query ID     : {}", query_id);
+                println!("  Domain       : {}", domain);
+                match &target_agent {
+                    Some(tgt) => println!("  Routed To    : {} (Specialist)", tgt),
+                    None => println!("  Routed To    : (Broadcast - No specialist registered)"),
+                }
+                if let Some(resp) = response_received {
+                    println!("  Response     : {} (from: {}, confidence: {:.2})", resp.answer, resp.responder_agent, resp.confidence_score);
+                } else if timeout_ms > 0 {
+                    println!("  Response     : Timed out waiting for response ({} ms)", timeout_ms);
+                } else {
+                    println!("  Status       : Routed asynchronously. Target agent notified.");
+                }
+                println!();
             }
         }
     }
