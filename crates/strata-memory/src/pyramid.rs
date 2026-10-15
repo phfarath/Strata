@@ -1,3 +1,4 @@
+use std::sync::Arc;
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
@@ -129,8 +130,19 @@ impl DrillDownTree {
                 leaf.event_trace.len(),
                 leaf.salience_score
             ));
+            let sub_branch = if is_last { "        " } else { "    │   " };
+            for step in &leaf.event_trace {
+                let err_indicator = if let Some(ref e) = step.error {
+                    format!(" [ERROR: {e}]")
+                } else {
+                    String::new()
+                };
+                out.push_str(&format!(
+                    "{}  ↳ Step {}: {}{}\n",
+                    sub_branch, step.step_index, step.action, err_indicator
+                ));
+            }
             for out_msg in &leaf.outcomes {
-                let sub_branch = if is_last { "        " } else { "    │   " };
                 out.push_str(&format!("{}• Outcome: {}\n", sub_branch, out_msg));
             }
         }
@@ -528,6 +540,294 @@ impl EpisodicPyramidEngine {
             .collect();
 
         Ok(Some(DrillDownTree::new(root, leaves)))
+    }
+}
+
+/// Filter criteria for querying episodic pyramid rollups and drill-downs.
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+pub struct PyramidFilter {
+    /// Optional UUID of a specific rollup episode.
+    pub rollup_id: Option<Uuid>,
+    /// Optional cluster identifier or task ID.
+    pub cluster_id: Option<String>,
+    /// Optional start timestamp (Unix epoch seconds).
+    pub start_time: Option<i64>,
+    /// Optional end timestamp (Unix epoch seconds).
+    pub end_time: Option<i64>,
+    /// Optional session ID filter.
+    pub session_id: Option<String>,
+    /// Maximum number of rollups to return (default: 20).
+    pub limit: usize,
+}
+
+impl PyramidFilter {
+    pub fn new() -> Self {
+        Self {
+            limit: 20,
+            ..Default::default()
+        }
+    }
+
+    pub fn with_rollup_id(mut self, id: Uuid) -> Self {
+        self.rollup_id = Some(id);
+        self
+    }
+
+    pub fn with_cluster_id(mut self, cluster_id: impl Into<String>) -> Self {
+        self.cluster_id = Some(cluster_id.into());
+        self
+    }
+
+    pub fn with_start_time(mut self, start: i64) -> Self {
+        self.start_time = Some(start);
+        self
+    }
+
+    pub fn with_end_time(mut self, end: i64) -> Self {
+        self.end_time = Some(end);
+        self
+    }
+
+    pub fn with_session_id(mut self, session_id: impl Into<String>) -> Self {
+        self.session_id = Some(session_id.into());
+        self
+    }
+
+    pub fn with_limit(mut self, limit: usize) -> Self {
+        self.limit = limit;
+        self
+    }
+}
+
+/// Compact summary of a Tier 2 milestone rollup for zero-explosion LLM context retrieval.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct RollupSummary {
+    pub id: Uuid,
+    pub session_id: String,
+    pub agent_id: String,
+    pub task_id: Option<String>,
+    pub summary: String,
+    pub salience_score: f32,
+    pub tier: u8,
+    pub outcomes: Vec<String>,
+    pub leaves_count: usize,
+    pub child_ids: Vec<Uuid>,
+    pub causal_provenance: Option<String>,
+    pub created_at: i64,
+}
+
+impl From<&EpisodeRecord> for RollupSummary {
+    fn from(ep: &EpisodeRecord) -> Self {
+        Self {
+            id: ep.id,
+            session_id: ep.session_id.clone(),
+            agent_id: ep.agent_id.clone(),
+            task_id: ep.task_id.clone(),
+            summary: ep.summary.clone(),
+            salience_score: ep.salience_score,
+            tier: ep.tier,
+            outcomes: ep.outcomes.clone(),
+            leaves_count: ep.child_ids.len(),
+            child_ids: ep.child_ids.clone(),
+            causal_provenance: ep.causal_provenance.clone(),
+            created_at: ep.created_at,
+        }
+    }
+}
+
+/// Result of a progressive pyramid drill-down query.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct PyramidDrillDownReport {
+    pub expanded: bool,
+    pub rollups_count: usize,
+    pub total_leaves: usize,
+    pub total_steps: usize,
+    pub summaries: Vec<RollupSummary>,
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub trees: Vec<DrillDownTree>,
+}
+
+impl PyramidDrillDownReport {
+    pub fn render_summary(&self) -> String {
+        let mut out = String::new();
+        if self.expanded {
+            out.push_str(&format!(
+                "🌲 [Hierarchical Pyramid Drill-Down (Expanded)] {} rollups, {} leaves, {} total execution steps:\n",
+                self.rollups_count, self.total_leaves, self.total_steps
+            ));
+            for t in &self.trees {
+                out.push_str(&t.render_ascii());
+            }
+        } else {
+            out.push_str(&format!(
+                "🏛️ [Hierarchical Pyramid Rollups (Compact Tier 2)] {} rollups found (pass expand_episodes: true to drill down into raw steps):\n",
+                self.rollups_count
+            ));
+            for s in &self.summaries {
+                out.push_str(&format!(
+                    "• [Tier {} Rollup] ID: {} | Salience: {:.2} | Children: {} | Task: {}\n  Summary: {}\n  Outcomes ({}): {}\n  Created: {}\n",
+                    s.tier,
+                    s.id,
+                    s.salience_score,
+                    s.leaves_count,
+                    s.task_id.as_deref().unwrap_or("none"),
+                    s.summary,
+                    s.outcomes.len(),
+                    s.outcomes.join("; "),
+                    s.created_at
+                ));
+            }
+        }
+        out
+    }
+}
+
+/// Specialized store and engine coordinator for Hierarchical Episodic Memory Pyramid operations.
+#[derive(Clone)]
+pub struct EpisodicPyramidStore {
+    store: Arc<SqliteStore>,
+    config: PyramidConfig,
+}
+
+impl EpisodicPyramidStore {
+    pub fn new(store: Arc<SqliteStore>) -> Self {
+        Self {
+            store,
+            config: PyramidConfig::default(),
+        }
+    }
+
+    pub fn with_config(mut self, config: PyramidConfig) -> Self {
+        self.config = config;
+        self
+    }
+
+    pub fn config(&self) -> &PyramidConfig {
+        &self.config
+    }
+
+    pub fn store(&self) -> &Arc<SqliteStore> {
+        &self.store
+    }
+
+    /// Automatically rolls up idle pending Tier 1 episodes into Tier 2 milestones.
+    pub fn auto_rollup_idle_episodes(
+        &self,
+        session_id: Option<&str>,
+        embeddings: Option<&[Vec<f32>]>,
+    ) -> Result<Vec<EpisodeRecord>, StrataError> {
+        EpisodicPyramidEngine::aggregate_session_rollups(
+            &self.store,
+            session_id,
+            &self.config,
+            embeddings,
+        )
+    }
+
+    /// Alias for auto_rollup_idle_episodes with default embeddings.
+    pub fn process_idle_episodes(
+        &self,
+        session_id: Option<&str>,
+    ) -> Result<Vec<EpisodeRecord>, StrataError> {
+        self.auto_rollup_idle_episodes(session_id, None)
+    }
+
+    /// Reconstructs the hierarchical DrillDownTree for a given rollup ID.
+    pub fn drill_down(&self, rollup_id: &Uuid) -> Result<Option<DrillDownTree>, StrataError> {
+        EpisodicPyramidEngine::drill_down(&self.store, rollup_id)
+    }
+
+    /// Retrieves top-level Tier 2 milestone rollups.
+    pub fn zoom_out(
+        &self,
+        session_id: Option<&str>,
+        limit: usize,
+    ) -> Result<Vec<EpisodeRecord>, StrataError> {
+        EpisodicPyramidEngine::zoom_out(&self.store, session_id, limit)
+    }
+
+    /// Queries rollups according to filter criteria (cluster_id, rollup_id, temporal interval).
+    pub fn query_rollups(&self, filter: &PyramidFilter) -> Result<Vec<EpisodeRecord>, StrataError> {
+        if let Some(ref rid) = filter.rollup_id {
+            if let Some(ep) = self.store.get_episode(rid)? {
+                return Ok(vec![ep]);
+            }
+            return Ok(Vec::new());
+        }
+
+        // If cluster_id is a UUID, try to query by ID first
+        if let Some(ref cid) = filter.cluster_id {
+            if let Ok(parsed_uuid) = Uuid::parse_str(cid) {
+                if let Some(ep) = self.store.get_episode(&parsed_uuid)? {
+                    if ep.tier >= 2 {
+                        return Ok(vec![ep]);
+                    }
+                }
+            }
+        }
+
+        let task_id_filter = filter.cluster_id.as_deref();
+        let session_filter = filter.session_id.as_deref();
+        let limit = if filter.limit == 0 { 20 } else { filter.limit };
+
+        self.store.query_episodes_by_tier(
+            self.config.target_tier,
+            session_filter,
+            task_id_filter,
+            filter.start_time,
+            filter.end_time,
+            limit,
+        )
+    }
+
+    /// Executes progressive drill-down with on-demand expansion of raw Tier 1 leaf episodes.
+    ///
+    /// When `expand_episodes` is `false`, returns compact `RollupSummary` instances with
+    /// 0 raw execution steps (protecting the LLM context window).
+    /// When `expand_episodes` is `true`, drills down into each matched rollup,
+    /// reconstructing full `DrillDownTree` instances containing leaf traces.
+    pub fn drill_down_progressive(
+        &self,
+        filter: &PyramidFilter,
+        expand_episodes: bool,
+    ) -> Result<PyramidDrillDownReport, StrataError> {
+        let rollups = self.query_rollups(filter)?;
+        let rollups_count = rollups.len();
+
+        let summaries: Vec<RollupSummary> = rollups.iter().map(RollupSummary::from).collect();
+
+        if !expand_episodes {
+            let total_leaves: usize = summaries.iter().map(|s| s.leaves_count).sum();
+            return Ok(PyramidDrillDownReport {
+                expanded: false,
+                rollups_count,
+                total_leaves,
+                total_steps: 0,
+                summaries,
+                trees: Vec::new(),
+            });
+        }
+
+        let mut trees = Vec::with_capacity(rollups.len());
+        let mut total_leaves = 0;
+        let mut total_steps = 0;
+
+        for r in &rollups {
+            if let Some(tree) = self.drill_down(&r.id)? {
+                total_leaves += tree.leaves.len();
+                total_steps += tree.total_steps;
+                trees.push(tree);
+            }
+        }
+
+        Ok(PyramidDrillDownReport {
+            expanded: true,
+            rollups_count,
+            total_leaves,
+            total_steps,
+            summaries,
+            trees,
+        })
     }
 }
 
@@ -950,5 +1250,122 @@ mod tests {
         let json1 = serde_json::to_string(&rollups1[0]).unwrap();
         let json2 = serde_json::to_string(&rollups2[0]).unwrap();
         assert_eq!(json1, json2, "Replay generation must be bit-for-bit identical");
+    }
+
+    #[test]
+    fn test_episodic_pyramid_store_progressive_drill_down_and_filtering() {
+        use strata_core::schemas::EpisodeStep;
+
+        let sqlite = Arc::new(SqliteStore::open_in_memory().expect("open memory store"));
+        let pyramid_store = EpisodicPyramidStore::new(sqlite.clone());
+
+        // Ingest two distinct clusters across different timestamps
+        // Cluster A: task-auth, timestamp 1000..1050
+        for i in 0..3 {
+            let mut ep = EpisodeRecord::new("sess-drill", "agent-auth", format!("Auth Step {i}"))
+                .with_task_id("task-auth")
+                .with_salience(0.8)
+                .with_outcome(format!("Auth token {i} verified"))
+                .with_steps(vec![
+                    EpisodeStep::new(0, format!("Generate key {i}")),
+                    EpisodeStep::new(1, format!("Sign claims {i}")),
+                ]);
+            ep.created_at = 1000 + (i as i64 * 20);
+            sqlite.save_episode(&ep).expect("save ep");
+        }
+
+        // Cluster B: task-db, timestamp 2000..2050
+        for i in 0..3 {
+            let mut ep = EpisodeRecord::new("sess-drill", "agent-db", format!("DB Step {i}"))
+                .with_task_id("task-db")
+                .with_salience(0.9)
+                .with_outcome(format!("Table partition {i} created"))
+                .with_steps(vec![
+                    EpisodeStep::new(0, format!("Run migration {i}")),
+                ]);
+            ep.created_at = 2000 + (i as i64 * 20);
+            sqlite.save_episode(&ep).expect("save ep");
+        }
+
+        // 1. Run auto-rollup
+        let rollups = pyramid_store
+            .auto_rollup_idle_episodes(Some("sess-drill"), None)
+            .expect("auto rollup");
+        assert_eq!(rollups.len(), 2, "Expected 2 milestone rollups generated");
+
+        let auth_rollup = rollups.iter().find(|r| r.task_id.as_deref() == Some("task-auth")).unwrap();
+        let db_rollup = rollups.iter().find(|r| r.task_id.as_deref() == Some("task-db")).unwrap();
+
+        // 2. Progressive drill-down with expand_episodes = false (compact Tier 2 summaries)
+        let filter_all = PyramidFilter::new().with_session_id("sess-drill");
+        let compact_report = pyramid_store
+            .drill_down_progressive(&filter_all, false)
+            .expect("compact drilldown");
+
+        assert!(!compact_report.expanded);
+        assert_eq!(compact_report.rollups_count, 2);
+        assert_eq!(compact_report.summaries.len(), 2);
+        assert_eq!(compact_report.trees.len(), 0, "No raw trees should be expanded");
+        assert_eq!(compact_report.total_steps, 0, "Zero steps token overhead when compact");
+        assert_eq!(compact_report.total_leaves, 6);
+        let summary_text = compact_report.render_summary();
+        assert!(summary_text.contains("Hierarchical Pyramid Rollups (Compact Tier 2)"));
+        assert!(summary_text.contains("Auth token"));
+        assert!(summary_text.contains("Table partition"));
+
+        // 3. Progressive drill-down with expand_episodes = true (on-demand expansion)
+        let expanded_report = pyramid_store
+            .drill_down_progressive(&filter_all, true)
+            .expect("expanded drilldown");
+
+        assert!(expanded_report.expanded);
+        assert_eq!(expanded_report.rollups_count, 2);
+        assert_eq!(expanded_report.trees.len(), 2, "Both trees should be reconstructed");
+        assert_eq!(expanded_report.total_leaves, 6);
+        assert_eq!(expanded_report.total_steps, 9); // (3 * 2) + (3 * 1) = 9
+        let expanded_text = expanded_report.render_summary();
+        assert!(expanded_text.contains("Hierarchical Pyramid Drill-Down (Expanded)"));
+        assert!(expanded_text.contains("Generate key"));
+        assert!(expanded_text.contains("Run migration"));
+
+        // 4. Filtering by cluster_id ("task-auth")
+        let filter_auth = PyramidFilter::new().with_cluster_id("task-auth");
+        let auth_report = pyramid_store
+            .drill_down_progressive(&filter_auth, true)
+            .expect("filter auth");
+        assert_eq!(auth_report.rollups_count, 1);
+        assert_eq!(auth_report.summaries[0].task_id.as_deref(), Some("task-auth"));
+        assert_eq!(auth_report.total_leaves, 3);
+        assert_eq!(auth_report.total_steps, 6);
+
+        // 5. Filtering by specific rollup_id
+        let filter_id = PyramidFilter::new().with_rollup_id(db_rollup.id);
+        let id_report = pyramid_store
+            .drill_down_progressive(&filter_id, true)
+            .expect("filter id");
+        assert_eq!(id_report.rollups_count, 1);
+        assert_eq!(id_report.summaries[0].id, db_rollup.id);
+        assert_eq!(id_report.total_steps, 3);
+
+        // 6. Filtering by temporal interval (start_time..end_time)
+        // Window 900..1500 matches task-auth (1000..1040), but excludes task-db (2000..2040)
+        let filter_time = PyramidFilter::new()
+            .with_start_time(900)
+            .with_end_time(1500);
+        let time_report = pyramid_store
+            .drill_down_progressive(&filter_time, false)
+            .expect("time filter");
+        assert_eq!(time_report.rollups_count, 1);
+        assert_eq!(time_report.summaries[0].id, auth_rollup.id);
+
+        // Window 1800..2500 matches task-db only
+        let filter_time_db = PyramidFilter::new()
+            .with_start_time(1800)
+            .with_end_time(2500);
+        let time_db_report = pyramid_store
+            .drill_down_progressive(&filter_time_db, false)
+            .expect("time db filter");
+        assert_eq!(time_db_report.rollups_count, 1);
+        assert_eq!(time_db_report.summaries[0].id, db_rollup.id);
     }
 }

@@ -6234,6 +6234,69 @@ impl SqliteStore {
         Ok(list)
     }
 
+    /// Queries episodic execution traces by tier with optional filters for session, task_id, and temporal bounds.
+    pub fn query_episodes_by_tier(
+        &self,
+        tier: u8,
+        session_id: Option<&str>,
+        task_id: Option<&str>,
+        start_time: Option<i64>,
+        end_time: Option<i64>,
+        limit: usize,
+    ) -> Result<Vec<EpisodeRecord>, StrataError> {
+        let conn = self
+            .conn
+            .lock()
+            .map_err(|_| StrataError::Database("Lock poisoned on SQLite connection".to_string()))?;
+
+        let mut query = String::from(
+            "SELECT id, session_id, agent_id, task_id, summary, event_trace_json,
+                    outcomes_json, salience_score, state_snapshot_json, causal_provenance,
+                    consolidated, created_at, tier, parent_id, child_ids_json
+             FROM episodes WHERE tier = ?",
+        );
+
+        let mut param_values: Vec<Box<dyn rusqlite::ToSql>> = vec![Box::new(tier as i64)];
+
+        if let Some(s) = session_id {
+            query.push_str(" AND session_id = ?");
+            param_values.push(Box::new(s.to_string()));
+        }
+
+        if let Some(t) = task_id {
+            query.push_str(" AND task_id = ?");
+            param_values.push(Box::new(t.to_string()));
+        }
+
+        if let Some(st) = start_time {
+            query.push_str(" AND created_at >= ?");
+            param_values.push(Box::new(st));
+        }
+
+        if let Some(et) = end_time {
+            query.push_str(" AND created_at <= ?");
+            param_values.push(Box::new(et));
+        }
+
+        query.push_str(" ORDER BY created_at DESC LIMIT ?");
+        param_values.push(Box::new(limit as i64));
+
+        let mut stmt = conn.prepare(&query).map_err(|e| StrataError::Database(e.to_string()))?;
+        let rusqlite_params: Vec<&dyn rusqlite::ToSql> =
+            param_values.iter().map(|p| p.as_ref()).collect();
+
+        let rows = stmt
+            .query_map(rusqlite_params.as_slice(), Self::row_to_episode)
+            .map_err(|e| StrataError::Database(e.to_string()))?;
+
+        let mut list = Vec::new();
+        for r in rows {
+            list.push(r.map_err(|e| StrataError::Database(e.to_string()))?);
+        }
+
+        Ok(list)
+    }
+
     /// Lists unrolled episodes of a given tier (parent_id IS NULL) with optional session filtering.
     pub fn list_unrolled_episodes(
         &self,

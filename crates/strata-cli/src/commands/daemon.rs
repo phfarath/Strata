@@ -6,7 +6,7 @@ use tokio::time::sleep;
 use tracing::{error, info, warn};
 
 use strata_core::schemas::SyncConfig;
-use strata_memory::{SqliteStore, SyncEngine};
+use strata_memory::{EpisodicPyramidStore, SqliteStore, SyncEngine};
 
 #[derive(Args, Debug, Clone)]
 pub struct DaemonArgs {
@@ -31,6 +31,32 @@ pub struct DaemonArgs {
         help = "Enable real-time AST code drift watcher alongside sync daemon"
     )]
     pub watch: bool,
+
+    #[arg(
+        long,
+        default_value_t = true,
+        help = "Enable automatic background episodic pyramid rollups for idle episodes"
+    )]
+    pub auto_rollup: bool,
+}
+
+/// Processes pending unrolled episodes into Tier 2 milestone rollups during daemon cycles.
+pub fn run_daemon_pyramid_rollup(
+    pyramid_store: &EpisodicPyramidStore,
+    session_id: Option<&str>,
+) -> Result<usize> {
+    let rollups = pyramid_store.process_idle_episodes(session_id)?;
+    if !rollups.is_empty() {
+        info!(
+            "Episodic pyramid auto-rollup generated {} Tier 2 milestone rollups in background",
+            rollups.len()
+        );
+        println!(
+            "🏛️  Episodic pyramid auto-rollup: {} milestone rollups generated in background",
+            rollups.len()
+        );
+    }
+    Ok(rollups.len())
 }
 
 pub async fn run_daemon(args: DaemonArgs, store: Arc<SqliteStore>) -> Result<()> {
@@ -44,10 +70,11 @@ pub async fn run_daemon(args: DaemonArgs, store: Arc<SqliteStore>) -> Result<()>
 
     let interval_secs = args.interval.max(1);
     let sync_engine = SyncEngine::new(store.clone(), config.clone());
+    let pyramid_store = EpisodicPyramidStore::new(store.clone());
 
     info!(
-        "Starting Strata background sync daemon (interval: {}s, workspace: '{}', endpoint: {:?})",
-        interval_secs, config.workspace_id, config.endpoint
+        "Starting Strata background sync daemon (interval: {}s, workspace: '{}', endpoint: {:?}, auto_rollup: {})",
+        interval_secs, config.workspace_id, config.endpoint, args.auto_rollup
     );
     println!(
         "🚀 Strata background sync daemon running (< 10MB RAM footprint). Press Ctrl+C to stop."
@@ -96,6 +123,9 @@ pub async fn run_daemon(args: DaemonArgs, store: Arc<SqliteStore>) -> Result<()>
                 if let Some(srv) = ipc_server {
                     srv.stop();
                 }
+                if args.auto_rollup {
+                    let _ = run_daemon_pyramid_rollup(&pyramid_store, None);
+                }
                 // Final push attempt before exit
                 let _ = sync_engine.push_deltas().await;
                 break;
@@ -119,10 +149,55 @@ pub async fn run_daemon(args: DaemonArgs, store: Arc<SqliteStore>) -> Result<()>
                         error!("Sync cycle failed: {e}");
                     }
                 }
+
+                if args.auto_rollup {
+                    if let Err(e) = run_daemon_pyramid_rollup(&pyramid_store, None) {
+                        warn!("Episodic pyramid auto-rollup warning in daemon cycle: {e}");
+                    }
+                }
             }
         }
     }
 
     info!("Strata sync daemon stopped cleanly.");
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use strata_core::schemas::{EpisodeRecord, EpisodeStep};
+
+    #[test]
+    fn test_daemon_auto_rollup_idle_episodes() {
+        let store = Arc::new(SqliteStore::open_in_memory().unwrap());
+        let pyramid_store = EpisodicPyramidStore::new(store.clone());
+
+        // Initially 0 rollups
+        let count = run_daemon_pyramid_rollup(&pyramid_store, Some("sess-daemon")).unwrap();
+        assert_eq!(count, 0);
+
+        // Ingest 2 pending Tier 1 episodes
+        let ep1 = EpisodeRecord::new("sess-daemon", "agent-worker", "Worker step 1")
+            .with_task_id("task-daemon-auto")
+            .with_steps(vec![EpisodeStep::new(0, "Write test")]);
+        let ep2 = EpisodeRecord::new("sess-daemon", "agent-worker", "Worker step 2")
+            .with_task_id("task-daemon-auto")
+            .with_steps(vec![EpisodeStep::new(0, "Run test")]);
+        store.write_episode(&ep1).unwrap();
+        store.write_episode(&ep2).unwrap();
+
+        // Daemon background tick processes idle episodes
+        let count = run_daemon_pyramid_rollup(&pyramid_store, Some("sess-daemon")).unwrap();
+        assert_eq!(count, 1, "Should generate 1 milestone rollup during daemon cycle");
+
+        // Verify tier 2 rollup exists and children were linked
+        let rollups = store.list_episodes_by_tier(2, Some("sess-daemon"), 10).unwrap();
+        assert_eq!(rollups.len(), 1);
+        assert_eq!(rollups[0].child_ids.len(), 2);
+
+        // Next tick: no pending unrolled episodes
+        let count2 = run_daemon_pyramid_rollup(&pyramid_store, Some("sess-daemon")).unwrap();
+        assert_eq!(count2, 0);
+    }
 }

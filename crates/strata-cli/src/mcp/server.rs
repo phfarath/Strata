@@ -10,7 +10,8 @@ use strata_core::{
     traits::MemoryEngine,
 };
 use strata_memory::{
-    EpisodicPyramidEngine, PyramidConfig, SqliteMemoryEngine, StigmergyCoordinator,
+    EpisodicPyramidEngine, EpisodicPyramidStore, PyramidConfig, PyramidFilter, SqliteMemoryEngine,
+    StigmergyCoordinator,
 };
 
 use super::protocol::*;
@@ -665,6 +666,47 @@ impl McpServer {
                         }
                     },
                     "required": ["action"]
+                }),
+            },
+            ToolDefinition {
+                name: "memory_pyramid_drilldown".to_string(),
+                description: "Hierarchical Episodic Pyramid drill-down tool. Returns compact Tier 2 milestone summaries with progressive on-demand expansion of raw Tier 1 episode traces. Filters by cluster_id, rollup_id, or temporal interval (start_time/end_time/since_seconds) to prevent LLM context explosion.".to_string(),
+                input_schema: serde_json::json!({
+                    "type": "object",
+                    "properties": {
+                        "rollup_id": {
+                            "type": "string",
+                            "description": "Optional UUID of a specific Tier 2 milestone rollup to inspect"
+                        },
+                        "cluster_id": {
+                            "type": "string",
+                            "description": "Optional cluster or task ID filter (e.g. 'task-auth-jwt' or cluster UUID)"
+                        },
+                        "start_time": {
+                            "type": "integer",
+                            "description": "Optional start timestamp in Unix epoch seconds"
+                        },
+                        "end_time": {
+                            "type": "integer",
+                            "description": "Optional end timestamp in Unix epoch seconds"
+                        },
+                        "since_seconds": {
+                            "type": "integer",
+                            "description": "Optional relative time window: only return rollups created within the last N seconds"
+                        },
+                        "session_id": {
+                            "type": "string",
+                            "description": "Optional session ID filter"
+                        },
+                        "expand_episodes": {
+                            "type": "boolean",
+                            "description": "Whether to expand raw Tier 1 leaf episodes and step traces on demand (default: false, returns compact Tier 2 summaries only to conserve context)"
+                        },
+                        "limit": {
+                            "type": "integer",
+                            "description": "Maximum number of rollups to return (default: 20)"
+                        }
+                    }
                 }),
             },
         ];
@@ -2015,6 +2057,64 @@ impl McpServer {
                     other => CallToolResult::error(format!(
                         "Unsupported action '{other}'. Supported: rollup, zoom_out, drill_down, tree"
                     )),
+                }
+            }
+            "memory_pyramid_drilldown" => {
+                let sqlite = match &self.sqlite_engine {
+                    Some(s) => s,
+                    None => {
+                        return CallToolResult::error(
+                            "Hierarchical episodic pyramid operations require a local SQLite storage engine",
+                        )
+                    }
+                };
+
+                let mut filter = PyramidFilter::new();
+
+                if let Some(r_str) = args.get("rollup_id").and_then(|v| v.as_str()) {
+                    match Uuid::parse_str(r_str) {
+                        Ok(u) => filter = filter.with_rollup_id(u),
+                        Err(e) => return CallToolResult::error(format!("Invalid rollup_id UUID: {e}")),
+                    }
+                }
+
+                if let Some(c_str) = args.get("cluster_id").and_then(|v| v.as_str()) {
+                    filter = filter.with_cluster_id(c_str);
+                }
+
+                if let Some(s_str) = args.get("session_id").and_then(|v| v.as_str()) {
+                    filter = filter.with_session_id(s_str);
+                }
+
+                if let Some(st) = args.get("start_time").and_then(|v| v.as_i64()) {
+                    filter = filter.with_start_time(st);
+                } else if let Some(since_secs) = args.get("since_seconds").and_then(|v| v.as_i64()) {
+                    let now = chrono::Utc::now().timestamp();
+                    filter = filter.with_start_time(now - since_secs);
+                }
+
+                if let Some(et) = args.get("end_time").and_then(|v| v.as_i64()) {
+                    filter = filter.with_end_time(et);
+                }
+
+                if let Some(l) = args.get("limit").and_then(|v| v.as_u64()) {
+                    filter = filter.with_limit(l as usize);
+                }
+
+                let expand = args
+                    .get("expand_episodes")
+                    .or_else(|| args.get("expand"))
+                    .and_then(|v| v.as_bool())
+                    .unwrap_or(false);
+
+                let pyramid_store = EpisodicPyramidStore::new(sqlite.store_arc());
+
+                match pyramid_store.drill_down_progressive(&filter, expand) {
+                    Ok(report) => {
+                        let text = report.render_summary();
+                        CallToolResult::structured(text, serde_json::to_value(&report).unwrap_or_default())
+                    }
+                    Err(e) => CallToolResult::error(format!("Pyramid drill-down error: {e}")),
                 }
             }
             name if name.starts_with("task_") || name.starts_with("a2a_") => {
