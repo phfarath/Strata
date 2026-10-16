@@ -81,7 +81,10 @@ pub use metaplasticity::{
     calculate_adapted_bypass_threshold, calculate_adapted_decay_stability,
     calculate_adapted_prune_threshold, MetaplasticityConfig, MetaplasticityState,
 };
-pub use pipeline::{ConsolidationPipeline, ConsolidationResult, PipelineConfig};
+pub use pipeline::{
+    compute_minhash_signature, minhash_jaccard_similarity, AudnConfig, AudnDecision,
+    AudnOperation, AudnPipeline, ConsolidationPipeline, ConsolidationResult, PipelineConfig,
+};
 pub use procedural_mining::TrajectoryMiner;
 pub use pyramid::{
     DrillDownTree, EpisodicPyramidEngine, EpisodicPyramidStore, PyramidConfig,
@@ -548,6 +551,51 @@ impl SqliteMemoryEngine {
             max_tokens,
             active_files,
         )
+    }
+
+    /// Ingests a `MemoryRecord` through the AUDN (Add / Update / Delete / Noop) deduplication
+    /// and belief-revision pipeline.
+    pub async fn ingest_audn(&self, record: &MemoryRecord) -> Result<AudnDecision, StrataError> {
+        let mut to_ingest = record.clone();
+        if to_ingest.git_branch().is_none() {
+            if let Ok(curr_dir) = std::env::current_dir() {
+                if let Some(branch) = crate::workspace::detect_git_branch(&curr_dir) {
+                    to_ingest = to_ingest.with_branch(branch);
+                }
+            }
+        }
+
+        let pipeline = AudnPipeline::with_default_config();
+        let decision = pipeline
+            .ingest_memory(
+                &self.store,
+                Some(self.embedding_provider.as_ref()),
+                &to_ingest,
+            )
+            .await?;
+
+        if matches!(
+            decision.operation,
+            AudnOperation::Add | AudnOperation::Update { .. }
+        ) {
+            if let Some(ref written) = decision.record {
+                let workspace =
+                    std::env::var("STRATA_WORKSPACE_ID").unwrap_or_else(|_| "default".to_string());
+                if let Ok(payload) = serde_json::to_value(written) {
+                    let version_hash = sync::compute_version_hash(&payload);
+                    let delta = strata_core::schemas::SyncDelta::new(
+                        &workspace,
+                        0,
+                        "memory_record",
+                        payload,
+                        version_hash,
+                    );
+                    let _ = self.store.enqueue_delta(&delta);
+                }
+            }
+        }
+
+        Ok(decision)
     }
 }
 
