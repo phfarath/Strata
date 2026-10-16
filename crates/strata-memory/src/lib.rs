@@ -100,6 +100,10 @@ pub use spreading_activation::{
     SpreadingActivationEngine,
 };
 pub use store::{MemoryEdgeRecord, SqliteStore};
+pub use strata_reasoning::{
+    ProceduralOptimizerConfig, ProceduralRule, ProceduralRuleVersion, ProceduralSelfEditor,
+    TextGradientFeedback,
+};
 pub use strata_core::schemas::{
     CodeAnchor, ContextBudgetConfig, ExportFormat, FeedbackEvent, FeedbackRating, HostTargetConfig,
     ImplicitSignal, KtoSample, MemoryFeedback, PreferencePair, SemanticFact, SftSample, SignalKind,
