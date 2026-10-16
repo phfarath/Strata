@@ -23,6 +23,12 @@ pub struct SyncHostsArgs {
     #[arg(long, default_value = ".", help = "Target workspace directory")]
     pub workspace: PathBuf,
 
+    #[arg(
+        long,
+        help = "Optional active file path to filter path-scoped rules during compilation"
+    )]
+    pub active_file: Option<String>,
+
     #[arg(long, help = "Output report as JSON")]
     pub json: bool,
 }
@@ -40,7 +46,13 @@ pub async fn run_sync_hosts(args: SyncHostsArgs, store: Arc<SqliteStore>) -> Res
 
     let compiler = MultiHostCompiler::new(store);
     let report = compiler
-        .compile_workspace(&args.workspace, &targets, args.budget)
+        .compile_workspace_for_file(
+            &args.workspace,
+            &targets,
+            args.budget,
+            args.active_file.as_deref(),
+            &[],
+        )
         .context("Failed to compile multi-host instructions")?;
 
     if args.json {

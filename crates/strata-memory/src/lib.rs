@@ -55,8 +55,9 @@ pub use community::{
     CommunityScopedRecallResult, MemberType,
 };
 pub use compiler::{
-    estimate_tokens, HostCompileResult, MultiHostCompileReport, MultiHostCompiler,
-    STRATA_MARKER_END, STRATA_MARKER_START,
+    estimate_tokens, glob_to_slug, matches_path_glob, CoreRule, HostCompileResult,
+    MultiHostCompileReport, MultiHostCompiler, PathScopedExt, SemanticMemory, STRATA_MARKER_END,
+    STRATA_MARKER_START,
 };
 pub use consolidation::{
     parse_dream_duration, Consolidator, DreamConfig, DreamEngine, DreamReport, DreamTriggerReason,
