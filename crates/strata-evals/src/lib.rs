@@ -35,9 +35,10 @@ pub async fn run_all_scenarios() -> Result<()> {
     run_hierarchical_episodic_pyramid_eval().await?;
     run_community_scoped_recall_scenario().await?;
     run_context_rot_scenario().await?;
+    run_long_mem_eval_scenario().await?;
 
     println!("\n========================================================");
-    println!("🎉 ALL EVAL SCENARIOS PASSED (24/24)");
+    println!("🎉 ALL EVAL SCENARIOS PASSED (26/26)");
     println!("========================================================\n");
 
     Ok(())
@@ -241,4 +242,22 @@ mod tests {
         assert!(report.suppression_verified);
         assert!(report.rejection_rate > 0.60);
     }
+
+    #[tokio::test]
+    async fn test_eval_long_mem_eval_coding_agents() {
+        let report = LongMemEvalSuite::run_suite("coding-agents").await.expect("LongMemEval failed");
+        assert!(report.metrics_10_cycles.recall_accuracy >= 0.90);
+        assert!(report.metrics_100_cycles.recall_accuracy >= 0.85);
+        assert!(report.metrics_1000_cycles.recall_accuracy >= 0.80);
+        assert!(report.contradiction_resolution_passed);
+        assert!(report.cross_agent_transfer_passed);
+        assert!(!report.format_ascii_report().is_empty());
+    }
+
+    #[tokio::test]
+    async fn test_eval_long_mem_eval_unknown_suite() {
+        let err = LongMemEvalSuite::run_suite("unknown-suite").await;
+        assert!(err.is_err());
+    }
 }
+
