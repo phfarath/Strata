@@ -5,6 +5,7 @@ pub mod mock;
 pub mod planning;
 pub mod prompts;
 pub mod resolver;
+pub mod self_editing;
 pub mod training;
 
 pub use adapters::*;
@@ -22,6 +23,7 @@ pub use planning::{
 };
 pub use prompts::*;
 pub use resolver::*;
+pub use self_editing::*;
 pub use training::*;
 
 #[cfg(test)]

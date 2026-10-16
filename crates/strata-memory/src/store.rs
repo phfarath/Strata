@@ -27,6 +27,7 @@ use strata_core::state::{
 use crate::call_graph::{CallEdge, CallType};
 use crate::community::ArchitectureGraphSummary;
 use crate::embedding::{bytes_to_embedding, embedding_to_bytes};
+use strata_reasoning::{ProceduralRule, ProceduralRuleVersion, TextGradientFeedback};
 
 /// A modulated synaptic edge between two graph nodes in the Knowledge Graph.
 #[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
@@ -835,6 +836,32 @@ impl SqliteStore {
 
             CREATE INDEX IF NOT EXISTS idx_memory_edges_source ON memory_edges(source_id);
             CREATE INDEX IF NOT EXISTS idx_memory_edges_target ON memory_edges(target_id);
+
+            -- Procedural Rules Table
+            CREATE TABLE IF NOT EXISTS procedural_rules (
+                id TEXT PRIMARY KEY,
+                name TEXT NOT NULL,
+                category TEXT NOT NULL DEFAULT 'general',
+                current_version INTEGER NOT NULL DEFAULT 1,
+                current_content TEXT NOT NULL,
+                created_at TEXT NOT NULL,
+                updated_at TEXT NOT NULL
+            );
+
+            -- Procedural Rule Versions Table
+            CREATE TABLE IF NOT EXISTS procedural_rule_versions (
+                id TEXT PRIMARY KEY,
+                rule_id TEXT NOT NULL,
+                version INTEGER NOT NULL,
+                content TEXT NOT NULL,
+                rationale TEXT NOT NULL,
+                feedback_json TEXT,
+                created_at TEXT NOT NULL,
+                FOREIGN KEY(rule_id) REFERENCES procedural_rules(id) ON DELETE CASCADE
+            );
+
+            CREATE INDEX IF NOT EXISTS idx_rule_versions_rule ON procedural_rule_versions(rule_id, version);
+            CREATE INDEX IF NOT EXISTS idx_procedural_rules_name ON procedural_rules(name);
             ",
         )
         .map_err(|e| StrataError::Database(format!("Failed to execute schema migration: {e}")))?;
@@ -7580,6 +7607,363 @@ impl SqliteStore {
         );
 
         Ok(report)
+    }
+
+    // ==========================================
+    // Procedural Self-Editing & Rule Versioning
+    // ==========================================
+
+    pub fn insert_or_update_procedural_rule(&self, rule: &ProceduralRule) -> Result<(), StrataError> {
+        let conn = self
+            .conn
+            .lock()
+            .map_err(|_| StrataError::Database("Lock poisoned on SQLite connection".to_string()))?;
+
+        let created_at_str = rule.created_at.to_rfc3339();
+        let updated_at_str = rule.updated_at.to_rfc3339();
+
+        conn.execute(
+            "INSERT INTO procedural_rules (
+                id, name, category, current_version, current_content, created_at, updated_at
+            ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)
+            ON CONFLICT(id) DO UPDATE SET
+                name = excluded.name,
+                category = excluded.category,
+                current_version = excluded.current_version,
+                current_content = excluded.current_content,
+                updated_at = excluded.updated_at",
+            params![
+                rule.id,
+                rule.name,
+                rule.category,
+                rule.current_version,
+                rule.current_content,
+                created_at_str,
+                updated_at_str,
+            ],
+        )
+        .map_err(|e| StrataError::Database(format!("Failed to insert or update procedural rule: {e}")))?;
+
+        // Persist all associated versions
+        for ver in &rule.versions {
+            let ver_id = format!("{}:v{}", rule.id, ver.version);
+            let ver_created_at = ver.timestamp.to_rfc3339();
+            let feedback_json = ver
+                .feedback_applied
+                .as_ref()
+                .map(|fb| serde_json::to_string(fb))
+                .transpose()
+                .map_err(|e| StrataError::Serialization(e.to_string()))?;
+
+            conn.execute(
+                "INSERT INTO procedural_rule_versions (
+                    id, rule_id, version, content, rationale, feedback_json, created_at
+                ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)
+                ON CONFLICT(id) DO UPDATE SET
+                    content = excluded.content,
+                    rationale = excluded.rationale,
+                    feedback_json = excluded.feedback_json,
+                    created_at = excluded.created_at",
+                params![
+                    ver_id,
+                    rule.id,
+                    ver.version,
+                    ver.content,
+                    ver.rationale,
+                    feedback_json,
+                    ver_created_at,
+                ],
+            )
+            .map_err(|e| StrataError::Database(format!("Failed to insert or update procedural rule version: {e}")))?;
+        }
+
+        Ok(())
+    }
+
+    pub fn record_procedural_rule_version(
+        &self,
+        rule_id: &str,
+        version: &ProceduralRuleVersion,
+    ) -> Result<(), StrataError> {
+        let conn = self
+            .conn
+            .lock()
+            .map_err(|_| StrataError::Database("Lock poisoned on SQLite connection".to_string()))?;
+
+        let ver_id = format!("{}:v{}", rule_id, version.version);
+        let ver_created_at = version.timestamp.to_rfc3339();
+        let feedback_json = version
+            .feedback_applied
+            .as_ref()
+            .map(|fb| serde_json::to_string(fb))
+            .transpose()
+            .map_err(|e| StrataError::Serialization(e.to_string()))?;
+
+        conn.execute(
+            "INSERT INTO procedural_rule_versions (
+                id, rule_id, version, content, rationale, feedback_json, created_at
+            ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)
+            ON CONFLICT(id) DO UPDATE SET
+                content = excluded.content,
+                rationale = excluded.rationale,
+                feedback_json = excluded.feedback_json,
+                created_at = excluded.created_at",
+            params![
+                ver_id,
+                rule_id,
+                version.version,
+                version.content,
+                version.rationale,
+                feedback_json,
+                ver_created_at,
+            ],
+        )
+        .map_err(|e| StrataError::Database(format!("Failed to record procedural rule version: {e}")))?;
+
+        let now_str = Utc::now().to_rfc3339();
+        conn.execute(
+            "UPDATE procedural_rules
+             SET current_version = ?1, current_content = ?2, updated_at = ?3
+             WHERE id = ?4 AND current_version < ?1",
+            params![version.version, version.content, now_str, rule_id],
+        )
+        .map_err(|e| StrataError::Database(format!("Failed to update rule current version: {e}")))?;
+
+        Ok(())
+    }
+
+    pub fn get_procedural_rule_versions(&self, rule_id: &str) -> Result<Vec<ProceduralRuleVersion>, StrataError> {
+        let conn = self
+            .conn
+            .lock()
+            .map_err(|_| StrataError::Database("Lock poisoned on SQLite connection".to_string()))?;
+
+        let mut stmt = conn
+            .prepare(
+                "SELECT version, content, rationale, feedback_json, created_at
+                 FROM procedural_rule_versions
+                 WHERE rule_id = ?1
+                 ORDER BY version ASC",
+            )
+            .map_err(|e| StrataError::Database(format!("Failed to prepare query: {e}")))?;
+
+        let rows = stmt
+            .query_map(params![rule_id], |row| {
+                let version: u32 = row.get(0)?;
+                let content: String = row.get(1)?;
+                let rationale: String = row.get(2)?;
+                let feedback_json: Option<String> = row.get(3)?;
+                let created_at: String = row.get(4)?;
+                Ok((version, content, rationale, feedback_json, created_at))
+            })
+            .map_err(|e| StrataError::Database(format!("Failed to execute query: {e}")))?;
+
+        let mut versions = Vec::new();
+        for r in rows {
+            let (version, content, rationale, feedback_json, created_at) =
+                r.map_err(|e| StrataError::Database(e.to_string()))?;
+
+            let feedback_applied = feedback_json
+                .as_deref()
+                .and_then(|json_str| serde_json::from_str::<TextGradientFeedback>(json_str).ok());
+
+            let timestamp = DateTime::parse_from_rfc3339(&created_at)
+                .map(|dt| dt.with_timezone(&Utc))
+                .unwrap_or_else(|_| Utc::now());
+
+            versions.push(ProceduralRuleVersion {
+                version,
+                content,
+                rationale,
+                feedback_applied,
+                timestamp,
+            });
+        }
+
+        Ok(versions)
+    }
+
+    pub fn get_procedural_rule(&self, id: &str) -> Result<Option<ProceduralRule>, StrataError> {
+        let versions = self.get_procedural_rule_versions(id)?;
+
+        let conn = self
+            .conn
+            .lock()
+            .map_err(|_| StrataError::Database("Lock poisoned on SQLite connection".to_string()))?;
+
+        let mut stmt = conn
+            .prepare(
+                "SELECT id, name, category, current_version, current_content, created_at, updated_at
+                 FROM procedural_rules
+                 WHERE id = ?1",
+            )
+            .map_err(|e| StrataError::Database(format!("Failed to prepare query: {e}")))?;
+
+        let mut rows = stmt
+            .query_map(params![id], |row| {
+                let id: String = row.get(0)?;
+                let name: String = row.get(1)?;
+                let category: String = row.get(2)?;
+                let current_version: u32 = row.get(3)?;
+                let current_content: String = row.get(4)?;
+                let created_at: String = row.get(5)?;
+                let updated_at: String = row.get(6)?;
+                Ok((id, name, category, current_version, current_content, created_at, updated_at))
+            })
+            .map_err(|e| StrataError::Database(format!("Failed to query procedural rule: {e}")))?;
+
+        if let Some(r) = rows.next() {
+            let (id, name, category, current_version, current_content, created_at_str, updated_at_str) =
+                r.map_err(|e| StrataError::Database(e.to_string()))?;
+
+            let created_at = DateTime::parse_from_rfc3339(&created_at_str)
+                .map(|dt| dt.with_timezone(&Utc))
+                .unwrap_or_else(|_| Utc::now());
+            let updated_at = DateTime::parse_from_rfc3339(&updated_at_str)
+                .map(|dt| dt.with_timezone(&Utc))
+                .unwrap_or_else(|_| Utc::now());
+
+            Ok(Some(ProceduralRule {
+                id,
+                name,
+                category,
+                current_version,
+                current_content,
+                versions,
+                created_at,
+                updated_at,
+            }))
+        } else {
+            Ok(None)
+        }
+    }
+
+    pub fn get_procedural_rule_by_name(&self, name: &str) -> Result<Option<ProceduralRule>, StrataError> {
+        let rule_id: Option<String> = {
+            let conn = self
+                .conn
+                .lock()
+                .map_err(|_| StrataError::Database("Lock poisoned on SQLite connection".to_string()))?;
+
+            let mut stmt = conn
+                .prepare("SELECT id FROM procedural_rules WHERE name = ?1 LIMIT 1")
+                .map_err(|e| StrataError::Database(format!("Failed to prepare query: {e}")))?;
+
+            let mut rows = stmt
+                .query_map(params![name], |row| row.get::<_, String>(0))
+                .map_err(|e| StrataError::Database(format!("Query failed: {e}")))?;
+
+            if let Some(r) = rows.next() {
+                Some(r.map_err(|e| StrataError::Database(e.to_string()))?)
+            } else {
+                None
+            }
+        };
+
+        match rule_id {
+            Some(id) => self.get_procedural_rule(&id),
+            None => Ok(None),
+        }
+    }
+
+    pub fn list_procedural_rules(&self, category: Option<&str>) -> Result<Vec<ProceduralRule>, StrataError> {
+        let rule_ids: Vec<String> = {
+            let conn = self
+                .conn
+                .lock()
+                .map_err(|_| StrataError::Database("Lock poisoned on SQLite connection".to_string()))?;
+
+            if let Some(cat) = category {
+                let mut stmt = conn
+                    .prepare("SELECT id FROM procedural_rules WHERE category = ?1 ORDER BY name ASC")
+                    .map_err(|e| StrataError::Database(format!("Failed to prepare query: {e}")))?;
+                let rows = stmt
+                    .query_map(params![cat], |row| row.get::<_, String>(0))
+                    .map_err(|e| StrataError::Database(format!("Query failed: {e}")))?;
+                let mut ids = Vec::new();
+                for r in rows {
+                    ids.push(r.map_err(|e| StrataError::Database(e.to_string()))?);
+                }
+                ids
+            } else {
+                let mut stmt = conn
+                    .prepare("SELECT id FROM procedural_rules ORDER BY name ASC")
+                    .map_err(|e| StrataError::Database(format!("Failed to prepare query: {e}")))?;
+                let rows = stmt
+                    .query_map([], |row| row.get::<_, String>(0))
+                    .map_err(|e| StrataError::Database(format!("Query failed: {e}")))?;
+                let mut ids = Vec::new();
+                for r in rows {
+                    ids.push(r.map_err(|e| StrataError::Database(e.to_string()))?);
+                }
+                ids
+            }
+        };
+
+        let mut rules = Vec::new();
+        for id in rule_ids {
+            if let Some(rule) = self.get_procedural_rule(&id)? {
+                rules.push(rule);
+            }
+        }
+        Ok(rules)
+    }
+
+    pub fn rollback_procedural_rule(
+        &self,
+        rule_id: &str,
+        target_version: u32,
+    ) -> Result<Option<ProceduralRule>, StrataError> {
+        let target_content: Option<String> = {
+            let conn = self
+                .conn
+                .lock()
+                .map_err(|_| StrataError::Database("Lock poisoned on SQLite connection".to_string()))?;
+
+            let mut stmt = conn
+                .prepare(
+                    "SELECT content FROM procedural_rule_versions WHERE rule_id = ?1 AND version = ?2",
+                )
+                .map_err(|e| StrataError::Database(format!("Failed to prepare query: {e}")))?;
+
+            let mut rows = stmt
+                .query_map(params![rule_id, target_version], |row| row.get::<_, String>(0))
+                .map_err(|e| StrataError::Database(format!("Query failed: {e}")))?;
+
+            if let Some(r) = rows.next() {
+                Some(r.map_err(|e| StrataError::Database(e.to_string()))?)
+            } else {
+                None
+            }
+        };
+
+        let content = match target_content {
+            Some(c) => c,
+            None => return Ok(None),
+        };
+
+        {
+            let conn = self
+                .conn
+                .lock()
+                .map_err(|_| StrataError::Database("Lock poisoned on SQLite connection".to_string()))?;
+
+            let now_str = Utc::now().to_rfc3339();
+            let rows_updated = conn
+                .execute(
+                    "UPDATE procedural_rules
+                     SET current_version = ?1, current_content = ?2, updated_at = ?3
+                     WHERE id = ?4",
+                    params![target_version, content, now_str, rule_id],
+                )
+                .map_err(|e| StrataError::Database(format!("Failed to rollback procedural rule: {e}")))?;
+
+            if rows_updated == 0 {
+                return Ok(None);
+            }
+        }
+
+        self.get_procedural_rule(rule_id)
     }
 }
 

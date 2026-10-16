@@ -29,7 +29,7 @@ use crate::pipeline::ConsolidationPipeline;
 use crate::store::SqliteStore;
 use crate::sync::{compute_version_hash, SyncEngine};
 use crate::workspace::{MonorepoPackage, PackageType, WorkspaceBoundary};
-use crate::SqliteMemoryEngine;
+use crate::{ProceduralRule, ProceduralRuleVersion, SqliteMemoryEngine, TextGradientFeedback};
 use std::sync::Arc;
 
 #[tokio::test]
@@ -4133,6 +4133,162 @@ async fn test_branch_namespaces_all_entities_merge() {
     // Post-merge on main
     let main_facts_post = store.search_semantic_facts_as_of("tokens", None, None, Some("main"), 10).expect("search facts post");
     assert_eq!(main_facts_post.len(), 1);
+}
+
+#[tokio::test]
+async fn test_procedural_rule_sqlite_persistence_roundtrip() {
+    let store = SqliteStore::open_in_memory().expect("open in-memory SQLite store");
+
+    let mut rule = ProceduralRule::new(
+        "strict_tdd_flow",
+        "# TDD Flow\n1. Write tests before code.",
+    )
+    .with_category("engineering");
+
+    let feedback = TextGradientFeedback::new("Timing error: test not executed in red phase")
+        .with_correction("Run tests before code implementation")
+        .with_score(0.3);
+
+    rule.apply_version(
+        "# TDD Flow\n1. Write tests before code.\n2. Verify red phase failure.",
+        "Enforced red phase verification",
+        Some(feedback.clone()),
+    );
+
+    store.insert_or_update_procedural_rule(&rule).expect("insert rule");
+
+    // Retrieve by ID
+    let fetched = store
+        .get_procedural_rule(&rule.id)
+        .expect("get rule by id")
+        .expect("rule exists");
+
+    assert_eq!(fetched.id, rule.id);
+    assert_eq!(fetched.name, "strict_tdd_flow");
+    assert_eq!(fetched.category, "engineering");
+    assert_eq!(fetched.current_version, 2);
+    assert_eq!(
+        fetched.current_content,
+        "# TDD Flow\n1. Write tests before code.\n2. Verify red phase failure."
+    );
+    assert_eq!(fetched.versions.len(), 2);
+    assert_eq!(fetched.versions[0].version, 1);
+    assert_eq!(fetched.versions[1].version, 2);
+    assert_eq!(
+        fetched.versions[1].feedback_applied.as_ref().unwrap().criticism,
+        "Timing error: test not executed in red phase"
+    );
+
+    // Retrieve by Name
+    let by_name = store
+        .get_procedural_rule_by_name("strict_tdd_flow")
+        .expect("query by name")
+        .expect("rule found by name");
+    assert_eq!(by_name.id, rule.id);
+
+    // List rules
+    let list_cat = store.list_procedural_rules(Some("engineering")).expect("list category");
+    assert_eq!(list_cat.len(), 1);
+    assert_eq!(list_cat[0].name, "strict_tdd_flow");
+
+    let list_empty = store.list_procedural_rules(Some("nonexistent")).expect("list empty");
+    assert_eq!(list_empty.len(), 0);
+
+    let list_all = store.list_procedural_rules(None).expect("list all");
+    assert_eq!(list_all.len(), 1);
+}
+
+#[tokio::test]
+async fn test_procedural_rule_version_history_order() {
+    let store = SqliteStore::open_in_memory().expect("open store");
+
+    let mut rule = ProceduralRule::new("git_protocol", "v1: commit to branch");
+    let fb1 = TextGradientFeedback::new("Direct commit to main prevented").with_score(0.1);
+    rule.apply_version("v2: never commit to main", "branch enforcement", Some(fb1));
+    let fb2 = TextGradientFeedback::new("PR required for merge").with_score(0.2);
+    rule.apply_version("v3: require PR review", "pr gate", Some(fb2));
+
+    store.insert_or_update_procedural_rule(&rule).expect("insert rule");
+
+    let versions = store
+        .get_procedural_rule_versions(&rule.id)
+        .expect("get versions");
+
+    assert_eq!(versions.len(), 3);
+    assert_eq!(versions[0].version, 1);
+    assert_eq!(versions[0].content, "v1: commit to branch");
+    assert_eq!(versions[1].version, 2);
+    assert_eq!(versions[1].content, "v2: never commit to main");
+    assert_eq!(versions[2].version, 3);
+    assert_eq!(versions[2].content, "v3: require PR review");
+}
+
+#[tokio::test]
+async fn test_procedural_rule_sqlite_rollback() {
+    let store = SqliteStore::open_in_memory().expect("open store");
+
+    let mut rule = ProceduralRule::new("deploy_workflow", "v1: standard deploy");
+    rule.apply_version("v2: blue-green deploy", "added blue-green", None);
+    rule.apply_version("v3: experimental canary", "canary test", None);
+
+    store.insert_or_update_procedural_rule(&rule).expect("insert rule");
+
+    // Rollback to v2
+    let rolled = store
+        .rollback_procedural_rule(&rule.id, 2)
+        .expect("rollback call")
+        .expect("version 2 exists");
+
+    assert_eq!(rolled.current_version, 2);
+    assert_eq!(rolled.current_content, "v2: blue-green deploy");
+
+    // Verify persistence after rollback
+    let re_fetched = store
+        .get_procedural_rule(&rule.id)
+        .expect("re-fetch")
+        .expect("rule still exists");
+    assert_eq!(re_fetched.current_version, 2);
+    assert_eq!(re_fetched.current_content, "v2: blue-green deploy");
+
+    // Rollback to non-existent version 99
+    let invalid = store
+        .rollback_procedural_rule(&rule.id, 99)
+        .expect("rollback non-existent");
+    assert!(invalid.is_none());
+}
+
+#[tokio::test]
+async fn test_record_procedural_rule_version_directly() {
+    let store = SqliteStore::open_in_memory().expect("open store");
+
+    let rule = ProceduralRule::new("canary_policy", "v1: initial canary");
+    store.insert_or_update_procedural_rule(&rule).expect("insert rule");
+
+    let new_ver = ProceduralRuleVersion {
+        version: 2,
+        content: "v2: automated canary analysis".to_string(),
+        rationale: "Automated analysis reduces rollback latency".to_string(),
+        feedback_applied: Some(TextGradientFeedback::new("Manual approval is too slow")),
+        timestamp: Utc::now(),
+    };
+
+    store
+        .record_procedural_rule_version(&rule.id, &new_ver)
+        .expect("record version");
+
+    let versions = store
+        .get_procedural_rule_versions(&rule.id)
+        .expect("fetch versions");
+    assert_eq!(versions.len(), 2);
+    assert_eq!(versions[1].version, 2);
+    assert_eq!(versions[1].content, "v2: automated canary analysis");
+
+    let updated_rule = store
+        .get_procedural_rule(&rule.id)
+        .expect("fetch rule")
+        .expect("rule exists");
+    assert_eq!(updated_rule.current_version, 2);
+    assert_eq!(updated_rule.current_content, "v2: automated canary analysis");
 }
 
 
