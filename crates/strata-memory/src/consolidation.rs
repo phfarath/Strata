@@ -233,7 +233,27 @@ impl Consolidator {
 
         // 2. Fetch and rank key memory pointers in session & global scope
         let key_pointers: Vec<MemoryHandle> = if active_files.is_empty() {
-            let top_memories = store.get_all_memories(Some(&session_scope), None, 5)?;
+            let mut top_memories = store.get_all_memories(Some(&session_scope), None, 10)?;
+            top_memories.retain(|m| {
+                let is_suppressed = m
+                    .metadata
+                    .get("quarantined")
+                    .and_then(|v| v.as_bool())
+                    .unwrap_or(false)
+                    || m.metadata
+                        .get("suppressed")
+                        .and_then(|v| v.as_bool())
+                        .unwrap_or(false)
+                    || m.metadata
+                        .get("status")
+                        .and_then(|v| v.as_str())
+                        .map_or(false, |s| {
+                            s.eq_ignore_ascii_case("quarantined")
+                                || s.eq_ignore_ascii_case("suppressed")
+                        });
+                !is_suppressed
+            });
+            top_memories.truncate(5);
             top_memories
                 .into_iter()
                 .map(|m| m.to_handle(Some(m.importance)))
@@ -244,7 +264,26 @@ impl Consolidator {
                 crate::retrieval::ProximityBiasConfig::default(),
             )?;
             let hop_map = prox.compute_hop_distances(active_files);
-            let candidates = store.get_all_memories(Some(&session_scope), None, 50)?;
+            let mut candidates = store.get_all_memories(Some(&session_scope), None, 50)?;
+            candidates.retain(|m| {
+                let is_suppressed = m
+                    .metadata
+                    .get("quarantined")
+                    .and_then(|v| v.as_bool())
+                    .unwrap_or(false)
+                    || m.metadata
+                        .get("suppressed")
+                        .and_then(|v| v.as_bool())
+                        .unwrap_or(false)
+                    || m.metadata
+                        .get("status")
+                        .and_then(|v| v.as_str())
+                        .map_or(false, |s| {
+                            s.eq_ignore_ascii_case("quarantined")
+                                || s.eq_ignore_ascii_case("suppressed")
+                        });
+                !is_suppressed
+            });
             let mut scored: Vec<(MemoryRecord, f32)> = candidates
                 .into_iter()
                 .map(|m| {

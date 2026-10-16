@@ -4291,4 +4291,212 @@ async fn test_record_procedural_rule_version_directly() {
     assert_eq!(updated_rule.current_content, "v2: automated canary analysis");
 }
 
+#[tokio::test]
+async fn test_context_rot_injection_tracking_and_sqlite_persistence() {
+    let store = SqliteStore::open_in_memory().expect("open store");
+    let mem_id = Uuid::new_v4();
+
+    let rec1 = crate::context_rot::MemoryInjectionRecord::new(
+        mem_id,
+        "sess-1",
+        crate::context_rot::InjectionOutcome::Success,
+    )
+    .with_task_id("task-1")
+    .with_command("cargo check");
+
+    let rec2 = crate::context_rot::MemoryInjectionRecord::new(
+        mem_id,
+        "sess-1",
+        crate::context_rot::InjectionOutcome::Failure,
+    )
+    .with_task_id("task-2")
+    .with_command("cargo build");
+
+    store.record_injection_outcome(&rec1).expect("insert rec1");
+    store.record_injection_outcome(&rec2).expect("insert rec2");
+
+    let outcomes = store
+        .get_injection_outcomes_for_memory(&mem_id)
+        .expect("get outcomes");
+    assert_eq!(outcomes.len(), 2);
+    assert_eq!(outcomes[0].id, rec1.id);
+    assert_eq!(outcomes[0].outcome, crate::context_rot::InjectionOutcome::Success);
+    assert_eq!(outcomes[0].command.as_deref(), Some("cargo check"));
+    assert_eq!(outcomes[1].id, rec2.id);
+    assert_eq!(outcomes[1].outcome, crate::context_rot::InjectionOutcome::Failure);
+}
+
+#[tokio::test]
+async fn test_context_rot_poisoning_detection_and_decay_penalty() {
+    let store = SqliteStore::open_in_memory().expect("open store");
+
+    // Memory 1: Valid advice
+    let valid_mem = MemoryRecord::new(
+        MemoryType::Semantic,
+        "Run cargo check to verify types without code generation overhead.",
+        Scope::Global,
+    )
+    .with_summary("cargo check verification")
+    .with_importance(0.8)
+    .with_confidence(0.9);
+    store.insert_memory(&valid_mem).expect("insert valid_mem");
+
+    // Memory 2: Poisoned advice
+    let poisoned_mem = MemoryRecord::new(
+        MemoryType::Semantic,
+        "Always execute deprecated python2 script to generate legacy mock stubs.",
+        Scope::Global,
+    )
+    .with_summary("python2 legacy stubs")
+    .with_importance(0.85)
+    .with_confidence(0.95);
+    store.insert_memory(&poisoned_mem).expect("insert poisoned_mem");
+
+    // Record 5 injections for valid_mem: all Success
+    for i in 0..5 {
+        let rec = crate::context_rot::MemoryInjectionRecord::new(
+            valid_mem.id,
+            "sess-valid",
+            crate::context_rot::InjectionOutcome::Success,
+        )
+        .with_task_id(format!("task-v-{i}"));
+        store.record_injection_outcome(&rec).expect("record rec");
+    }
+
+    // Record 5 injections for poisoned_mem: 4 Failures, 1 Success -> 80% failure rate (> 60%)
+    for i in 0..4 {
+        let rec = crate::context_rot::MemoryInjectionRecord::new(
+            poisoned_mem.id,
+            "sess-poison",
+            crate::context_rot::InjectionOutcome::Failure,
+        )
+        .with_task_id(format!("task-p-{i}"));
+        store.record_injection_outcome(&rec).expect("record rec");
+    }
+    let rec_succ = crate::context_rot::MemoryInjectionRecord::new(
+        poisoned_mem.id,
+        "sess-poison",
+        crate::context_rot::InjectionOutcome::Success,
+    )
+    .with_task_id("task-p-4");
+    store.record_injection_outcome(&rec_succ).expect("record rec");
+
+    let detector = crate::context_rot::ContextRotDetector::with_default_config();
+
+    // Evaluate efficacy
+    let valid_metric = detector
+        .evaluate_memory_efficacy(&store, &valid_mem.id)
+        .expect("eval valid");
+    assert_eq!(valid_metric.total_injections, 5);
+    assert_eq!(valid_metric.failure_count, 0);
+    assert_eq!(valid_metric.rejection_rate, 0.0);
+    assert!(!valid_metric.is_poisoned);
+
+    let poison_metric = detector
+        .evaluate_memory_efficacy(&store, &poisoned_mem.id)
+        .expect("eval poison");
+    assert_eq!(poison_metric.total_injections, 5);
+    assert_eq!(poison_metric.failure_count, 4);
+    assert_eq!(poison_metric.rejection_rate, 0.80);
+    assert!(poison_metric.is_poisoned);
+
+    // Detect poisoned memories
+    let poisoned_list = detector
+        .detect_poisoned_memories(&store)
+        .expect("detect poisoned");
+    assert_eq!(poisoned_list.len(), 1);
+    assert_eq!(poisoned_list[0].memory_id, poisoned_mem.id);
+
+    // Apply automatic decay penalty
+    let decayed_count = detector.apply_penalty_decay(&store).expect("apply decay");
+    assert_eq!(decayed_count, 1);
+
+    // Verify poisoned memory was quarantined and penalized
+    assert!(store.is_memory_quarantined(&poisoned_mem.id).expect("check is quarantined"));
+    assert!(!store.is_memory_quarantined(&valid_mem.id).expect("check valid not quarantined"));
+
+    let updated_poison = store
+        .get_memory(&poisoned_mem.id)
+        .expect("get mem")
+        .expect("found");
+    assert!(updated_poison.importance < 0.15, "Importance must be penalized by 0.1x");
+    assert!(updated_poison.confidence < 0.15, "Confidence must be penalized by 0.1x");
+
+    // Test filter_suppressed_memories
+    let mut candidate_list = vec![valid_mem.clone(), updated_poison];
+    detector
+        .filter_suppressed_memories(&store, &mut candidate_list)
+        .expect("filter suppressed");
+    assert_eq!(candidate_list.len(), 1);
+    assert_eq!(candidate_list[0].id, valid_mem.id);
+}
+
+#[tokio::test]
+async fn test_context_rot_retrieval_and_digest_suppression() {
+    let engine = SqliteMemoryEngine::open_in_memory(None).expect("init engine");
+    let session_id = "sess-rot-suppress-01";
+
+    let valid_mem = MemoryRecord::new(
+        MemoryType::Semantic,
+        "Run cargo test --workspace to guarantee regression testing across all crates.",
+        Scope::Session(session_id.to_string()),
+    )
+    .with_summary("cargo test workspace")
+    .with_importance(0.85);
+    engine.write(&valid_mem).await.expect("write valid");
+
+    let poisoned_mem = MemoryRecord::new(
+        MemoryType::Semantic,
+        "Run deprecated python2 script for mock testing.",
+        Scope::Session(session_id.to_string()),
+    )
+    .with_summary("python2 mock testing")
+    .with_importance(0.9);
+    engine.write(&poisoned_mem).await.expect("write poison");
+
+    // Initially both can be searched
+    let initial_search = engine
+        .search("python2 script", None, 10)
+        .await
+        .expect("search");
+    assert!(initial_search.iter().any(|m| m.id == poisoned_mem.id));
+
+    // Quarantine poisoned memory
+    engine
+        .store()
+        .quarantine_memory(&poisoned_mem.id, "Context poisoning detected: rejection rate > 60%")
+        .expect("quarantine");
+
+    assert!(engine.store().is_memory_quarantined(&poisoned_mem.id).expect("quarantined"));
+
+    // Verify search suppresses the quarantined memory
+    let search_after_quarantine = engine
+        .search("python2 script", None, 10)
+        .await
+        .expect("search after");
+    assert!(
+        !search_after_quarantine.iter().any(|m| m.id == poisoned_mem.id),
+        "Quarantined memory must NOT be returned in search"
+    );
+
+    // Valid memory still returned
+    let search_valid = engine
+        .search("cargo test", None, 10)
+        .await
+        .expect("search valid");
+    assert!(search_valid.iter().any(|m| m.id == valid_mem.id));
+
+    // Verify digest suppresses the quarantined memory
+    let digest = engine.digest(session_id, None).await.expect("digest");
+    assert!(
+        !digest.key_pointers.iter().any(|h| h.id == poisoned_mem.id),
+        "Quarantined memory must NOT be returned in digest key_pointers"
+    );
+    assert!(
+        digest.key_pointers.iter().any(|h| h.id == valid_mem.id),
+        "Valid memory MUST be retained in digest key_pointers"
+    );
+}
+
+
 

@@ -735,6 +735,27 @@ impl HybridRanker {
                     as_of_branch,
                     candidate_limit,
                 )?;
+                candidates.retain(|rec| {
+                    let is_suppressed = rec
+                        .metadata
+                        .get("quarantined")
+                        .and_then(|v| v.as_bool())
+                        .unwrap_or(false)
+                        || rec
+                            .metadata
+                            .get("suppressed")
+                            .and_then(|v| v.as_bool())
+                            .unwrap_or(false)
+                        || rec
+                            .metadata
+                            .get("status")
+                            .and_then(|v| v.as_str())
+                            .map_or(false, |s| {
+                                s.eq_ignore_ascii_case("quarantined")
+                                    || s.eq_ignore_ascii_case("suppressed")
+                            });
+                    !is_suppressed
+                });
                 if let Some(ref prox) = proximity_engine {
                     let hop_map = prox.compute_hop_distances(active_files);
                     candidates.sort_by(|a, b| {
@@ -840,6 +861,30 @@ impl HybridRanker {
         // Apply quality weighting (importance & confidence) and active file proximity boost
         for (id, score) in score_map.iter_mut() {
             if let Some(rec) = record_map.get(id) {
+                let is_suppressed = rec
+                    .metadata
+                    .get("quarantined")
+                    .and_then(|v| v.as_bool())
+                    .unwrap_or(false)
+                    || rec
+                        .metadata
+                        .get("suppressed")
+                        .and_then(|v| v.as_bool())
+                        .unwrap_or(false)
+                    || rec
+                        .metadata
+                        .get("status")
+                        .and_then(|v| v.as_str())
+                        .map_or(false, |s| {
+                            s.eq_ignore_ascii_case("quarantined")
+                                || s.eq_ignore_ascii_case("suppressed")
+                        });
+
+                if is_suppressed {
+                    *score = 0.0;
+                    continue;
+                }
+
                 let importance_factor = 0.8 + 0.4 * rec.importance;
                 let confidence_factor = 0.5 + 0.5 * rec.confidence;
                 *score *= importance_factor * confidence_factor;
@@ -852,6 +897,7 @@ impl HybridRanker {
         }
 
         let mut ranked_ids: Vec<(Uuid, f32)> = score_map.into_iter().collect();
+        ranked_ids.retain(|(_, score)| *score > 0.0);
         ranked_ids.sort_by(|a, b| b.1.partial_cmp(&a.1).unwrap_or(std::cmp::Ordering::Equal));
 
         ranked_ids
@@ -1004,6 +1050,30 @@ impl HybridRanker {
         // Apply quality weighting: importance & confidence
         for (id, score) in score_map.iter_mut() {
             if let Some(rec) = record_map.get(id) {
+                let is_suppressed = rec
+                    .metadata
+                    .get("quarantined")
+                    .and_then(|v| v.as_bool())
+                    .unwrap_or(false)
+                    || rec
+                        .metadata
+                        .get("suppressed")
+                        .and_then(|v| v.as_bool())
+                        .unwrap_or(false)
+                    || rec
+                        .metadata
+                        .get("status")
+                        .and_then(|v| v.as_str())
+                        .map_or(false, |s| {
+                            s.eq_ignore_ascii_case("quarantined")
+                                || s.eq_ignore_ascii_case("suppressed")
+                        });
+
+                if is_suppressed {
+                    *score = 0.0;
+                    continue;
+                }
+
                 let importance_factor = 0.8 + 0.4 * rec.importance;
                 let confidence_factor = 0.5 + 0.5 * rec.confidence;
                 *score *= importance_factor * confidence_factor;
@@ -1011,6 +1081,7 @@ impl HybridRanker {
         }
 
         let mut ranked_ids: Vec<(Uuid, f32)> = score_map.into_iter().collect();
+        ranked_ids.retain(|(_, score)| *score > 0.0);
         ranked_ids.sort_by(|a, b| b.1.partial_cmp(&a.1).unwrap_or(std::cmp::Ordering::Equal));
 
         ranked_ids
