@@ -58,7 +58,10 @@ pub use compiler::{
     estimate_tokens, HostCompileResult, MultiHostCompileReport, MultiHostCompiler,
     STRATA_MARKER_END, STRATA_MARKER_START,
 };
-pub use consolidation::{Consolidator, NeuroSymbolicConsolidator};
+pub use consolidation::{
+    parse_dream_duration, Consolidator, DreamConfig, DreamEngine, DreamReport, DreamTriggerReason,
+    NeuroSymbolicConsolidator,
+};
 pub use decay::{DecayCalculator, PruneReport};
 pub use futility::{record_shadow_failure, record_shadow_success, FutilityAccumulator, FutilityTraceRow, Signal as FutilitySignal, Verdict as FutilityVerdict};
 pub use gating::{should_recall, IntentKind, RecallDecision, RecallGatingClassifier, TaskType};
