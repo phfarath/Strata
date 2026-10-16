@@ -862,6 +862,19 @@ impl SqliteStore {
 
             CREATE INDEX IF NOT EXISTS idx_rule_versions_rule ON procedural_rule_versions(rule_id, version);
             CREATE INDEX IF NOT EXISTS idx_procedural_rules_name ON procedural_rules(name);
+
+            -- Memory Injection Outcomes Table for Context Rot & Poisoning Detection
+            CREATE TABLE IF NOT EXISTS memory_injection_outcomes (
+                id TEXT PRIMARY KEY,
+                memory_id TEXT NOT NULL,
+                session_id TEXT NOT NULL,
+                task_id TEXT,
+                command TEXT,
+                outcome TEXT NOT NULL,
+                created_at TEXT NOT NULL
+            );
+
+            CREATE INDEX IF NOT EXISTS idx_injection_memory ON memory_injection_outcomes(memory_id);
             ",
         )
         .map_err(|e| StrataError::Database(format!("Failed to execute schema migration: {e}")))?;
@@ -1199,6 +1212,10 @@ impl SqliteStore {
     // ==========================================
     // Memory Record Operations
     // ==========================================
+
+    pub fn insert_memory(&self, memory: &MemoryRecord) -> Result<(), StrataError> {
+        self.insert_or_update_memory(memory)
+    }
 
     pub fn insert_or_update_memory(&self, memory: &MemoryRecord) -> Result<(), StrataError> {
         let conn = self
@@ -7964,6 +7981,274 @@ impl SqliteStore {
         }
 
         self.get_procedural_rule(rule_id)
+    }
+
+    // ==========================================
+    // Context Rot & Injection Outcomes Operations
+    // ==========================================
+
+    pub fn record_injection_outcome(
+        &self,
+        record: &crate::context_rot::MemoryInjectionRecord,
+    ) -> Result<(), StrataError> {
+        let conn = self
+            .conn
+            .lock()
+            .map_err(|_| StrataError::Database("Lock poisoned on SQLite connection".to_string()))?;
+
+        conn.execute(
+            "INSERT INTO memory_injection_outcomes (
+                id, memory_id, session_id, task_id, command, outcome, created_at
+            ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
+            params![
+                record.id.to_string(),
+                record.memory_id.to_string(),
+                record.session_id,
+                record.task_id,
+                record.command,
+                record.outcome.as_str(),
+                record.created_at.to_rfc3339(),
+            ],
+        )
+        .map_err(|e| StrataError::Database(format!("Failed to insert injection outcome: {e}")))?;
+
+        Ok(())
+    }
+
+    pub fn get_injection_outcomes_for_memory(
+        &self,
+        memory_id: &Uuid,
+    ) -> Result<Vec<crate::context_rot::MemoryInjectionRecord>, StrataError> {
+        let conn = self
+            .conn
+            .lock()
+            .map_err(|_| StrataError::Database("Lock poisoned on SQLite connection".to_string()))?;
+
+        let mut stmt = conn
+            .prepare(
+                "SELECT id, memory_id, session_id, task_id, command, outcome, created_at
+                 FROM memory_injection_outcomes
+                 WHERE memory_id = ?1
+                 ORDER BY created_at ASC",
+            )
+            .map_err(|e| StrataError::Database(e.to_string()))?;
+
+        let rows = stmt
+            .query_map(params![memory_id.to_string()], |row| {
+                let id_str: String = row.get(0)?;
+                let mem_id_str: String = row.get(1)?;
+                let session_id: String = row.get(2)?;
+                let task_id: Option<String> = row.get(3)?;
+                let command: Option<String> = row.get(4)?;
+                let outcome_str: String = row.get(5)?;
+                let created_str: String = row.get(6)?;
+
+                Ok((
+                    id_str,
+                    mem_id_str,
+                    session_id,
+                    task_id,
+                    command,
+                    outcome_str,
+                    created_str,
+                ))
+            })
+            .map_err(|e| StrataError::Database(e.to_string()))?;
+
+        let mut records = Vec::new();
+        for row in rows {
+            let (id_str, mem_id_str, session_id, task_id, command, outcome_str, created_str) =
+                row.map_err(|e| StrataError::Database(e.to_string()))?;
+
+            let id = Uuid::parse_str(&id_str)
+                .map_err(|e| StrataError::Validation(format!("Invalid UUID in injection id: {e}")))?;
+            let memory_id = Uuid::parse_str(&mem_id_str)
+                .map_err(|e| StrataError::Validation(format!("Invalid UUID in memory_id: {e}")))?;
+            let outcome = outcome_str
+                .parse::<crate::context_rot::InjectionOutcome>()
+                .map_err(|e| StrataError::Validation(format!("Invalid injection outcome: {e}")))?;
+            let created_at = DateTime::parse_from_rfc3339(&created_str)
+                .map(|dt| dt.with_timezone(&Utc))
+                .unwrap_or_else(|_| Utc::now());
+
+            records.push(crate::context_rot::MemoryInjectionRecord {
+                id,
+                memory_id,
+                session_id,
+                task_id,
+                command,
+                outcome,
+                created_at,
+            });
+        }
+
+        Ok(records)
+    }
+
+    pub fn get_all_memory_injection_metrics(
+        &self,
+        min_samples: usize,
+        threshold: f32,
+    ) -> Result<Vec<crate::context_rot::MemoryEfficacyMetric>, StrataError> {
+        let conn = self
+            .conn
+            .lock()
+            .map_err(|_| StrataError::Database("Lock poisoned on SQLite connection".to_string()))?;
+
+        let mut stmt = conn
+            .prepare(
+                "SELECT id, memory_id, session_id, task_id, command, outcome, created_at
+                 FROM memory_injection_outcomes
+                 ORDER BY created_at ASC",
+            )
+            .map_err(|e| StrataError::Database(e.to_string()))?;
+
+        let rows = stmt
+            .query_map([], |row| {
+                let id_str: String = row.get(0)?;
+                let mem_id_str: String = row.get(1)?;
+                let session_id: String = row.get(2)?;
+                let task_id: Option<String> = row.get(3)?;
+                let command: Option<String> = row.get(4)?;
+                let outcome_str: String = row.get(5)?;
+                let created_str: String = row.get(6)?;
+
+                Ok((
+                    id_str,
+                    mem_id_str,
+                    session_id,
+                    task_id,
+                    command,
+                    outcome_str,
+                    created_str,
+                ))
+            })
+            .map_err(|e| StrataError::Database(e.to_string()))?;
+
+        let mut map: std::collections::HashMap<Uuid, Vec<crate::context_rot::MemoryInjectionRecord>> =
+            std::collections::HashMap::new();
+
+        for row in rows {
+            let (id_str, mem_id_str, session_id, task_id, command, outcome_str, created_str) =
+                row.map_err(|e| StrataError::Database(e.to_string()))?;
+
+            let id = Uuid::parse_str(&id_str)
+                .map_err(|e| StrataError::Validation(format!("Invalid UUID in injection id: {e}")))?;
+            let memory_id = Uuid::parse_str(&mem_id_str)
+                .map_err(|e| StrataError::Validation(format!("Invalid UUID in memory_id: {e}")))?;
+            let outcome = outcome_str
+                .parse::<crate::context_rot::InjectionOutcome>()
+                .map_err(|e| StrataError::Validation(format!("Invalid injection outcome: {e}")))?;
+            let created_at = DateTime::parse_from_rfc3339(&created_str)
+                .map(|dt| dt.with_timezone(&Utc))
+                .unwrap_or_else(|_| Utc::now());
+
+            let record = crate::context_rot::MemoryInjectionRecord {
+                id,
+                memory_id,
+                session_id,
+                task_id,
+                command,
+                outcome,
+                created_at,
+            };
+
+            map.entry(memory_id).or_default().push(record);
+        }
+
+        let config = crate::context_rot::ContextRotConfig {
+            rejection_threshold: threshold,
+            min_samples,
+            penalty_multiplier: 0.1,
+        };
+
+        let metrics = map
+            .into_iter()
+            .map(|(mem_id, records)| {
+                crate::context_rot::MemoryEfficacyMetric::compute(mem_id, &records, &config)
+            })
+            .collect();
+
+        Ok(metrics)
+    }
+
+    pub fn quarantine_memory(&self, memory_id: &Uuid, reason: &str) -> Result<(), StrataError> {
+        let conn = self
+            .conn
+            .lock()
+            .map_err(|_| StrataError::Database("Lock poisoned on SQLite connection".to_string()))?;
+
+        let mut stmt = conn
+            .prepare("SELECT metadata_json FROM memories WHERE id = ?1")
+            .map_err(|e| StrataError::Database(e.to_string()))?;
+
+        let row_opt: Option<String> = stmt
+            .query_row(params![memory_id.to_string()], |row| row.get(0))
+            .optional()
+            .map_err(|e| StrataError::Database(e.to_string()))?;
+
+        if let Some(meta_str) = row_opt {
+            let mut val: serde_json::Value =
+                serde_json::from_str(&meta_str).unwrap_or_else(|_| serde_json::json!({}));
+            if !val.is_object() {
+                val = serde_json::json!({});
+            }
+            if let Some(obj) = val.as_object_mut() {
+                obj.insert("quarantined".to_string(), serde_json::Value::Bool(true));
+                obj.insert("suppressed".to_string(), serde_json::Value::Bool(true));
+                obj.insert(
+                    "quarantine_reason".to_string(),
+                    serde_json::Value::String(reason.to_string()),
+                );
+                obj.insert(
+                    "quarantined_at".to_string(),
+                    serde_json::Value::String(Utc::now().to_rfc3339()),
+                );
+            }
+            let new_meta = serde_json::to_string(&val)?;
+            let now_str = Utc::now().to_rfc3339();
+            conn.execute(
+                "UPDATE memories SET metadata_json = ?1, updated_at = ?2 WHERE id = ?3",
+                params![new_meta, now_str, memory_id.to_string()],
+            )
+            .map_err(|e| StrataError::Database(e.to_string()))?;
+            Ok(())
+        } else {
+            Err(StrataError::NotFound(format!(
+                "Memory {} not found for quarantine",
+                memory_id
+            )))
+        }
+    }
+
+    pub fn is_memory_quarantined(&self, memory_id: &Uuid) -> Result<bool, StrataError> {
+        let conn = self
+            .conn
+            .lock()
+            .map_err(|_| StrataError::Database("Lock poisoned on SQLite connection".to_string()))?;
+
+        let mut stmt = conn
+            .prepare("SELECT metadata_json FROM memories WHERE id = ?1")
+            .map_err(|e| StrataError::Database(e.to_string()))?;
+
+        let row_opt: Option<String> = stmt
+            .query_row(params![memory_id.to_string()], |row| row.get(0))
+            .optional()
+            .map_err(|e| StrataError::Database(e.to_string()))?;
+
+        if let Some(meta_str) = row_opt {
+            if let Ok(val) = serde_json::from_str::<serde_json::Value>(&meta_str) {
+                if val.get("quarantined").and_then(|v| v.as_bool()).unwrap_or(false)
+                    || val.get("suppressed").and_then(|v| v.as_bool()).unwrap_or(false)
+                    || val.get("status").and_then(|v| v.as_str()).map_or(false, |s| {
+                        s.eq_ignore_ascii_case("quarantined") || s.eq_ignore_ascii_case("suppressed")
+                    })
+                {
+                    return Ok(true);
+                }
+            }
+        }
+        Ok(false)
     }
 }
 

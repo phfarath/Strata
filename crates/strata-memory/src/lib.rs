@@ -5,6 +5,7 @@ pub mod clustering;
 pub mod community;
 pub mod compiler;
 pub mod consolidation;
+pub mod context_rot;
 pub mod decay;
 pub mod embedding;
 pub mod enricher;
@@ -62,6 +63,10 @@ pub use compiler::{
 pub use consolidation::{
     parse_dream_duration, Consolidator, DreamConfig, DreamEngine, DreamReport, DreamTriggerReason,
     NeuroSymbolicConsolidator,
+};
+pub use context_rot::{
+    ContextRotConfig, ContextRotDetector, InjectionOutcome, MemoryEfficacyMetric,
+    MemoryInjectionRecord,
 };
 pub use decay::{DecayCalculator, PruneReport};
 pub use futility::{record_shadow_failure, record_shadow_success, FutilityAccumulator, FutilityTraceRow, Signal as FutilitySignal, Verdict as FutilityVerdict};

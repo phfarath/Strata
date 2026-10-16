@@ -22,6 +22,7 @@ pub mod silent_failure_avoidance;
 pub mod workspace_monorepo;
 pub mod world_model_causal;
 pub mod community_scoped_recall;
+pub mod context_rot;
 
 pub use a2a_stigmergic_leases::*;
 pub use a2a_swarm_stress_benchmark::*;
@@ -31,6 +32,7 @@ pub use architecture_clustering::*;
 pub use cognitive_feedback_and_alignment::*;
 pub use cognitive_observability::*;
 pub use consolidation_ab_benchmark::*;
+pub use context_rot::*;
 pub use cross_host_transfer::*;
 pub use decay_curve_simulation::*;
 pub use hierarchical_episodic_pyramid::*;
