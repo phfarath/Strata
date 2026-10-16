@@ -9,6 +9,7 @@ pub mod decay;
 pub mod embedding;
 pub mod enricher;
 pub mod futility;
+pub mod gating;
 pub mod ipc;
 pub mod jtms;
 pub mod leases;
@@ -60,6 +61,7 @@ pub use compiler::{
 pub use consolidation::{Consolidator, NeuroSymbolicConsolidator};
 pub use decay::{DecayCalculator, PruneReport};
 pub use futility::{record_shadow_failure, record_shadow_success, FutilityAccumulator, FutilityTraceRow, Signal as FutilitySignal, Verdict as FutilityVerdict};
+pub use gating::{should_recall, IntentKind, RecallDecision, RecallGatingClassifier, TaskType};
 pub use embedding::{
     bytes_to_embedding, cosine_similarity, embedding_to_bytes, EmbeddingProvider,
     FastEmbedProvider, MockEmbeddingProvider,
@@ -463,17 +465,27 @@ impl SqliteMemoryEngine {
         // 3. Transfer procedural skills
         if filter.include_procedural_skills {
             let skills = source_store.get_all_procedural_skills(None, filter.limit)?;
-            for mut skill in skills {
+            for skill in skills {
                 if self.store.get_procedural_skill(&skill.id)?.is_some() {
                     report.skipped_duplicates += 1;
                     continue;
                 }
-                self.store.insert_or_update_procedural_skill(&mut skill)?;
+                self.store.insert_or_update_procedural_skill(&skill)?;
                 report.transferred_procedural_skills += 1;
             }
         }
 
         Ok(report)
+    }
+
+    /// Evaluates whether a user prompt and task type require memory recall using the deterministic gating classifier (< 1ms).
+    pub fn should_recall(&self, prompt: &str, task_type: TaskType) -> bool {
+        crate::gating::should_recall(prompt, task_type)
+    }
+
+    /// Produces a full deterministic gating classification report for a prompt and task type (< 1ms).
+    pub fn classify_recall(&self, prompt: &str, task_type: TaskType) -> RecallDecision {
+        crate::gating::RecallGatingClassifier::classify(prompt, task_type)
     }
 
     /// Access the underlying HybridRanker.
