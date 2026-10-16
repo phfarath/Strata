@@ -179,6 +179,19 @@ impl Consolidator {
         session_id: &str,
         max_tokens: Option<usize>,
     ) -> Result<DigestOutput, StrataError> {
+        self.generate_digest_with_active_files(store, session_id, max_tokens, &[])
+    }
+
+    /// Generate a compact working digest (~300-500 tokens) for the given session,
+    /// biasing `key_pointers` and `failure_warnings` toward `active_files` and their
+    /// 1-hop / 2-hop import graph neighbors.
+    pub fn generate_digest_with_active_files(
+        &self,
+        store: &SqliteStore,
+        session_id: &str,
+        max_tokens: Option<usize>,
+        active_files: &[String],
+    ) -> Result<DigestOutput, StrataError> {
         let max_tok = max_tokens.unwrap_or(450);
         let session_scope = Scope::Session(session_id.to_string());
 
@@ -218,15 +231,58 @@ impl Consolidator {
             }
         }
 
-        // 2. Fetch key memory pointers in session & global scope
-        let top_memories = store.get_all_memories(Some(&session_scope), None, 5)?;
-        let key_pointers: Vec<MemoryHandle> = top_memories
-            .into_iter()
-            .map(|m| m.to_handle(Some(m.importance)))
-            .collect();
+        // 2. Fetch and rank key memory pointers in session & global scope
+        let key_pointers: Vec<MemoryHandle> = if active_files.is_empty() {
+            let top_memories = store.get_all_memories(Some(&session_scope), None, 5)?;
+            top_memories
+                .into_iter()
+                .map(|m| m.to_handle(Some(m.importance)))
+                .collect()
+        } else {
+            let prox = crate::retrieval::ProximityBiasEngine::from_store(
+                store,
+                crate::retrieval::ProximityBiasConfig::default(),
+            )?;
+            let hop_map = prox.compute_hop_distances(active_files);
+            let candidates = store.get_all_memories(Some(&session_scope), None, 50)?;
+            let mut scored: Vec<(MemoryRecord, f32)> = candidates
+                .into_iter()
+                .map(|m| {
+                    let boost = prox.memory_proximity_boost_with_map(&m, &hop_map);
+                    let score = m.importance + boost;
+                    (m, score)
+                })
+                .collect();
+            scored.sort_by(|a, b| b.1.partial_cmp(&a.1).unwrap_or(std::cmp::Ordering::Equal));
+            scored
+                .into_iter()
+                .take(5)
+                .map(|(m, score)| m.to_handle(Some(score)))
+                .collect()
+        };
 
         // 3. Fetch top known failure warnings
-        let failure_warnings = store.search_failures(None, Some(&session_scope), 3)?;
+        let failure_warnings: Vec<FailurePattern> = if active_files.is_empty() {
+            store.search_failures(None, Some(&session_scope), 3)?
+        } else {
+            let prox = crate::retrieval::ProximityBiasEngine::from_store(
+                store,
+                crate::retrieval::ProximityBiasConfig::default(),
+            )?;
+            let hop_map = prox.compute_hop_distances(active_files);
+            let mut candidates = store.search_failures(None, Some(&session_scope), 20)?;
+            candidates.sort_by(|a, b| {
+                let boost_a = prox.failure_proximity_boost_with_map(a, &hop_map);
+                let boost_b = prox.failure_proximity_boost_with_map(b, &hop_map);
+                let base_a = (a.occurrences as f32) * 0.05;
+                let base_b = (b.occurrences as f32) * 0.05;
+                (base_b + boost_b)
+                    .partial_cmp(&(base_a + boost_a))
+                    .unwrap_or(std::cmp::Ordering::Equal)
+            });
+            candidates.truncate(3);
+            candidates
+        };
 
         // 4. Construct compact summary
         let summary = format!(

@@ -88,7 +88,10 @@ pub use pyramid::{
     PyramidDrillDownReport, PyramidFilter, RollupSummary, SlmBridgeConfig,
     SlmInferenceResult, SlmPyramidBridge,
 };
-pub use retrieval::{HybridRanker, HybridRankerConfig};
+pub use retrieval::{
+    import_distance_decay_factor, HybridRanker, HybridRankerConfig, ProximityBiasConfig,
+    ProximityBiasEngine,
+};
 pub use spreading_activation::{
     EdgeKind, GraphEdge, GraphNode, KnowledgeGraph, SpreadingActivationConfig,
     SpreadingActivationEngine,
@@ -495,6 +498,56 @@ impl SqliteMemoryEngine {
     /// Access the underlying HybridRanker.
     pub fn ranker(&self) -> &HybridRanker {
         &self.ranker
+    }
+
+    /// Performs hybrid memory recall biased by the developer's active files and their
+    /// 1-hop (`1.0`) and 2-hop (`0.5`) import graph neighbors.
+    pub async fn recall_with_active_files(
+        &self,
+        query: &str,
+        scope: Option<&Scope>,
+        active_files: &[String],
+        limit: usize,
+    ) -> Result<Vec<MemoryRecord>, StrataError> {
+        let mut results = self
+            .ranker
+            .retrieve_with_active_files(
+                &self.store,
+                Some(self.embedding_provider.as_ref()),
+                query,
+                scope,
+                None,
+                active_files,
+                limit,
+            )
+            .await?;
+
+        for memory in &mut results {
+            memory.mark_accessed();
+            if self.store.get_memory(&memory.id)?.is_some() {
+                let _ = self.store.insert_or_update_memory(memory);
+            } else if let Some(ref global) = self.global_store {
+                let _ = global.insert_or_update_memory(memory);
+            }
+        }
+
+        Ok(results)
+    }
+
+    /// Generates a working session digest (`DigestOutput`) whose `key_pointers` and `failure_warnings`
+    /// are ranked with active file and import distance proximity biasing.
+    pub async fn memory_digest_with_active_files(
+        &self,
+        session_id: &str,
+        max_tokens: Option<usize>,
+        active_files: &[String],
+    ) -> Result<DigestOutput, StrataError> {
+        self.consolidator.generate_digest_with_active_files(
+            &self.store,
+            session_id,
+            max_tokens,
+            active_files,
+        )
     }
 }
 
