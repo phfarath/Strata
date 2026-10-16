@@ -248,7 +248,7 @@ enum Commands {
     /// Synchronize persistent memory spaces (push deltas, pull remote updates, view status)
     Sync(SyncArgs),
 
-    /// Run background synchronization daemon loop (< 10MB RAM)
+    /// Run background auto-dreaming & synchronization daemon loop (< 5MB RAM, KAIROS-style)
     Daemon(DaemonArgs),
 
     /// Export mined cognitive preference pairs (DPO), alignment signals (KTO), procedural skills (SFT), and markdown
