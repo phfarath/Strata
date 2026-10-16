@@ -295,6 +295,7 @@ fn has_historical_inquiry_signals(lower: &str) -> bool {
         "why is this",
         "por que",
         "porque",
+        "por quê",
         "rationale",
         "post-mortem",
         "postmortem",
@@ -334,6 +335,7 @@ fn has_failure_or_debugging_signals(lower: &str) -> bool {
         "intermittent",
         "intermitente",
         "regressão",
+        "regressao",
         "regression",
         "workaround",
         "panic in thread",
@@ -352,6 +354,10 @@ fn has_global_rule_or_security_signals(lower: &str) -> bool {
         "coding standard",
         "security rule",
         "security policy",
+        "segurança",
+        "seguranca",
+        "política de segurança",
+        "politica de seguranca",
         "auth token",
         "api key",
         "secret handling",
@@ -418,9 +424,6 @@ fn is_pure_mechanical_command(lower: &str) -> bool {
         "python -m",
         "pytest",
         "uv run",
-        "ls",
-        "dir",
-        "pwd",
         "cat ",
         "echo ",
         "touch ",
@@ -432,6 +435,18 @@ fn is_pure_mechanical_command(lower: &str) -> bool {
 
     for &prefix in CLI_PREFIXES {
         if lower.starts_with(prefix) {
+            return true;
+        }
+    }
+
+    // Bare commands requiring word boundary to avoid false positives like "directory" matching "dir"
+    const BARE_COMMANDS: &[&str] = &["ls", "dir", "pwd"];
+    for &cmd in BARE_COMMANDS {
+        if lower == cmd
+            || lower.starts_with(&format!("{cmd} "))
+            || lower.starts_with(&format!("{cmd} -"))
+            || lower.starts_with(&format!("{cmd} /"))
+        {
             return true;
         }
     }
@@ -723,5 +738,18 @@ mod tests {
             "Average latency was {:.2}μs, expected well under 100μs (< 1000μs)",
             avg_micros
         );
+    }
+
+    #[test]
+    fn test_bare_command_boundary_avoidance() {
+        // "dir" and "dir /s" are mechanical commands
+        assert!(!should_recall("dir", TaskType::General));
+        assert!(!should_recall("dir /s", TaskType::General));
+        assert!(!should_recall("ls -la", TaskType::General));
+
+        // Words starting with "dir" that are not commands should not be falsely bypassed
+        let dec = RecallGatingClassifier::classify("directory structure recommendations", TaskType::General);
+        assert_eq!(dec.intent, IntentKind::GeneralRecall);
+        assert!(dec.should_recall);
     }
 }

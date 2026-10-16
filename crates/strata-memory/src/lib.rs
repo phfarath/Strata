@@ -465,7 +465,7 @@ impl SqliteMemoryEngine {
         // 3. Transfer procedural skills
         if filter.include_procedural_skills {
             let skills = source_store.get_all_procedural_skills(None, filter.limit)?;
-            for mut skill in skills {
+            for skill in skills {
                 if self.store.get_procedural_skill(&skill.id)?.is_some() {
                     report.skipped_duplicates += 1;
                     continue;
