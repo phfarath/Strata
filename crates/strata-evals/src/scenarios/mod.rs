@@ -23,6 +23,7 @@ pub mod workspace_monorepo;
 pub mod world_model_causal;
 pub mod community_scoped_recall;
 pub mod context_rot;
+pub mod long_mem_eval;
 
 pub use a2a_stigmergic_leases::*;
 pub use a2a_swarm_stress_benchmark::*;
@@ -39,6 +40,7 @@ pub use hierarchical_episodic_pyramid::*;
 pub use hierarchical_planning_dag::*;
 pub use hitl_core_approval::*;
 pub use jtms_belief_revision::*;
+pub use long_mem_eval::*;
 pub use lora_finetuning_pipeline::*;
 pub use mcp_protocol_multi_version::*;
 pub use native_call_graph::*;
@@ -49,3 +51,4 @@ pub use silent_failure_avoidance::*;
 pub use workspace_monorepo::*;
 pub use world_model_causal::*;
 pub use community_scoped_recall::*;
+
