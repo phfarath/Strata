@@ -1637,6 +1637,71 @@ export function login(username: string): boolean {
     }
 
     #[tokio::test]
+    async fn test_worker_heartbeat_lease_renewal_and_abort_on_revocation() {
+        use crate::commands::worker::{run_worker, WorkerArgs};
+        use strata_core::blackboard::{TaskRecord, TaskStatus};
+        use strata_memory::SqliteMemoryEngine;
+
+        let engine = Arc::new(SqliteMemoryEngine::open_in_memory(None).unwrap());
+        let coordinator = engine.stigmergy();
+
+        #[cfg(target_os = "windows")]
+        let sleep_cmd = "cmd: Start-Sleep -Milliseconds 600";
+        #[cfg(not(target_os = "windows"))]
+        let sleep_cmd = "cmd: sleep 0.6";
+
+        let task1 = TaskRecord::new("w-hb-task-1", "Heartbeat renewal task")
+            .with_description(sleep_cmd)
+            .with_required_resources(vec!["src/critical_module.rs".to_string()]);
+        coordinator.create_task(&task1).unwrap();
+
+        let args = WorkerArgs {
+            agent: Some("hb-worker".to_string()),
+            host: Some("cli".to_string()),
+            plan: None,
+            poll_interval: 1,
+            heartbeat_interval: 1,
+            lease_ttl: 10,
+            stale_timeout: 60,
+            auto_reclaim: false,
+            max_tasks: Some(1),
+            exit_when_idle: true,
+            dry_run: false,
+            json: true,
+        };
+
+        let stats = run_worker(args.clone(), coordinator.clone()).await.unwrap();
+        assert_eq!(stats.tasks_succeeded, 1);
+        assert_eq!(coordinator.get_task("w-hb-task-1").unwrap().unwrap().status, TaskStatus::Completed);
+        // Resource lease should be released upon completion
+        assert!(coordinator.get_lease("src/critical_module.rs").unwrap().is_none());
+
+        // Test abort on concurrent lease revocation
+        #[cfg(target_os = "windows")]
+        let long_sleep_cmd = "cmd: Start-Sleep -Milliseconds 2500";
+        #[cfg(not(target_os = "windows"))]
+        let long_sleep_cmd = "cmd: sleep 2.5";
+
+        let task2 = TaskRecord::new("w-hb-task-2", "Task to revoke")
+            .with_description(long_sleep_cmd)
+            .with_required_resources(vec!["src/stolen_module.rs".to_string()]);
+        coordinator.create_task(&task2).unwrap();
+
+        let coord_clone = coordinator.clone();
+        tokio::spawn(async move {
+            tokio::time::sleep(tokio::time::Duration::from_millis(400)).await;
+            // Revoke the lease from hb-worker and transfer to rival-agent
+            let _ = coord_clone.release_lease("src/stolen_module.rs", "hb-worker");
+            let _ = coord_clone.acquire_lease("src/stolen_module.rs", "rival-agent", 60, Some("stolen"));
+        });
+
+        let stats_revoked = run_worker(args, coordinator.clone()).await.unwrap();
+        assert_eq!(stats_revoked.tasks_failed, 1);
+        let task2_record = coordinator.get_task("w-hb-task-2").unwrap().unwrap();
+        assert_eq!(task2_record.status, TaskStatus::Failed);
+    }
+
+    #[tokio::test]
     async fn test_realtime_drift_watcher_jtms_invalidation_cascade() {
         use crate::commands::watch::{run_watch, WatchArgs};
         use strata_core::schemas::{FactStatus, SemanticFact};

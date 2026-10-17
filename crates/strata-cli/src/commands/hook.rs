@@ -67,8 +67,9 @@ pub enum HookCommand {
         #[arg(long)]
         params: Option<String>,
 
-        #[arg(long, default_value = "claude-code")]
-        agent: String,
+        /// Agent identity (falls back to STRATA_AGENT_ID)
+        #[arg(long)]
+        agent: Option<String>,
 
         #[arg(long, default_value_t = 30)]
         ttl: u64,
@@ -320,6 +321,7 @@ pub async fn handle_hook(command: HookCommand, engine: Arc<SqliteMemoryEngine>) 
             ttl,
             symbol,
         } => {
+            let agent = crate::agent_env::resolve_agent_id(agent.as_deref());
             let mut resolved_target = target.or_else(|| {
                 params.as_deref().and_then(|p| {
                     serde_json::from_str::<serde_json::Value>(p)
@@ -374,7 +376,7 @@ pub async fn handle_hook(command: HookCommand, engine: Arc<SqliteMemoryEngine>) 
                     || lower_tool.contains("rm");
 
                 if is_mutation {
-                    let resource_id = target_path.replace('\\', "/");
+                    let resource_id = strata_core::paths::canonical_resource_id(&target_path);
                     let store = engine.store_arc();
                     let coordinator = strata_memory::StigmergyCoordinator::new(store);
 
@@ -395,12 +397,28 @@ pub async fn handle_hook(command: HookCommand, engine: Arc<SqliteMemoryEngine>) 
 
                     // Automatically acquire/renew lease for this agent while executing
                     let metadata = format!("PreTool: {}", tool);
-                    let _ = coordinator.acquire_lease(
+                    match coordinator.acquire_lease(
                         &resource_id,
                         &agent,
                         ttl as i64,
                         Some(&metadata),
-                    );
+                    ) {
+                        Ok(strata_core::a2a::LeaseAcquireResult::Conflict { held_by, remaining_seconds, .. }) => {
+                            eprintln!(
+                                "\n❌ [Strata A2A Concurrency Blocked]: Resource '{}' is exclusively leased by '{}' ({}s remaining).",
+                                resource_id, held_by, remaining_seconds
+                            );
+                            eprintln!(
+                                "Tool '{}' execution aborted mechanically to prevent concurrent edit collisions.",
+                                tool
+                            );
+                            std::process::exit(1);
+                        }
+                        Ok(strata_core::a2a::LeaseAcquireResult::Acquired { .. }) => {}
+                        Err(err) => {
+                            eprintln!("⚠️ [Strata Lease Warning]: Failed to acquire lease for '{resource_id}': {err}");
+                        }
+                    }
                 }
 
                 // Deterministic Symbol-Level Anti-Pattern Guard (<10ms, Advisory Default - never aborts)
@@ -702,7 +720,7 @@ mod futility_shadow_tests {
             tool: "edit".to_string(),
             target: Some("src/auth.rs::login".to_string()),
             params: None,
-            agent: "agent-test".to_string(),
+            agent: Some("agent-test".to_string()),
             ttl: 30,
             symbol: None,
         };
@@ -710,5 +728,36 @@ mod futility_shadow_tests {
         // Execution must succeed and never abort/exit (advisory default)
         let res = handle_hook(cmd, Arc::clone(&engine)).await;
         assert!(res.is_ok());
+
+        // Verify that the lease was acquired on the canonical resource ID file:src/auth.rs
+        let coordinator = strata_memory::StigmergyCoordinator::new(engine.store_arc());
+        let lease = coordinator.get_lease("file:src/auth.rs").unwrap().unwrap();
+        assert_eq!(lease.agent_id, "agent-test");
+    }
+
+    #[tokio::test]
+    async fn pre_tool_resolves_agent_from_environment() {
+        let engine = Arc::new(SqliteMemoryEngine::open_in_memory(None).unwrap());
+
+        // When agent is None and STRATA_AGENT_ID is not set, resolve_agent_id falls back to agent-{pid}
+        let cmd = HookCommand::PreTool {
+            tool: "write".to_string(),
+            target: Some("crates/strata-cli/src/main.rs".to_string()),
+            params: None,
+            agent: None,
+            ttl: 45,
+            symbol: None,
+        };
+
+        let res = handle_hook(cmd, Arc::clone(&engine)).await;
+        assert!(res.is_ok());
+
+        let coordinator = strata_memory::StigmergyCoordinator::new(engine.store_arc());
+        let lease = coordinator
+            .get_lease("crates/strata-cli/src/main.rs")
+            .unwrap()
+            .unwrap();
+        assert_eq!(lease.resource_id, "file:crates/strata-cli/src/main.rs");
+        assert!(lease.agent_id.starts_with("agent-"));
     }
 }

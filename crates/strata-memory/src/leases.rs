@@ -174,6 +174,25 @@ impl StigmergyCoordinator {
         self.store.update_task_progress_with_generation(task_id, agent_id, message, expected_generation)
     }
 
+    pub fn renew_task_leases(
+        &self,
+        task_id: &str,
+        agent_id: &str,
+        lease_ttl_secs: i64,
+    ) -> Result<bool, StrataError> {
+        self.store.renew_task_leases(task_id, agent_id, lease_ttl_secs)
+    }
+
+    pub fn renew_task_leases_with_generation(
+        &self,
+        task_id: &str,
+        agent_id: &str,
+        lease_ttl_secs: i64,
+        expected_generation: Option<i64>,
+    ) -> Result<bool, StrataError> {
+        self.store.renew_task_leases_with_generation(task_id, agent_id, lease_ttl_secs, expected_generation)
+    }
+
     pub fn reclaim_stale_tasks(&self, stale_secs: i64) -> Result<Vec<String>, StrataError> {
         self.store.reclaim_stale_tasks(stale_secs)
     }
@@ -612,6 +631,97 @@ mod tests {
             .unwrap()
             .unwrap();
         assert!(!auth_unleased.lease_held);
+    }
+
+    #[test]
+    fn test_canonical_resource_id_in_leases_and_conflicts() {
+        let store = Arc::new(SqliteStore::open_in_memory().expect("in-memory db"));
+        let coordinator = StigmergyCoordinator::new(store);
+
+        // Agent 1 acquires lease using a relative file path without prefix
+        let res = coordinator
+            .acquire_lease("src/auth.rs", "agent-1", 60, Some("editing"))
+            .expect("acquire lease");
+        assert!(matches!(res, LeaseAcquireResult::Acquired { .. }));
+
+        // Both canonical "file:src/auth.rs" and relative "./src/auth.rs" find the exact same lease
+        let lease_canon = coordinator.get_lease("file:src/auth.rs").unwrap().unwrap();
+        assert_eq!(lease_canon.agent_id, "agent-1");
+        assert_eq!(lease_canon.resource_id, "file:src/auth.rs");
+
+        let lease_dot = coordinator.get_lease("./src/auth.rs").unwrap().unwrap();
+        assert_eq!(lease_dot.agent_id, "agent-1");
+
+        // Agent 2 sees conflict regardless of whether it queries with "file:" or raw path
+        let conflict_raw = coordinator.check_conflict("src/auth.rs", "agent-2").unwrap();
+        assert!(conflict_raw.is_some());
+        assert_eq!(conflict_raw.unwrap().agent_id, "agent-1");
+
+        let conflict_canon = coordinator.check_conflict("file:src/auth.rs", "agent-2").unwrap();
+        assert!(conflict_canon.is_some());
+        assert_eq!(conflict_canon.unwrap().agent_id, "agent-1");
+
+        // Release via canonical path frees it for both
+        let released = coordinator.release_lease("file:src/auth.rs", "agent-1").unwrap();
+        assert!(released);
+        assert!(coordinator.get_lease("src/auth.rs").unwrap().is_none());
+    }
+
+    #[test]
+    fn test_task_lease_renewal_and_loss_detection() {
+        let store = Arc::new(SqliteStore::open_in_memory().expect("in-memory db"));
+        let coordinator = StigmergyCoordinator::new(store);
+
+        let task = TaskRecord::new("task-renew-test", "Long running task")
+            .with_required_resources(vec!["src/database.rs".to_string()]);
+        coordinator.create_task(&task).unwrap();
+
+        // Agent 1 claims task atomically with 10s TTL
+        let claimed = coordinator
+            .claim_task_atomic(Some("task-renew-test"), "agent-worker", 10)
+            .unwrap()
+            .expect("claimed");
+        let gen = claimed.claim_generation;
+
+        // Verify resource lease acquired as canonical file:src/database.rs
+        let initial_lease = coordinator.get_lease("src/database.rs").unwrap().unwrap();
+        assert_eq!(initial_lease.agent_id, "agent-worker");
+        assert_eq!(initial_lease.resource_id, "file:src/database.rs");
+
+        // Successful renewal extends TTL
+        let renewed = coordinator
+            .renew_task_leases_with_generation("task-renew-test", "agent-worker", 60, Some(gen))
+            .unwrap();
+        assert!(renewed);
+
+        let renewed_lease = coordinator.get_lease("src/database.rs").unwrap().unwrap();
+        assert!(renewed_lease.lease_expires_at > initial_lease.lease_expires_at);
+
+        // Renewal with wrong generation fails
+        let bad_gen = coordinator
+            .renew_task_leases_with_generation("task-renew-test", "agent-worker", 60, Some(gen + 99))
+            .unwrap();
+        assert!(!bad_gen, "rejected due to fencing token mismatch");
+
+        // Renewal by another agent fails
+        let impostor = coordinator
+            .renew_task_leases_with_generation("task-renew-test", "agent-impostor", 60, Some(gen))
+            .unwrap();
+        assert!(!impostor, "rejected due to agent mismatch");
+
+        // Complete task -> subsequent renewal fails because task is completed
+        let completed = coordinator
+            .complete_task_with_generation("task-renew-test", "agent-worker", Some("done"), None, Some(gen))
+            .unwrap();
+        assert!(completed);
+
+        let post_complete_renew = coordinator
+            .renew_task_leases_with_generation("task-renew-test", "agent-worker", 60, Some(gen))
+            .unwrap();
+        assert!(!post_complete_renew, "cannot renew completed task");
+
+        // All leases were cleaned up
+        assert!(coordinator.get_lease("src/database.rs").unwrap().is_none());
     }
 }
 
