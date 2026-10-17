@@ -190,6 +190,7 @@ impl SqliteStore {
         let _ = conn.execute("CREATE INDEX IF NOT EXISTS idx_facts_branch ON semantic_facts(git_branch)", []);
         let _ = conn.execute("CREATE INDEX IF NOT EXISTS idx_episodic_branch ON episodic_memories(git_branch)", []);
         let _ = conn.execute("CREATE INDEX IF NOT EXISTS idx_episodes_branch ON episodes(git_branch)", []);
+        let _ = conn.execute("DROP TRIGGER IF EXISTS trg_memories_au", []);
 
         // Idempotently backfill valid_until for legacy deprecated records
         let _ = conn.execute(
@@ -278,7 +279,7 @@ impl SqliteStore {
                 DELETE FROM memories_fts WHERE id = old.id;
             END;
 
-            CREATE TRIGGER IF NOT EXISTS trg_memories_au AFTER UPDATE ON memories BEGIN
+            CREATE TRIGGER IF NOT EXISTS trg_memories_au AFTER UPDATE OF content, summary, tags_json ON memories BEGIN
                 DELETE FROM memories_fts WHERE id = old.id;
                 INSERT INTO memories_fts(id, content, summary, tags)
                 VALUES (new.id, new.content, COALESCE(new.summary, ''), new.tags_json);
@@ -1352,6 +1353,40 @@ impl SqliteStore {
         Ok(())
     }
 
+    /// Atomically updates access metrics (`access_count` and `last_accessed_at`) for a memory record
+    /// and logs the access in `memory_access_logs`, without rewriting content, metadata, importance,
+    /// or quarantine state.
+    pub fn update_access_metrics(
+        &self,
+        id: &Uuid,
+        accessed_at: DateTime<Utc>,
+    ) -> Result<bool, StrataError> {
+        let conn = self
+            .conn
+            .lock()
+            .map_err(|_| StrataError::Database("Lock poisoned on SQLite connection".to_string()))?;
+
+        let id_str = id.to_string();
+        let ts_str = accessed_at.to_rfc3339();
+
+        let rows_affected = conn
+            .execute(
+                "UPDATE memories
+                 SET access_count = access_count + 1,
+                     last_accessed_at = MAX(COALESCE(last_accessed_at, ?1), ?1)
+                 WHERE id = ?2",
+                params![ts_str, id_str],
+            )
+            .map_err(|e| StrataError::Database(format!("Failed to update access metrics: {e}")))?;
+
+        if rows_affected > 0 {
+            let _ = self.record_memory_access_internal(&conn, id, accessed_at);
+            Ok(true)
+        } else {
+            Ok(false)
+        }
+    }
+
     pub fn get_memory(&self, id: &Uuid) -> Result<Option<MemoryRecord>, StrataError> {
         self.get_memory_as_of(id, None, None, None)
     }
@@ -1411,10 +1446,6 @@ impl SqliteStore {
             .query_row(params_slice.as_slice(), |row| Self::row_to_memory(row))
             .optional()
             .map_err(|e| StrataError::Database(e.to_string()))?;
-
-        if res.is_some() {
-            let _ = self.record_memory_access_internal(&conn, id, Utc::now());
-        }
 
         Ok(res)
     }
