@@ -9,7 +9,7 @@ use tracing::{info, warn};
 use uuid::Uuid;
 
 use strata_core::a2a::AgentPresence;
-use strata_core::blackboard::TaskArtifact;
+use strata_core::blackboard::{TaskArtifact, TaskFilter, TaskStatus};
 use strata_memory::StigmergyCoordinator;
 
 use crate::agent_env::{resolve_agent_host, resolve_agent_id};
@@ -328,12 +328,29 @@ pub async fn run_worker(args: WorkerArgs, coordinator: StigmergyCoordinator) -> 
                 }
             }
             None => {
-                // No task was ready
+                // No task was ready right now
                 if args.exit_when_idle {
-                    if !args.json {
-                        println!("💤 No ready tasks remaining on blackboard. Worker stopping.");
+                    let active_filter = TaskFilter {
+                        plan_id: args.plan.clone(),
+                        ..Default::default()
+                    };
+                    let all_tasks = coordinator.list_tasks(&active_filter).unwrap_or_default();
+                    let has_in_progress = all_tasks.iter().any(|t| {
+                        matches!(t.status, TaskStatus::Claimed | TaskStatus::Running)
+                    });
+                    let has_uncompleted = all_tasks.iter().any(|t| {
+                        matches!(t.status, TaskStatus::Pending | TaskStatus::Blocked)
+                    });
+
+                    if has_in_progress && has_uncompleted {
+                        // Peer workers are executing tasks that might unblock pending/blocked tasks
+                        sleep(Duration::from_millis(100)).await;
+                    } else {
+                        if !args.json {
+                            println!("💤 No ready tasks remaining on blackboard. Worker stopping.");
+                        }
+                        break;
                     }
-                    break;
                 } else {
                     sleep(Duration::from_secs(args.poll_interval.max(1))).await;
                 }

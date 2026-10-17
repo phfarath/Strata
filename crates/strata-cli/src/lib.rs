@@ -1974,4 +1974,120 @@ pub fn verify_token(token: &str) -> bool {
         assert_eq!(main_after.len(), 1);
         assert_eq!(main_after[0].0.id, rec.id);
     }
+
+    #[tokio::test]
+    async fn test_cli_multi_worker_swarm_concurrent_work_stealing_and_arbitration() {
+        use crate::commands::worker::{run_worker, WorkerArgs};
+        use strata_core::blackboard::{TaskFilter, TaskRecord, TaskStatus};
+        use strata_memory::SqliteMemoryEngine;
+
+        let temp_dir = std::env::temp_dir().join(format!("strata_swarm_cli_{}", uuid::Uuid::new_v4()));
+        let _ = std::fs::create_dir_all(&temp_dir);
+        let db_path = temp_dir.join("swarm_blackboard.db");
+
+        // 1. Initialize coordinator on disk SQLite with WAL
+        let engine = Arc::new(SqliteMemoryEngine::open(&db_path, None).expect("open db"));
+        let coordinator = engine.stigmergy();
+
+        // 2. Populate blackboard with DAG and contested resources
+        // - task-1: "Implement auth token refresh" (locks file:src/auth.rs)
+        // - task-2: "Add rate limiter middleware" (also needs file:src/auth.rs, must wait for task-1 lease)
+        // - task-3: "Create database schema" (locks file:migrations/001.sql)
+        // - task-4: "Seed test data" (blocked on task-3)
+        // - task-5: "Integration test auth and db" (blocked on task-1 and task-4)
+        // - task-6: "Write release documentation" (blocked on task-5)
+        let t1 = TaskRecord::new("swarm-task-1", "Implement auth token refresh")
+            .with_plan_id("plan-swarm")
+            .with_required_resources(vec!["file:src/auth.rs".to_string()]);
+        let t2 = TaskRecord::new("swarm-task-2", "Add rate limiter middleware")
+            .with_plan_id("plan-swarm")
+            .with_required_resources(vec!["file:src/auth.rs".to_string()]);
+        let t3 = TaskRecord::new("swarm-task-3", "Create database schema")
+            .with_plan_id("plan-swarm")
+            .with_required_resources(vec!["file:migrations/001.sql".to_string()]);
+        let t4 = TaskRecord::new("swarm-task-4", "Seed test data")
+            .with_plan_id("plan-swarm")
+            .with_dependencies(vec!["swarm-task-3".to_string()])
+            .with_status(TaskStatus::Blocked);
+        let t5 = TaskRecord::new("swarm-task-5", "Integration test auth and db")
+            .with_plan_id("plan-swarm")
+            .with_dependencies(vec!["swarm-task-1".to_string(), "swarm-task-4".to_string()])
+            .with_status(TaskStatus::Blocked);
+        let t6 = TaskRecord::new("swarm-task-6", "Write release documentation")
+            .with_plan_id("plan-swarm")
+            .with_dependencies(vec!["swarm-task-5".to_string()])
+            .with_status(TaskStatus::Blocked);
+
+        coordinator.create_task(&t1).unwrap();
+        coordinator.create_task(&t2).unwrap();
+        coordinator.create_task(&t3).unwrap();
+        coordinator.create_task(&t4).unwrap();
+        coordinator.create_task(&t5).unwrap();
+        coordinator.create_task(&t6).unwrap();
+
+        // 3. Spawn 3 concurrent workers in separate async tasks
+        let mut worker_tasks = Vec::new();
+        let agent_names = vec!["worker-alpha", "worker-beta", "worker-gamma"];
+
+        for agent in &agent_names {
+            let coord = coordinator.clone();
+            let agent_id = agent.to_string();
+            let worker_args = WorkerArgs {
+                agent: Some(agent_id),
+                host: Some("antigravity".to_string()),
+                plan: Some("plan-swarm".to_string()),
+                poll_interval: 1,
+                heartbeat_interval: 1,
+                lease_ttl: 15,
+                stale_timeout: 30,
+                auto_reclaim: true,
+                max_tasks: None,
+                exit_when_idle: true,
+                dry_run: true,
+                json: true,
+            };
+
+            worker_tasks.push(tokio::spawn(async move {
+                run_worker(worker_args, coord).await
+            }));
+        }
+
+        // 4. Await all workers
+        let mut total_succeeded = 0;
+        let mut worker_contributions = std::collections::HashSet::new();
+
+        for handle in worker_tasks {
+            let res = handle.await.expect("worker task join").expect("worker run");
+            total_succeeded += res.tasks_succeeded;
+            if res.tasks_succeeded > 0 {
+                worker_contributions.insert(res.agent_id);
+            }
+        }
+
+        // 5. Assertions
+        assert_eq!(total_succeeded, 6, "All 6 tasks must be executed successfully");
+        assert!(worker_contributions.len() >= 2, "Tasks must be distributed across multiple workers");
+
+        let filter = TaskFilter {
+            plan_id: Some("plan-swarm".to_string()),
+            ..Default::default()
+        };
+        let final_tasks = coordinator.list_tasks(&filter).unwrap();
+        assert_eq!(final_tasks.len(), 6);
+        for task in &final_tasks {
+            assert_eq!(task.status, TaskStatus::Completed, "Task {} should be Completed", task.task_id);
+            assert!(task.claim_generation >= 1, "Task {} should have valid fencing generation", task.task_id);
+            assert!(task.assigned_agent.is_some(), "Task {} should record executing agent", task.task_id);
+
+            let artifacts = coordinator.get_task_artifacts(&task.task_id).unwrap();
+            assert_eq!(artifacts.len(), 1, "Task {} must have an artifact", task.task_id);
+        }
+
+        // All resource leases released cleanly
+        let active = coordinator.active_leases().unwrap();
+        assert!(active.is_empty(), "All resource leases must be released at the end");
+
+        let _ = std::fs::remove_dir_all(&temp_dir);
+    }
 }
+
