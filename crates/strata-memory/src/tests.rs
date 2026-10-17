@@ -4580,3 +4580,74 @@ async fn test_concurrency_access_metrics_preserves_external_updates_and_quaranti
 
     let _ = std::fs::remove_file(&temp_db_path);
 }
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn test_concurrency_access_metrics_atomic_increments() {
+    let temp_db_path = std::env::temp_dir().join(format!("strata_conc_stress_{}.db", Uuid::new_v4()));
+    let _ = std::fs::remove_file(&temp_db_path);
+
+    let engine = Arc::new(SqliteMemoryEngine::open(&temp_db_path, None).expect("init engine"));
+    let record = MemoryRecord::new(
+        MemoryType::Semantic,
+        "Concurrent atomic increment target",
+        Scope::Project("strata".to_string()),
+    );
+    let handle = engine.write(&record).await.expect("write memory");
+
+    // 20 concurrent readers competing for the exact same memory record simultaneously
+    let num_readers = 20;
+    let mut tasks = Vec::new();
+    for _ in 0..num_readers {
+        let eng = Arc::clone(&engine);
+        let id = handle.id;
+        tasks.push(tokio::spawn(async move {
+            let res = eng.get(&id).await.expect("get");
+            assert!(res.is_some());
+        }));
+    }
+
+    for task in tasks {
+        task.await.expect("task join");
+    }
+
+    let final_record = engine.get(&handle.id).await.expect("get").expect("found");
+    // 20 concurrent reads + 1 final assert read = 21 exact accesses
+    assert_eq!(
+        final_record.access_count,
+        (num_readers + 1) as u64,
+        "Access count must undergo strictly atomic increments without lost updates"
+    );
+
+    let _ = std::fs::remove_file(&temp_db_path);
+}
+
+#[tokio::test]
+async fn test_concurrency_access_metrics_timestamp_monotonicity() {
+    let store = SqliteStore::open_in_memory().expect("open memory db");
+    let record = MemoryRecord::new(
+        MemoryType::Semantic,
+        "Monotonicity test target",
+        Scope::Project("strata".to_string()),
+    );
+    store.insert_or_update_memory(&record).expect("insert");
+
+    let t2 = Utc::now();
+    let t1 = t2 - chrono::Duration::seconds(60);
+
+    // Apply t2 first
+    let ok = store.update_access_metrics(&record.id, t2).expect("update t2");
+    assert!(ok);
+    let mem = store.get_memory(&record.id).expect("get").expect("found");
+    assert!(mem.last_accessed_at.is_some());
+
+    // Apply earlier timestamp t1 (out-of-order execution)
+    let ok = store.update_access_metrics(&record.id, t1).expect("update t1");
+    assert!(ok);
+    let mem_after = store.get_memory(&record.id).expect("get").expect("found");
+    assert_eq!(
+        mem_after.last_accessed_at, mem.last_accessed_at,
+        "Timestamp must not regress into the past when an older timestamp arrives"
+    );
+    assert_eq!(mem_after.access_count, 2);
+}
+

@@ -1373,7 +1373,7 @@ impl SqliteStore {
             .execute(
                 "UPDATE memories
                  SET access_count = access_count + 1,
-                     last_accessed_at = ?1
+                     last_accessed_at = MAX(COALESCE(last_accessed_at, ?1), ?1)
                  WHERE id = ?2",
                 params![ts_str, id_str],
             )
