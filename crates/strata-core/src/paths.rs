@@ -27,7 +27,7 @@ pub fn canonical_resource_id_with_root(raw: &str, workspace_root: Option<&Path>)
         stripped.trim()
     } else if let Some((scheme, _rest)) = trimmed.split_once(':') {
         // Windows drive letter check: e.g. "C:\" or "c:/" has scheme.len() == 1
-        if scheme.len() == 1 && scheme.chars().next().map_or(false, |c| c.is_ascii_alphabetic()) {
+        if scheme.len() == 1 && scheme.chars().next().is_some_and(|c| c.is_ascii_alphabetic()) {
             trimmed
         } else {
             // Non-file URI scheme: preserve as-is
@@ -51,7 +51,7 @@ pub fn canonical_resource_id_with_root(raw: &str, workspace_root: Option<&Path>)
     // If it starts with multiple slashes before a Windows drive letter: ///C:/...
     let trimmed_leading = p.trim_start_matches('/');
     if trimmed_leading.len() >= 2
-        && trimmed_leading.chars().next().map_or(false, |c| c.is_ascii_alphabetic())
+        && trimmed_leading.chars().next().is_some_and(|c| c.is_ascii_alphabetic())
         && trimmed_leading.chars().nth(1) == Some(':')
     {
         p = trimmed_leading.to_string();
@@ -69,10 +69,9 @@ pub fn canonical_resource_id_with_root(raw: &str, workspace_root: Option<&Path>)
         }
         let root_clean = root_str.trim_end_matches('/');
 
-        let matched_len = if p.starts_with(root_clean) {
-            Some(root_clean.len())
-        } else if p.len() >= root_clean.len()
-            && p[..root_clean.len()].eq_ignore_ascii_case(root_clean)
+        let matched_len = if p.starts_with(root_clean)
+            || (p.len() >= root_clean.len()
+                && p[..root_clean.len()].eq_ignore_ascii_case(root_clean))
         {
             Some(root_clean.len())
         } else {
@@ -87,7 +86,7 @@ pub fn canonical_resource_id_with_root(raw: &str, workspace_root: Option<&Path>)
 
     // Distinguish drive-letter absolute vs unix absolute vs relative
     let (prefix, path_to_clean) = if p.len() >= 2
-        && p.chars().next().map_or(false, |c| c.is_ascii_alphabetic())
+        && p.chars().next().is_some_and(|c| c.is_ascii_alphabetic())
         && p.chars().nth(1) == Some(':')
     {
         let drive = &p[..2];

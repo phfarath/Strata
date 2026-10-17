@@ -396,12 +396,14 @@ async fn execute_task_payload(task: &strata_core::blackboard::TaskRecord, dry_ru
         info!("Worker executing shell command: {command_str}");
         #[cfg(target_os = "windows")]
         let output = tokio::process::Command::new("powershell")
+            .kill_on_drop(true)
             .args(["-NoProfile", "-Command", &command_str])
             .output()
             .await?;
 
         #[cfg(not(target_os = "windows"))]
         let output = tokio::process::Command::new("sh")
+            .kill_on_drop(true)
             .args(["-c", &command_str])
             .output()
             .await?;
