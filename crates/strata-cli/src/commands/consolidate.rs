@@ -5,8 +5,7 @@ use tracing::info;
 
 use strata_core::config::StrataConfig;
 use strata_memory::{
-    AsyncLlmEnricher, FastEmbedProvider, MockEmbeddingProvider, NeuroSymbolicConsolidator,
-    SqliteStore,
+    AsyncLlmEnricher, EmbeddingProviderFactory, NeuroSymbolicConsolidator, SqliteStore,
 };
 use strata_reasoning::resolve_reasoning_engine;
 
@@ -61,16 +60,11 @@ pub async fn run_consolidate(opts: ConsolidateOptions, store: Arc<SqliteStore>) 
         return Ok(());
     }
 
-    let embedder: Arc<dyn strata_memory::EmbeddingProvider> =
-        if let Ok(fast) = FastEmbedProvider::try_new() {
-            Arc::new(fast)
-        } else {
-            Arc::new(MockEmbeddingProvider::default())
-        };
-
-    let mut consolidator = NeuroSymbolicConsolidator::new(Arc::clone(&store), embedder);
-
     let config = StrataConfig::load();
+    let resolved_emb = EmbeddingProviderFactory::create_from_config(&config)
+        .context("Failed to resolve embedding provider for consolidation")?;
+    let mut consolidator =
+        NeuroSymbolicConsolidator::new(Arc::clone(&store), resolved_emb.provider);
     let is_llm_requested = opts.provider.is_some() || opts.model.is_some();
     let mut tokens_consumed = 0;
 

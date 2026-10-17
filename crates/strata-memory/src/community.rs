@@ -1156,6 +1156,12 @@ impl CommunityMemoryRouter {
                 let scoped_candidates =
                     store.get_memories_by_scopes(&allowed_scopes, memory_types, candidate_limit * 2)?;
                 for memory in scoped_candidates {
+                    if !crate::embedding::is_embedding_compatible_with_query(
+                        embedder.model_name(),
+                        memory.embedding_model.as_deref(),
+                    ) {
+                        continue;
+                    }
                     if let Some(ref mem_emb) = memory.embedding {
                         let sim = crate::embedding::cosine_similarity(&query_embedding, mem_emb);
                         if sim >= ranker.config().min_similarity {

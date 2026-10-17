@@ -70,6 +70,52 @@ pub async fn run_doctor(db_path: &Path, engine: Arc<dyn MemoryEngine>) -> Result
         Path::new(".gemini/GEMINI.md"),
     );
 
+    // 5. Embedding Provider & Vector Consistency
+    println!("\n📐 Embedding & Vector Space:");
+    let config = strata_core::config::StrataConfig::load();
+    if let Ok(resolved) = strata_memory::EmbeddingProviderFactory::create_from_config(&config) {
+        println!(
+            "   Active Provider: {} (model: {}, dim: {})",
+            resolved.provider.provider_name(),
+            resolved.provider.model_name(),
+            resolved.provider.dimension(),
+        );
+        if resolved.is_fallback {
+            println!(
+                "   ⚠️ Fallback Warning: {}",
+                resolved
+                    .fallback_reason
+                    .as_deref()
+                    .unwrap_or("Fallback provider active")
+            );
+        }
+        if db_path.exists() {
+            if let Ok(store) = strata_memory::SqliteStore::open(db_path) {
+                if let Ok(stats) =
+                    store.get_vector_consistency_stats(Some(resolved.provider.model_name()))
+                {
+                    if stats.is_consistent {
+                        println!(
+                            "   ✓ Vector Consistency: OK ({} vectors across {} records)",
+                            stats.total_vectors,
+                            stats.total_memories
+                                + stats.total_semantic_facts
+                                + stats.total_procedural_skills
+                                + stats.total_episodic_memories
+                        );
+                    } else {
+                        println!(
+                            "   ⚠️ Vector Inconsistency Detected: multiple embedding models in database"
+                        );
+                        for rec in &stats.recommendations {
+                            println!("     • {rec}");
+                        }
+                    }
+                }
+            }
+        }
+    }
+
     println!("\n═════════════════════════════════════════");
     println!("✓ Strata is ready for cross-host cognitive operations.\n");
 

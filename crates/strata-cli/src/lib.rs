@@ -2089,5 +2089,83 @@ pub fn verify_token(token: &str) -> bool {
 
         let _ = std::fs::remove_dir_all(&temp_dir);
     }
+
+    #[tokio::test]
+    async fn test_cli_memory_command_status_and_reindex() {
+        use crate::commands::memory::{run_memory, MemoryAction, MemoryArgs};
+        use strata_core::state::{MemoryRecord, MemoryTier, MemoryType, Scope};
+        use strata_memory::SqliteStore;
+
+        let temp_dir = std::env::temp_dir().join(format!("strata_cli_mem_test_{}", uuid::Uuid::new_v4()));
+        let _ = std::fs::create_dir_all(&temp_dir);
+        let db_path = temp_dir.join("strata.db");
+
+        let store = Arc::new(SqliteStore::open(&db_path).unwrap());
+
+        // 1. Insert a memory with mock-hash model
+        let mut mem1 = MemoryRecord::new(
+            MemoryType::Semantic,
+            "JWT Authentication Bearer",
+            Scope::Global,
+        )
+        .with_summary("JWT")
+        .with_tier(MemoryTier::Working);
+        mem1.embedding = Some(vec![0.1f32; 384]);
+        mem1.embedding_model = Some("mock-hash".to_string());
+        mem1.embedding_version = Some("1".to_string());
+        store.insert_or_update_memory(&mem1).unwrap();
+
+        // 2. Insert another memory with an incompatible model
+        let mut mem2 = MemoryRecord::new(
+            MemoryType::Semantic,
+            "Postgres connection pool configuration",
+            Scope::Global,
+        )
+        .with_summary("Postgres")
+        .with_tier(MemoryTier::Working);
+        mem2.embedding = Some(vec![0.2f32; 384]);
+        mem2.embedding_model = Some("legacy-other-model".to_string());
+        mem2.embedding_version = Some("1".to_string());
+        store.insert_or_update_memory(&mem2).unwrap();
+
+        // 3. Run status command
+        let status_args = MemoryArgs {
+            action: MemoryAction::Status { json: true },
+        };
+        run_memory(status_args, Arc::clone(&store)).await.expect("status action");
+
+        // 4. Run reindex with dry_run = true
+        let dry_run_args = MemoryArgs {
+            action: MemoryAction::Reindex {
+                batch_size: 10,
+                force: false,
+                dry_run: true,
+                json: true,
+            },
+        };
+        run_memory(dry_run_args, Arc::clone(&store)).await.expect("dry run action");
+
+        // 5. Run reindex with dry_run = false
+        let reindex_args = MemoryArgs {
+            action: MemoryAction::Reindex {
+                batch_size: 10,
+                force: false,
+                dry_run: false,
+                json: true,
+            },
+        };
+        run_memory(reindex_args, Arc::clone(&store)).await.expect("reindex action");
+
+        // 6. Verify consistency stats against active model
+        let config = strata_core::config::StrataConfig::load();
+        let resolved = strata_memory::EmbeddingProviderFactory::create_from_config(&config).unwrap();
+        let active_model = resolved.provider.model_name();
+        let stats = store.get_vector_consistency_stats(Some(active_model)).unwrap();
+        assert!(stats.is_consistent);
+        assert_eq!(stats.distinct_models_count, 1);
+
+        let _ = std::fs::remove_dir_all(&temp_dir);
+    }
 }
+
 

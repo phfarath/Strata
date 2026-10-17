@@ -1365,7 +1365,14 @@ impl AudnPipeline {
             if let Some(emb_provider) = embedder {
                 if let Ok(emb) = emb_provider.embed_text(&prepared.content).await {
                     prepared.embedding = Some(emb);
+                    prepared.embedding_model = Some(emb_provider.model_name().to_string());
+                    prepared.embedding_version = Some(emb_provider.model_version().to_string());
                 }
+            }
+        } else if prepared.embedding.is_some() && prepared.embedding_model.is_none() {
+            if let Some(emb_provider) = embedder {
+                prepared.embedding_model = Some(emb_provider.model_name().to_string());
+                prepared.embedding_version = Some(emb_provider.model_version().to_string());
             }
         }
 
@@ -1380,6 +1387,8 @@ impl AudnPipeline {
                 {
                     if let Ok(emb) = emb_provider.embed_text(&mem.content).await {
                         mem.embedding = Some(emb);
+                        mem.embedding_model = Some(emb_provider.model_name().to_string());
+                        mem.embedding_version = Some(emb_provider.model_version().to_string());
                         let _ = store.insert_or_update_memory(&mem);
                     }
                 }
@@ -1408,6 +1417,8 @@ impl AudnPipeline {
                         existing.approved_by_human || prepared.approved_by_human;
                     if prepared.embedding.is_some() {
                         existing.embedding = prepared.embedding.clone();
+                        existing.embedding_model = prepared.embedding_model.clone();
+                        existing.embedding_version = prepared.embedding_version.clone();
                     }
                     for tag in &prepared.tags {
                         if !existing.tags.contains(tag) {

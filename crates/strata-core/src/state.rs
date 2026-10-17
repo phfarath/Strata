@@ -213,6 +213,10 @@ pub struct MemoryRecord {
     pub embedding: Option<Vec<f32>>,
     #[serde(default)]
     pub metadata: serde_json::Value,
+    #[serde(default)]
+    pub embedding_model: Option<String>,
+    #[serde(default)]
+    pub embedding_version: Option<String>,
 }
 
 impl MemoryRecord {
@@ -236,7 +240,21 @@ impl MemoryRecord {
             evidence_ids: Vec::new(),
             embedding: None,
             metadata: serde_json::Value::Null,
+            embedding_model: None,
+            embedding_version: None,
         }
+    }
+
+    pub fn with_embedding_and_model(
+        mut self,
+        embedding: Vec<f32>,
+        model: Option<String>,
+        version: Option<String>,
+    ) -> Self {
+        self.embedding = Some(embedding);
+        self.embedding_model = model;
+        self.embedding_version = version;
+        self
     }
 
     pub fn with_tier(mut self, tier: MemoryTier) -> Self {
