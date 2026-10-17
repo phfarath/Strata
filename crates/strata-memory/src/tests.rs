@@ -4498,5 +4498,85 @@ async fn test_context_rot_retrieval_and_digest_suppression() {
     );
 }
 
+#[tokio::test]
+async fn test_concurrency_access_metrics_preserves_external_updates_and_quarantine() {
+    let temp_db_path = std::env::temp_dir().join(format!("strata_conc_test_{}.db", Uuid::new_v4()));
+    let _ = std::fs::remove_file(&temp_db_path);
 
+    // 1. Engine A opens database on disk and writes Version A
+    let engine = SqliteMemoryEngine::open(&temp_db_path, None).expect("init engine");
 
+    let record_v1 = MemoryRecord::new(
+        MemoryType::Semantic,
+        "Version A: Original active configuration",
+        Scope::Project("strata".to_string()),
+    )
+    .with_summary("Version A summary")
+    .with_importance(0.9);
+
+    let handle = engine.write(&record_v1).await.expect("write memory");
+    assert_eq!(handle.id, record_v1.id);
+
+    // 2. Open an independent second SQLite connection to simulate another concurrent process / worker
+    let store_b = SqliteStore::open(&temp_db_path).expect("open connection b");
+
+    // Engine A reads Version A into memory
+    let mem_read_a = engine
+        .get(&record_v1.id)
+        .await
+        .expect("engine get")
+        .expect("found");
+    assert_eq!(mem_read_a.access_count, 1);
+    assert_eq!(mem_read_a.content, "Version A: Original active configuration");
+
+    // 3. Process B concurrently updates the record to Version B (quarantined, low importance, updated content)
+    let mut record_v2 = mem_read_a.clone();
+    record_v2.content = "Version B: Quarantined insecure configuration".to_string();
+    record_v2.importance = 0.1;
+    record_v2.metadata = serde_json::json!({
+        "status": "quarantined",
+        "quarantine_reason": "CVE-2026-REGRESSION"
+    });
+    store_b.insert_or_update_memory(&record_v2).expect("store b updates memory");
+
+    // Verify Process B wrote Version B successfully
+    let db_v2 = store_b.get_memory(&record_v1.id).expect("get").expect("found");
+    assert_eq!(db_v2.content, "Version B: Quarantined insecure configuration");
+    assert_eq!(db_v2.importance, 0.1);
+    assert_eq!(db_v2.metadata["status"], "quarantined");
+
+    // 4. Now simulate Engine A performing reads / search.
+    // In the previous implementation, mark_accessed() followed by insert_or_update_memory(mem_read_a)
+    // would rewrite the entire row, reverting Version B to Version A (wiping quarantine and restoring importance 0.9).
+    // With update_access_metrics, only access_count and last_accessed_at are updated atomically.
+    let _ = engine.search("configuration", None, 5).await.expect("search");
+    let fetched_again = engine
+        .get(&record_v1.id)
+        .await
+        .expect("engine get again")
+        .expect("found");
+
+    // 5. Assertions: Version B and its quarantine status MUST NOT be overwritten by read operations
+    assert_eq!(
+        fetched_again.content,
+        "Version B: Quarantined insecure configuration",
+        "Concurrent reading MUST NOT overwrite updated content"
+    );
+    assert_eq!(
+        fetched_again.importance,
+        0.1,
+        "Concurrent reading MUST NOT revert importance"
+    );
+    assert_eq!(
+        fetched_again.metadata["status"],
+        "quarantined",
+        "Concurrent reading MUST NOT revert quarantine status"
+    );
+    assert!(
+        fetched_again.access_count >= 2,
+        "Access count must be incremented atomically (expected >= 2, got {})",
+        fetched_again.access_count
+    );
+
+    let _ = std::fs::remove_file(&temp_db_path);
+}

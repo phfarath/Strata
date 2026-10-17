@@ -536,10 +536,11 @@ impl SqliteMemoryEngine {
 
         for memory in &mut results {
             memory.mark_accessed();
-            if self.store.get_memory(&memory.id)?.is_some() {
-                let _ = self.store.insert_or_update_memory(memory);
-            } else if let Some(ref global) = self.global_store {
-                let _ = global.insert_or_update_memory(memory);
+            let now = memory.last_accessed_at.unwrap_or_else(Utc::now);
+            if !self.store.update_access_metrics(&memory.id, now)? {
+                if let Some(ref global) = self.global_store {
+                    let _ = global.update_access_metrics(&memory.id, now);
+                }
             }
         }
 
@@ -647,10 +648,11 @@ impl MemoryEngine for SqliteMemoryEngine {
         // Update access metrics in the corresponding store
         for memory in &mut results {
             memory.mark_accessed();
-            if self.store.get_memory(&memory.id)?.is_some() {
-                let _ = self.store.insert_or_update_memory(memory);
-            } else if let Some(ref global) = self.global_store {
-                let _ = global.insert_or_update_memory(memory);
+            let now = memory.last_accessed_at.unwrap_or_else(Utc::now);
+            if !self.store.update_access_metrics(&memory.id, now)? {
+                if let Some(ref global) = self.global_store {
+                    let _ = global.update_access_metrics(&memory.id, now);
+                }
             }
         }
 
@@ -670,14 +672,16 @@ impl MemoryEngine for SqliteMemoryEngine {
     ) -> Result<Option<MemoryRecord>, StrataError> {
         if let Some(mut memory) = self.store.get_memory_as_of(id, as_of_time, as_of_commit, as_of_branch)? {
             memory.mark_accessed();
-            let _ = self.store.insert_or_update_memory(&memory);
+            let now = memory.last_accessed_at.unwrap_or_else(Utc::now);
+            let _ = self.store.update_access_metrics(&memory.id, now);
             return Ok(Some(memory));
         }
 
         if let Some(ref global) = self.global_store {
             if let Some(mut memory) = global.get_memory_as_of(id, as_of_time, as_of_commit, as_of_branch)? {
                 memory.mark_accessed();
-                let _ = global.insert_or_update_memory(&memory);
+                let now = memory.last_accessed_at.unwrap_or_else(Utc::now);
+                let _ = global.update_access_metrics(&memory.id, now);
                 return Ok(Some(memory));
             }
         }
