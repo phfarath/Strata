@@ -1040,6 +1040,7 @@ export function login(username: string): boolean {
                 task: Some(claimed_id.clone()),
                 message: "Writing authentication models".to_string(),
                 agent: Some("agent-claude".to_string()),
+                generation: None,
                 json: true,
             },
         };
@@ -1081,6 +1082,7 @@ export function login(username: string): boolean {
                 artifact: None,
                 artifact_content: Some("User struct, JwtValidator, TokenPair".to_string()),
                 agent: Some("agent-claude".to_string()),
+                generation: None,
                 json: true,
             },
         };

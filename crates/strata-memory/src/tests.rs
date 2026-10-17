@@ -4651,3 +4651,148 @@ async fn test_concurrency_access_metrics_timestamp_monotonicity() {
     assert_eq!(mem_after.access_count, 2);
 }
 
+#[test]
+fn test_atomic_claim_concurrency_two_connections_wal() {
+    use strata_core::blackboard::{TaskRecord, TaskStatus};
+    use std::sync::Barrier;
+
+    let temp_db_path = std::env::temp_dir().join(format!("strata_task_conc_{}.db", Uuid::new_v4()));
+    let _ = std::fs::remove_file(&temp_db_path);
+
+    // Process A and Process B open separate SQLite connections to the same database file
+    let store_a = Arc::new(SqliteStore::open(&temp_db_path).expect("open store A"));
+    let store_b = Arc::new(SqliteStore::open(&temp_db_path).expect("open store B"));
+
+    // Insert single shared pending task
+    let task = TaskRecord::new("shared-task-1", "Concurrent work item")
+        .with_required_resources(vec!["file:src/shared.rs".to_string()]);
+    store_a.create_task(&task).expect("create task");
+
+    // Spawn 2 threads racing to claim the same task via separate connections
+    let barrier = Arc::new(Barrier::new(2));
+
+    let barrier_a = barrier.clone();
+    let store_a_clone = store_a.clone();
+    let handle_a = std::thread::spawn(move || {
+        barrier_a.wait();
+        store_a_clone.claim_task_atomic(Some("shared-task-1"), "agent-a", 60)
+    });
+
+    let barrier_b = barrier.clone();
+    let store_b_clone = store_b.clone();
+    let handle_b = std::thread::spawn(move || {
+        barrier_b.wait();
+        store_b_clone.claim_task_atomic(Some("shared-task-1"), "agent-b", 60)
+    });
+
+    let res_a = handle_a.join().expect("thread A join");
+    let res_b = handle_b.join().expect("thread B join");
+
+    // Exactly one must win; the other must receive None
+    let a_won = res_a.as_ref().ok().and_then(|opt| opt.as_ref()).is_some();
+    let b_won = res_b.as_ref().ok().and_then(|opt| opt.as_ref()).is_some();
+
+    assert!(
+        (a_won && !b_won) || (!a_won && b_won),
+        "Exactly one process must win the atomic claim. Got res_a: {:?}, res_b: {:?}",
+        res_a,
+        res_b
+    );
+
+    // Verify final state in database
+    let final_task = store_a.get_task("shared-task-1").expect("get task").expect("task found");
+    assert_eq!(final_task.status, TaskStatus::Claimed);
+    assert_eq!(final_task.claim_generation, 1);
+    let winning_agent = if a_won { "agent-a" } else { "agent-b" };
+    assert_eq!(final_task.assigned_agent.as_deref(), Some(winning_agent));
+
+    let _ = std::fs::remove_file(&temp_db_path);
+}
+
+#[test]
+fn test_task_lifecycle_enforcement_and_fencing_tokens() {
+    use strata_core::blackboard::{TaskArtifact, TaskRecord, TaskStatus};
+
+    let store = Arc::new(SqliteStore::open_in_memory().expect("in-memory db"));
+
+    // 1. Create a task with resources
+    let task = TaskRecord::new("task-fencing", "Fencing verification")
+        .with_required_resources(vec!["file:src/auth.rs".to_string()]);
+    store.create_task(&task).expect("create task");
+
+    let t = store.get_task("task-fencing").unwrap().unwrap();
+    assert_eq!(t.claim_generation, 0);
+
+    // 2. Agent A claims task
+    let claimed_a = store
+        .claim_task_atomic(Some("task-fencing"), "agent-a", 60)
+        .expect("claim")
+        .expect("claimed");
+    assert_eq!(claimed_a.claim_generation, 1);
+    assert_eq!(claimed_a.status, TaskStatus::Claimed);
+
+    // 3. Rogue Agent B attempts to update progress, complete, or fail Agent A's task -> MUST be rejected
+    let rogue_progress = store.update_task_progress("task-fencing", "agent-b", "rogue update").unwrap();
+    assert!(!rogue_progress, "Rogue agent must not be able to update progress");
+
+    let rogue_complete = store.complete_task("task-fencing", "agent-b", Some("done by rogue"), None).unwrap();
+    assert!(!rogue_complete, "Rogue agent must not be able to complete another agent's task");
+
+    let rogue_fail = store.fail_task("task-fencing", "agent-b", "rogue failure").unwrap();
+    assert!(!rogue_fail, "Rogue agent must not be able to fail another agent's task");
+
+    // 4. Agent A updates progress with valid generation -> succeeds
+    let progress_ok = store
+        .update_task_progress_with_generation("task-fencing", "agent-a", "compiling", Some(1))
+        .unwrap();
+    assert!(progress_ok);
+
+    // Agent A updates progress with invalid generation (e.g. 99) -> rejected
+    let progress_bad_gen = store
+        .update_task_progress_with_generation("task-fencing", "agent-a", "compiling", Some(99))
+        .unwrap();
+    assert!(!progress_bad_gen, "Mismatched generation token must be rejected");
+
+    // 5. Stale reclaim: task is reclaimed because worker hung
+    store
+        .reclaim_stale_tasks(0)
+        .expect("reclaim stale");
+
+    let reclaimed_task = store.get_task("task-fencing").unwrap().unwrap();
+    assert_eq!(reclaimed_task.status, TaskStatus::Pending);
+    assert!(reclaimed_task.assigned_agent.is_none());
+    assert_eq!(reclaimed_task.claim_generation, 2, "Reclaim must bump claim generation");
+
+    // 6. Old Agent A now wakes up and attempts to complete the task with generation 1 -> MUST be rejected
+    let late_complete = store
+        .complete_task_with_generation("task-fencing", "agent-a", Some("finally done"), None, Some(1))
+        .unwrap();
+    assert!(!late_complete, "Stale worker must not be able to complete reclaimed task");
+
+    // Even without specifying expected_generation, Agent A is no longer assigned_agent
+    let late_complete_no_gen = store
+        .complete_task("task-fencing", "agent-a", Some("finally done"), None)
+        .unwrap();
+    assert!(!late_complete_no_gen, "Unassigned agent must not be able to complete task");
+
+    // 7. Agent C claims the task
+    let claimed_c = store
+        .claim_task_atomic(Some("task-fencing"), "agent-c", 60)
+        .unwrap()
+        .unwrap();
+    assert_eq!(claimed_c.claim_generation, 3);
+    assert_eq!(claimed_c.assigned_agent.as_deref(), Some("agent-c"));
+
+    // 8. Agent C completes the task with generation 3 -> succeeds
+    let art = TaskArtifact::new("art-1", "task-fencing", "agent-c", "diff", "+ auth token refresh");
+    let complete_c = store
+        .complete_task_with_generation("task-fencing", "agent-c", Some("Token refresh implemented"), Some(&art), Some(3))
+        .unwrap();
+    assert!(complete_c);
+
+    // 9. Re-completing already completed task -> rejected
+    let re_complete = store
+        .complete_task("task-fencing", "agent-c", Some("again"), None)
+        .unwrap();
+    assert!(!re_complete, "Already completed task cannot be completed again");
+}

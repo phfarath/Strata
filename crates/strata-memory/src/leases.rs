@@ -125,6 +125,17 @@ impl StigmergyCoordinator {
         self.store.complete_task(task_id, agent_id, summary, artifact)
     }
 
+    pub fn complete_task_with_generation(
+        &self,
+        task_id: &str,
+        agent_id: &str,
+        summary: Option<&str>,
+        artifact: Option<&TaskArtifact>,
+        expected_generation: Option<i64>,
+    ) -> Result<bool, StrataError> {
+        self.store.complete_task_with_generation(task_id, agent_id, summary, artifact, expected_generation)
+    }
+
     pub fn fail_task(
         &self,
         task_id: &str,
@@ -134,6 +145,16 @@ impl StigmergyCoordinator {
         self.store.fail_task(task_id, agent_id, error_message)
     }
 
+    pub fn fail_task_with_generation(
+        &self,
+        task_id: &str,
+        agent_id: &str,
+        error_message: &str,
+        expected_generation: Option<i64>,
+    ) -> Result<bool, StrataError> {
+        self.store.fail_task_with_generation(task_id, agent_id, error_message, expected_generation)
+    }
+
     pub fn update_task_progress(
         &self,
         task_id: &str,
@@ -141,6 +162,16 @@ impl StigmergyCoordinator {
         message: &str,
     ) -> Result<bool, StrataError> {
         self.store.update_task_progress(task_id, agent_id, message)
+    }
+
+    pub fn update_task_progress_with_generation(
+        &self,
+        task_id: &str,
+        agent_id: &str,
+        message: &str,
+        expected_generation: Option<i64>,
+    ) -> Result<bool, StrataError> {
+        self.store.update_task_progress_with_generation(task_id, agent_id, message, expected_generation)
     }
 
     pub fn reclaim_stale_tasks(&self, stale_secs: i64) -> Result<Vec<String>, StrataError> {

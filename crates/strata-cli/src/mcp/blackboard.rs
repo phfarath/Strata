@@ -236,21 +236,23 @@ async fn run(
 
         "task_progress" => {
             let id = req(args, "task_id")?;
-            if !coordinator.update_task_progress(id, &agent, req(args, "message")?).map_err(err)? {
-                return Err(format!("Task '{id}' not found or assigned to another agent."));
+            let gen = args.get("claim_generation").and_then(Value::as_i64);
+            if !coordinator.update_task_progress_with_generation(id, &agent, req(args, "message")?, gen).map_err(err)? {
+                return Err(format!("Task '{id}' not found, not active, assigned to another agent, or invalid claim generation."));
             }
             Ok(json!({ "status": "ok", "task_id": id, "agent": agent }))
         }
 
         "task_complete" => {
             let id = req(args, "task_id")?;
+            let gen = args.get("claim_generation").and_then(Value::as_i64);
             let artifact = opt(args, "artifact_content")
                 .map(|payload| TaskArtifact::new(new_id("art"), id, &agent, "text", payload));
             if !coordinator
-                .complete_task(id, &agent, opt(args, "summary"), artifact.as_ref())
+                .complete_task_with_generation(id, &agent, opt(args, "summary"), artifact.as_ref(), gen)
                 .map_err(err)?
             {
-                return Err(format!("Task '{id}' was not found."));
+                return Err(format!("Task '{id}' was not found, not active, assigned to another agent, or invalid claim generation."));
             }
             publish(ipc, state_changed(id, None, TaskStatus::Running, TaskStatus::Completed, &agent)).await;
             Ok(json!({ "status": "completed", "task_id": id, "artifact_recorded": artifact.is_some() }))
@@ -258,9 +260,10 @@ async fn run(
 
         "task_fail" => {
             let id = req(args, "task_id")?;
+            let gen = args.get("claim_generation").and_then(Value::as_i64);
             let error = req(args, "error")?;
-            if !coordinator.fail_task(id, &agent, error).map_err(err)? {
-                return Err(format!("Task '{id}' was not found."));
+            if !coordinator.fail_task_with_generation(id, &agent, error, gen).map_err(err)? {
+                return Err(format!("Task '{id}' was not found, not active, assigned to another agent, or invalid claim generation."));
             }
             publish(ipc, state_changed(id, None, TaskStatus::Running, TaskStatus::Failed, &agent)).await;
             Ok(json!({ "status": "failed", "task_id": id, "error": error }))

@@ -69,6 +69,8 @@ pub struct TaskRecord {
     pub outputs: Option<serde_json::Value>,
     pub created_at: i64,
     pub updated_at: i64,
+    #[serde(default)]
+    pub claim_generation: i64,
 }
 
 impl TaskRecord {
@@ -87,7 +89,13 @@ impl TaskRecord {
             outputs: None,
             created_at: now,
             updated_at: now,
+            claim_generation: 0,
         }
+    }
+
+    pub fn with_claim_generation(mut self, generation: i64) -> Self {
+        self.claim_generation = generation;
+        self
     }
 
     pub fn with_plan_id(mut self, plan_id: impl Into<String>) -> Self {
