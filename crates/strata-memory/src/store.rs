@@ -5663,6 +5663,9 @@ impl SqliteStore {
         ttl_seconds: i64,
         metadata: Option<&str>,
     ) -> Result<LeaseAcquireResult, StrataError> {
+        let canonical_id = strata_core::paths::canonical_resource_id(resource_id);
+        let resource_id = canonical_id.as_str();
+
         let conn = self
             .conn
             .lock()
@@ -5688,6 +5691,7 @@ impl SqliteStore {
             })?;
 
         if rows_affected > 0 {
+            let domain_key = canonical_id.strip_prefix("file:").unwrap_or(&canonical_id);
             let _ = conn.execute(
                 "INSERT INTO domain_authorities (
                     domain, authoritative_agent, confidence_score, lease_held, active_tasks_count, last_active_at
@@ -5696,7 +5700,7 @@ impl SqliteStore {
                      authoritative_agent = excluded.authoritative_agent,
                      lease_held = 1,
                      last_active_at = excluded.last_active_at",
-                params![resource_id, agent_id, now],
+                params![domain_key, agent_id, now],
             );
 
             Ok(LeaseAcquireResult::Acquired {
@@ -5739,6 +5743,8 @@ impl SqliteStore {
 
     /// Releases a lease if held by the given agent.
     pub fn release_lease(&self, resource_id: &str, agent_id: &str) -> Result<bool, StrataError> {
+        let canonical_id = strata_core::paths::canonical_resource_id(resource_id);
+
         let conn = self
             .conn
             .lock()
@@ -5746,15 +5752,16 @@ impl SqliteStore {
 
         let rows = conn
             .execute(
-                "DELETE FROM resource_leases WHERE resource_id = ?1 AND agent_id = ?2",
-                params![resource_id, agent_id],
+                "DELETE FROM resource_leases WHERE (resource_id = ?1 OR resource_id = ?2) AND agent_id = ?3",
+                params![canonical_id, resource_id, agent_id],
             )
             .map_err(|e| StrataError::Database(format!("Failed to release lease: {e}")))?;
 
         if rows > 0 {
+            let domain_key = canonical_id.strip_prefix("file:").unwrap_or(&canonical_id);
             let _ = conn.execute(
-                "UPDATE domain_authorities SET lease_held = 0 WHERE domain = ?1 AND authoritative_agent = ?2",
-                params![resource_id, agent_id],
+                "UPDATE domain_authorities SET lease_held = 0 WHERE (domain = ?1 OR domain = ?2 OR domain = ?3) AND authoritative_agent = ?4",
+                params![domain_key, canonical_id, resource_id, agent_id],
             );
         }
 
@@ -5763,6 +5770,8 @@ impl SqliteStore {
 
     /// Fetches a lease for a resource.
     pub fn get_lease(&self, resource_id: &str) -> Result<Option<ResourceLease>, StrataError> {
+        let canonical_id = strata_core::paths::canonical_resource_id(resource_id);
+
         let conn = self
             .conn
             .lock()
@@ -5771,12 +5780,14 @@ impl SqliteStore {
         let mut stmt = conn
             .prepare(
                 "SELECT resource_id, agent_id, lease_expires_at, metadata
-             FROM resource_leases WHERE resource_id = ?1",
+             FROM resource_leases WHERE resource_id = ?1 OR resource_id = ?2
+             ORDER BY CASE WHEN resource_id = ?1 THEN 0 ELSE 1 END
+             LIMIT 1",
             )
             .map_err(|e| StrataError::Database(e.to_string()))?;
 
         let lease = stmt
-            .query_row(params![resource_id], |row| {
+            .query_row(params![canonical_id, resource_id], |row| {
                 Ok(ResourceLease {
                     resource_id: row.get(0)?,
                     agent_id: row.get(1)?,
@@ -6126,11 +6137,12 @@ impl SqliteStore {
             // Check 2: Are all required resources unleased or owned by us?
             let mut resources_available = true;
             for res in &candidate.required_resources {
+                let canon = strata_core::paths::canonical_resource_id(res);
                 let mut lease_stmt = tx
-                    .prepare("SELECT agent_id, lease_expires_at FROM resource_leases WHERE resource_id = ?1")
+                    .prepare("SELECT agent_id, lease_expires_at FROM resource_leases WHERE resource_id = ?1 OR resource_id = ?2")
                     .map_err(|e| StrataError::Database(e.to_string()))?;
                 let active_lease = lease_stmt
-                    .query_row(params![res], |row| {
+                    .query_row(params![canon, res], |row| {
                         Ok((row.get::<_, String>(0)?, row.get::<_, i64>(1)?))
                     })
                     .optional()
@@ -6150,6 +6162,7 @@ impl SqliteStore {
 
             // Lock candidate resources
             for res in &candidate.required_resources {
+                let canon = strata_core::paths::canonical_resource_id(res);
                 tx.execute(
                     "INSERT INTO resource_leases (resource_id, agent_id, lease_expires_at, metadata)
                      VALUES (?1, ?2, ?3, ?4)
@@ -6157,7 +6170,7 @@ impl SqliteStore {
                          agent_id = excluded.agent_id,
                          lease_expires_at = excluded.lease_expires_at,
                          metadata = excluded.metadata",
-                    params![res, agent_id, lease_expires_at, format!("task:{}", candidate.task_id)],
+                    params![canon, agent_id, lease_expires_at, format!("task:{}", candidate.task_id)],
                 )
                 .map_err(|e| StrataError::Database(format!("Failed to acquire resource lease {res}: {e}")))?;
             }
@@ -6304,9 +6317,10 @@ impl SqliteStore {
         // Release required_resources leases
         let resources: Vec<String> = serde_json::from_str(&res_json).unwrap_or_default();
         for res in resources {
+            let canon = strata_core::paths::canonical_resource_id(&res);
             let _ = tx.execute(
-                "DELETE FROM resource_leases WHERE resource_id = ?1 AND agent_id = ?2",
-                params![res, agent_id],
+                "DELETE FROM resource_leases WHERE (resource_id = ?1 OR resource_id = ?2) AND agent_id = ?3",
+                params![canon, res, agent_id],
             );
         }
         let _ = tx.execute(
@@ -6385,19 +6399,19 @@ impl SqliteStore {
             .transaction_with_behavior(rusqlite::TransactionBehavior::Immediate)
             .map_err(|e| StrataError::Database(format!("Failed to start transaction: {e}")))?;
 
-        let task_meta: Option<(String, Option<String>, i64)> = {
+        let task_meta: Option<(String, Option<String>, String, i64)> = {
             let mut stmt = tx
-                .prepare("SELECT status, assigned_agent, claim_generation FROM tasks WHERE task_id = ?1")
+                .prepare("SELECT status, assigned_agent, required_resources_json, claim_generation FROM tasks WHERE task_id = ?1")
                 .map_err(|e| StrataError::Database(e.to_string()))?;
             stmt
                 .query_row(params![task_id], |row| {
-                    Ok((row.get(0)?, row.get(1)?, row.get(2)?))
+                    Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?))
                 })
                 .optional()
                 .map_err(|e| StrataError::Database(e.to_string()))?
         };
 
-        let (status_str, assigned_agent, current_gen) = match task_meta {
+        let (status_str, assigned_agent, res_json, current_gen) = match task_meta {
             Some(m) => m,
             None => return Ok(false),
         };
@@ -6439,7 +6453,15 @@ impl SqliteStore {
             return Ok(false);
         }
 
-        // Release leases
+        // Release required_resources leases and task metadata leases
+        let resources: Vec<String> = serde_json::from_str(&res_json).unwrap_or_default();
+        for res in resources {
+            let canon = strata_core::paths::canonical_resource_id(&res);
+            let _ = tx.execute(
+                "DELETE FROM resource_leases WHERE (resource_id = ?1 OR resource_id = ?2) AND agent_id = ?3",
+                params![canon, res, agent_id],
+            );
+        }
         let _ = tx.execute(
             "DELETE FROM resource_leases WHERE agent_id = ?1 AND metadata LIKE ?2",
             params![agent_id, format!("task:{task_id}%")],
@@ -6534,6 +6556,137 @@ impl SqliteStore {
             .map_err(|e| StrataError::Database(format!("Failed to commit update_task_progress transaction: {e}")))?;
 
         Ok(rows > 0)
+    }
+
+    /// Atomically renews all leases associated with an active task.
+    ///
+    /// Validates that:
+    /// - The task exists and is in 'claimed' or 'running' status
+    /// - The task is assigned to `agent_id`
+    /// - If `expected_generation` is provided, `claim_generation` matches
+    /// - All required resources are currently held by `agent_id`
+    ///
+    /// If valid, extends the expiration of all required resources and any leases
+    /// held with metadata `task:{task_id}%` to `now + lease_ttl_secs`, and touches `tasks.updated_at`.
+    ///
+    /// Returns `Ok(true)` if successfully renewed, or `Ok(false)` if the lease or task was revoked/lost.
+    pub fn renew_task_leases(
+        &self,
+        task_id: &str,
+        agent_id: &str,
+        lease_ttl_secs: i64,
+    ) -> Result<bool, StrataError> {
+        self.renew_task_leases_with_generation(task_id, agent_id, lease_ttl_secs, None)
+    }
+
+    pub fn renew_task_leases_with_generation(
+        &self,
+        task_id: &str,
+        agent_id: &str,
+        lease_ttl_secs: i64,
+        expected_generation: Option<i64>,
+    ) -> Result<bool, StrataError> {
+        let mut conn = self
+            .conn
+            .lock()
+            .map_err(|_| StrataError::Database("Lock poisoned on SQLite connection".to_string()))?;
+
+        let now = Utc::now().timestamp();
+        let new_expires_at = now + lease_ttl_secs;
+
+        let tx = conn
+            .transaction_with_behavior(rusqlite::TransactionBehavior::Immediate)
+            .map_err(|e| StrataError::Database(format!("Failed to start transaction: {e}")))?;
+
+        // Verify task existence and ownership
+        let task_meta: Option<(String, Option<String>, String, i64)> = {
+            let mut stmt = tx
+                .prepare("SELECT status, assigned_agent, required_resources_json, claim_generation FROM tasks WHERE task_id = ?1")
+                .map_err(|e| StrataError::Database(e.to_string()))?;
+            stmt
+                .query_row(params![task_id], |row| {
+                    Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?))
+                })
+                .optional()
+                .map_err(|e| StrataError::Database(e.to_string()))?
+        };
+
+        let (status_str, assigned_agent, res_json, current_gen) = match task_meta {
+            Some(m) => m,
+            None => return Ok(false),
+        };
+
+        if status_str != "claimed" && status_str != "running" {
+            return Ok(false);
+        }
+
+        if assigned_agent.as_deref() != Some(agent_id) {
+            return Ok(false);
+        }
+
+        if let Some(expected) = expected_generation {
+            if current_gen != expected {
+                return Ok(false);
+            }
+        }
+
+        let resources: Vec<String> = serde_json::from_str(&res_json).unwrap_or_default();
+        for res in &resources {
+            let canon = strata_core::paths::canonical_resource_id(res);
+            let mut stmt = tx
+                .prepare("SELECT agent_id, lease_expires_at FROM resource_leases WHERE resource_id = ?1 OR resource_id = ?2")
+                .map_err(|e| StrataError::Database(e.to_string()))?;
+            let lease_opt = stmt
+                .query_row(params![canon, res], |row| {
+                    Ok((row.get::<_, String>(0)?, row.get::<_, i64>(1)?))
+                })
+                .optional()
+                .map_err(|e| StrataError::Database(e.to_string()))?;
+
+            match lease_opt {
+                Some((held_by, _exp)) => {
+                    if held_by != agent_id {
+                        return Ok(false);
+                    }
+                }
+                None => {
+                    return Ok(false);
+                }
+            }
+        }
+
+        // Renew required resource leases
+        for res in &resources {
+            let canon = strata_core::paths::canonical_resource_id(res);
+            tx.execute(
+                "UPDATE resource_leases
+                 SET lease_expires_at = ?1
+                 WHERE (resource_id = ?2 OR resource_id = ?3) AND agent_id = ?4",
+                params![new_expires_at, canon, res, agent_id],
+            )
+            .map_err(|e| StrataError::Database(format!("Failed to renew lease for {res}: {e}")))?;
+        }
+
+        // Also renew any other leases held with metadata 'task:{task_id}%'
+        tx.execute(
+            "UPDATE resource_leases
+             SET lease_expires_at = ?1
+             WHERE agent_id = ?2 AND metadata LIKE ?3",
+            params![new_expires_at, agent_id, format!("task:{}%", task_id)],
+        )
+        .map_err(|e| StrataError::Database(format!("Failed to renew metadata leases: {e}")))?;
+
+        // Touch tasks.updated_at so task remains un-stale
+        tx.execute(
+            "UPDATE tasks SET updated_at = ?1 WHERE task_id = ?2 AND assigned_agent = ?3",
+            params![now, task_id, agent_id],
+        )
+        .map_err(|e| StrataError::Database(format!("Failed to touch task updated_at: {e}")))?;
+
+        tx.commit()
+            .map_err(|e| StrataError::Database(format!("Failed to commit renew transaction: {e}")))?;
+
+        Ok(true)
     }
 
     /// Returns `claimed`/`running` tasks silent for longer than `stale_secs` to
@@ -7007,6 +7160,7 @@ impl SqliteStore {
         &self,
         query_domain: &str,
     ) -> Result<Option<DomainAuthority>, StrataError> {
+        let clean_query = query_domain.strip_prefix("file:").unwrap_or(query_domain);
         let conn = self
             .conn
             .lock()
@@ -7017,13 +7171,14 @@ impl SqliteStore {
             .prepare(
                 "SELECT domain, authoritative_agent, confidence_score, lease_held, active_tasks_count, last_active_at
                  FROM domain_authorities
-                 WHERE domain = ?1
+                 WHERE domain = ?1 OR domain = ?2
+                 ORDER BY lease_held DESC, length(domain) DESC
                  LIMIT 1",
             )
             .map_err(|e| StrataError::Database(e.to_string()))?;
 
         let exact = stmt
-            .query_row(params![query_domain], |row| {
+            .query_row(params![clean_query, query_domain], |row| {
                 Ok(DomainAuthority {
                     domain: row.get(0)?,
                     authoritative_agent: row.get(1)?,
@@ -7046,13 +7201,14 @@ impl SqliteStore {
                 "SELECT domain, authoritative_agent, confidence_score, lease_held, active_tasks_count, last_active_at
                  FROM domain_authorities
                  WHERE ?1 LIKE (domain || '%') OR domain LIKE (?1 || '%')
+                    OR ?2 LIKE (domain || '%') OR domain LIKE (?2 || '%')
                  ORDER BY lease_held DESC, length(domain) DESC, confidence_score DESC
                  LIMIT 1",
             )
             .map_err(|e| StrataError::Database(e.to_string()))?;
 
         let hierarchical = stmt
-            .query_row(params![query_domain], |row| {
+            .query_row(params![clean_query, query_domain], |row| {
                 Ok(DomainAuthority {
                     domain: row.get(0)?,
                     authoritative_agent: row.get(1)?,

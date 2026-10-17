@@ -179,13 +179,17 @@ pub async fn run_worker(args: WorkerArgs, coordinator: StigmergyCoordinator) -> 
                 // Update active presence
                 let _ = coordinator.heartbeat(&presence.clone().with_active_task(&title));
 
-                // Spawn background heartbeat task for liveness while running
+                // Spawn background heartbeat task for liveness and lease renewal while running
+                let lease_lost = Arc::new(AtomicBool::new(false));
+                let lease_lost_clone = Arc::clone(&lease_lost);
                 let heartbeat_stop = Arc::new(AtomicBool::new(false));
                 let hb_stop_clone = Arc::clone(&heartbeat_stop);
                 let coord_hb = coordinator.clone();
                 let tid_hb = task_id.clone();
                 let aid_hb = agent_id.clone();
                 let hb_interval = args.heartbeat_interval.max(1);
+                let lease_ttl = args.lease_ttl.max(10) as i64;
+                let task_gen = task.claim_generation;
 
                 let hb_handle = tokio::spawn(async move {
                     while !hb_stop_clone.load(Ordering::SeqCst) {
@@ -193,16 +197,48 @@ pub async fn run_worker(args: WorkerArgs, coordinator: StigmergyCoordinator) -> 
                         if hb_stop_clone.load(Ordering::SeqCst) {
                             break;
                         }
-                        let _ = coord_hb.update_task_progress(
+
+                        // Renew task leases and check ownership/fencing token
+                        let renewed = coord_hb.renew_task_leases_with_generation(
+                            &tid_hb,
+                            &aid_hb,
+                            lease_ttl,
+                            Some(task_gen),
+                        ).unwrap_or(false);
+
+                        if !renewed {
+                            lease_lost_clone.store(true, Ordering::SeqCst);
+                            break;
+                        }
+
+                        let _ = coord_hb.update_task_progress_with_generation(
                             &tid_hb,
                             &aid_hb,
                             "Worker executing active step",
+                            Some(task_gen),
                         );
                     }
                 });
 
-                // Execute the task
-                let exec_result = execute_task_payload(&task, args.dry_run).await;
+                // Execute the task with race detection against lease loss
+                let exec_future = execute_task_payload(&task, args.dry_run);
+                tokio::pin!(exec_future);
+
+                let exec_result = tokio::select! {
+                    res = &mut exec_future => res,
+                    _ = async {
+                        while !lease_lost.load(Ordering::SeqCst) && !heartbeat_stop.load(Ordering::SeqCst) {
+                            sleep(Duration::from_millis(50)).await;
+                        }
+                    } => {
+                        if lease_lost.load(Ordering::SeqCst) {
+                            Err(anyhow::anyhow!("Task lease was lost or revoked concurrently during execution"))
+                        } else {
+                            exec_future.await
+                        }
+                    }
+                };
+
                 heartbeat_stop.store(true, Ordering::SeqCst);
                 let _ = hb_handle.await;
 
@@ -217,14 +253,32 @@ pub async fn run_worker(args: WorkerArgs, coordinator: StigmergyCoordinator) -> 
                             &artifact_content,
                         );
 
-                        let _ = coordinator.complete_task(
+                        let completed = coordinator.complete_task_with_generation(
                             &task_id,
                             &agent_id,
                             Some(&format!("Task '{}' executed successfully", title)),
                             Some(&artifact),
-                        );
+                            Some(task.claim_generation),
+                        ).unwrap_or(false);
 
-                        if !args.json {
+                        if !completed {
+                            stats.tasks_succeeded -= 1;
+                            stats.tasks_failed += 1;
+                            let err_msg = "Task completion rejected (lease expired or task revoked concurrently)";
+                            if !args.json {
+                                println!("❌ Failed to complete task [{}]: {}", task_id, err_msg);
+                            } else {
+                                println!(
+                                    "{}",
+                                    serde_json::json!({
+                                        "event": "task_failed",
+                                        "task_id": task_id,
+                                        "title": title,
+                                        "error": err_msg
+                                    })
+                                );
+                            }
+                        } else if !args.json {
                             println!("✅ Completed task [{}]: \"{}\"", task_id, title);
                         } else {
                             println!(
@@ -241,7 +295,12 @@ pub async fn run_worker(args: WorkerArgs, coordinator: StigmergyCoordinator) -> 
                     Err(err) => {
                         stats.tasks_failed += 1;
                         let err_msg = format!("{err}");
-                        let _ = coordinator.fail_task(&task_id, &agent_id, &err_msg);
+                        let _ = coordinator.fail_task_with_generation(
+                            &task_id,
+                            &agent_id,
+                            &err_msg,
+                            Some(task.claim_generation),
+                        );
 
                         if !args.json {
                             println!("❌ Failed task [{}]: {}", task_id, err_msg);

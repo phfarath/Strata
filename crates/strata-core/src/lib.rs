@@ -3,11 +3,13 @@ pub mod blackboard;
 pub mod config;
 pub mod errors;
 pub mod events;
+pub mod paths;
 pub mod schemas;
 pub mod state;
 pub mod traits;
 
 // Re-exports for convenience
+pub use paths::{canonical_resource_id, canonical_resource_id_with_root};
 pub use a2a::{
     A2aMessage, AgentCard, AgentPresence, DomainAuthority, IpcEvent, IpcMessage,
     LeaseAcquireResult, ResourceLease, TransactiveQuery, TransactiveResponse,
