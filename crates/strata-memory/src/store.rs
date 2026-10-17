@@ -190,6 +190,7 @@ impl SqliteStore {
         let _ = conn.execute("CREATE INDEX IF NOT EXISTS idx_facts_branch ON semantic_facts(git_branch)", []);
         let _ = conn.execute("CREATE INDEX IF NOT EXISTS idx_episodic_branch ON episodic_memories(git_branch)", []);
         let _ = conn.execute("CREATE INDEX IF NOT EXISTS idx_episodes_branch ON episodes(git_branch)", []);
+        let _ = conn.execute("ALTER TABLE tasks ADD COLUMN claim_generation INTEGER NOT NULL DEFAULT 0", []);
         let _ = conn.execute("DROP TRIGGER IF EXISTS trg_memories_au", []);
 
         // Idempotently backfill valid_until for legacy deprecated records
@@ -733,7 +734,8 @@ impl SqliteStore {
                 dependencies_json TEXT NOT NULL DEFAULT '[]',
                 outputs_json TEXT,
                 created_at INTEGER NOT NULL,
-                updated_at INTEGER NOT NULL
+                updated_at INTEGER NOT NULL,
+                claim_generation INTEGER NOT NULL DEFAULT 0
             );
 
             CREATE INDEX IF NOT EXISTS idx_tasks_plan ON tasks(plan_id);
@@ -932,6 +934,10 @@ impl SqliteStore {
         );
         let _ = conn.execute(
             "CREATE INDEX IF NOT EXISTS idx_episodes_parent ON episodes(parent_id)",
+            [],
+        );
+        let _ = conn.execute(
+            "ALTER TABLE tasks ADD COLUMN claim_generation INTEGER NOT NULL DEFAULT 0",
             [],
         );
 
@@ -5858,8 +5864,8 @@ impl SqliteStore {
             "INSERT INTO tasks (
                 task_id, plan_id, parent_id, title, description, status,
                 assigned_agent, required_resources_json, dependencies_json,
-                outputs_json, created_at, updated_at
-            ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12)
+                outputs_json, created_at, updated_at, claim_generation
+            ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13)
             ON CONFLICT(task_id) DO UPDATE SET
                 plan_id = excluded.plan_id,
                 parent_id = excluded.parent_id,
@@ -5870,7 +5876,8 @@ impl SqliteStore {
                 required_resources_json = excluded.required_resources_json,
                 dependencies_json = excluded.dependencies_json,
                 outputs_json = excluded.outputs_json,
-                updated_at = excluded.updated_at",
+                updated_at = excluded.updated_at,
+                claim_generation = excluded.claim_generation",
             params![
                 task.task_id,
                 task.plan_id,
@@ -5884,6 +5891,7 @@ impl SqliteStore {
                 outputs,
                 task.created_at,
                 task.updated_at,
+                task.claim_generation,
             ],
         )
         .map_err(|e| StrataError::Database(format!("Failed to create task: {e}")))?;
@@ -5911,8 +5919,8 @@ impl SqliteStore {
                 "INSERT INTO tasks (
                     task_id, plan_id, parent_id, title, description, status,
                     assigned_agent, required_resources_json, dependencies_json,
-                    outputs_json, created_at, updated_at
-                ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12)
+                    outputs_json, created_at, updated_at, claim_generation
+                ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13)
                 ON CONFLICT(task_id) DO UPDATE SET
                     plan_id = excluded.plan_id,
                     parent_id = excluded.parent_id,
@@ -5923,7 +5931,8 @@ impl SqliteStore {
                     required_resources_json = excluded.required_resources_json,
                     dependencies_json = excluded.dependencies_json,
                     outputs_json = excluded.outputs_json,
-                    updated_at = excluded.updated_at",
+                    updated_at = excluded.updated_at,
+                    claim_generation = excluded.claim_generation",
                 params![
                     task.task_id,
                     task.plan_id,
@@ -5937,6 +5946,7 @@ impl SqliteStore {
                     outputs,
                     task.created_at,
                     task.updated_at,
+                    task.claim_generation,
                 ],
             )
             .map_err(|e| StrataError::Database(format!("Failed to insert batch task: {e}")))?;
@@ -5959,7 +5969,7 @@ impl SqliteStore {
             .prepare(
                 "SELECT task_id, plan_id, parent_id, title, description, status,
                         assigned_agent, required_resources_json, dependencies_json,
-                        outputs_json, created_at, updated_at
+                        outputs_json, created_at, updated_at, claim_generation
                  FROM tasks WHERE task_id = ?1",
             )
             .map_err(|e| StrataError::Database(e.to_string()))?;
@@ -5982,7 +5992,7 @@ impl SqliteStore {
         let mut sql = String::from(
             "SELECT task_id, plan_id, parent_id, title, description, status,
                     assigned_agent, required_resources_json, dependencies_json,
-                    outputs_json, created_at, updated_at
+                    outputs_json, created_at, updated_at, claim_generation
              FROM tasks WHERE 1=1",
         );
 
@@ -6026,13 +6036,18 @@ impl SqliteStore {
 
     /// Atomically claims a task (or finds the next unblocked task) and acquires
     /// exclusive leases for all of its required resources.
+    ///
+    /// Uses an IMMEDIATE transaction to prevent concurrent race conditions across
+    /// multiple processes (e.g. multiple agents or workers), ensures candidate
+    /// dependencies and resource leases are verified atomically, bumps the task's
+    /// fencing token (`claim_generation`), and commits the claim.
     pub fn claim_task_atomic(
         &self,
         task_id_opt: Option<&str>,
         agent_id: &str,
         lease_ttl_secs: i64,
     ) -> Result<Option<TaskRecord>, StrataError> {
-        let conn = self
+        let mut conn = self
             .conn
             .lock()
             .map_err(|_| StrataError::Database("Lock poisoned on SQLite connection".to_string()))?;
@@ -6040,23 +6055,29 @@ impl SqliteStore {
         let now = Utc::now().timestamp();
         let lease_expires_at = now + lease_ttl_secs;
 
+        let tx = conn
+            .transaction_with_behavior(rusqlite::TransactionBehavior::Immediate)
+            .map_err(|e| StrataError::Database(format!("Failed to start transaction: {e}")))?;
+
         // Fetch completed task IDs in the workspace to evaluate dependencies
-        let mut completed_stmt = conn
-            .prepare("SELECT task_id FROM tasks WHERE status = 'completed'")
-            .map_err(|e| StrataError::Database(e.to_string()))?;
-        let completed_rows = completed_stmt
-            .query_map([], |row| row.get::<_, String>(0))
-            .map_err(|e| StrataError::Database(e.to_string()))?;
-        let completed_ids: Vec<String> = completed_rows.filter_map(|r| r.ok()).collect();
+        let completed_ids: Vec<String> = {
+            let mut completed_stmt = tx
+                .prepare("SELECT task_id FROM tasks WHERE status = 'completed'")
+                .map_err(|e| StrataError::Database(e.to_string()))?;
+            let completed_rows = completed_stmt
+                .query_map([], |row| row.get::<_, String>(0))
+                .map_err(|e| StrataError::Database(e.to_string()))?;
+            completed_rows.filter_map(|r| r.ok()).collect()
+        };
 
         // Query candidate tasks
         let candidate_tasks: Vec<TaskRecord> = match task_id_opt {
             Some(id) => {
-                let mut stmt = conn
+                let mut stmt = tx
                     .prepare(
                         "SELECT task_id, plan_id, parent_id, title, description, status,
                                 assigned_agent, required_resources_json, dependencies_json,
-                                outputs_json, created_at, updated_at
+                                outputs_json, created_at, updated_at, claim_generation
                          FROM tasks WHERE task_id = ?1",
                     )
                     .map_err(|e| StrataError::Database(e.to_string()))?;
@@ -6079,11 +6100,11 @@ impl SqliteStore {
                 }
             }
             None => {
-                let mut stmt = conn
+                let mut stmt = tx
                     .prepare(
                         "SELECT task_id, plan_id, parent_id, title, description, status,
                                 assigned_agent, required_resources_json, dependencies_json,
-                                outputs_json, created_at, updated_at
+                                outputs_json, created_at, updated_at, claim_generation
                          FROM tasks
                          WHERE status IN ('pending', 'blocked')
                          ORDER BY created_at ASC",
@@ -6105,7 +6126,7 @@ impl SqliteStore {
             // Check 2: Are all required resources unleased or owned by us?
             let mut resources_available = true;
             for res in &candidate.required_resources {
-                let mut lease_stmt = conn
+                let mut lease_stmt = tx
                     .prepare("SELECT agent_id, lease_expires_at FROM resource_leases WHERE resource_id = ?1")
                     .map_err(|e| StrataError::Database(e.to_string()))?;
                 let active_lease = lease_stmt
@@ -6129,7 +6150,7 @@ impl SqliteStore {
 
             // Lock candidate resources
             for res in &candidate.required_resources {
-                conn.execute(
+                tx.execute(
                     "INSERT INTO resource_leases (resource_id, agent_id, lease_expires_at, metadata)
                      VALUES (?1, ?2, ?3, ?4)
                      ON CONFLICT(resource_id) DO UPDATE SET
@@ -6141,17 +6162,36 @@ impl SqliteStore {
                 .map_err(|e| StrataError::Database(format!("Failed to acquire resource lease {res}: {e}")))?;
             }
 
-            // Update task to claimed
-            conn.execute(
-                "UPDATE tasks SET status = 'claimed', assigned_agent = ?1, updated_at = ?2 WHERE task_id = ?3",
-                params![agent_id, now, candidate.task_id],
+            // Atomically update task to claimed and increment claim_generation
+            let new_generation = candidate.claim_generation + 1;
+            let rows_updated = tx.execute(
+                "UPDATE tasks
+                 SET status = 'claimed',
+                     assigned_agent = ?1,
+                     updated_at = ?2,
+                     claim_generation = ?3
+                 WHERE task_id = ?4
+                   AND (
+                       status IN ('pending', 'blocked')
+                       OR (status IN ('claimed', 'running') AND assigned_agent = ?1)
+                   )
+                   AND claim_generation = ?5",
+                params![agent_id, now, new_generation, candidate.task_id, candidate.claim_generation],
             )
             .map_err(|e| StrataError::Database(format!("Failed to update task to claimed: {e}")))?;
+
+            if rows_updated == 0 {
+                continue;
+            }
+
+            tx.commit()
+                .map_err(|e| StrataError::Database(format!("Failed to commit claim transaction: {e}")))?;
 
             let mut claimed_task = candidate;
             claimed_task.status = TaskStatus::Claimed;
             claimed_task.assigned_agent = Some(agent_id.to_string());
             claimed_task.updated_at = now;
+            claimed_task.claim_generation = new_generation;
 
             return Ok(Some(claimed_task));
         }
@@ -6168,39 +6208,91 @@ impl SqliteStore {
         summary: Option<&str>,
         artifact: Option<&TaskArtifact>,
     ) -> Result<bool, StrataError> {
-        let conn = self
+        self.complete_task_with_generation(task_id, agent_id, summary, artifact, None)
+    }
+
+    /// Marks a task as completed with optional fencing token (`claim_generation`) verification.
+    ///
+    /// Rejects the completion if:
+    /// - The task does not exist
+    /// - The task is not currently in 'claimed' or 'running' status
+    /// - The assigned agent does not match `agent_id`
+    /// - An `expected_generation` is provided and does not match the stored `claim_generation`
+    pub fn complete_task_with_generation(
+        &self,
+        task_id: &str,
+        agent_id: &str,
+        summary: Option<&str>,
+        artifact: Option<&TaskArtifact>,
+        expected_generation: Option<i64>,
+    ) -> Result<bool, StrataError> {
+        let mut conn = self
             .conn
             .lock()
             .map_err(|_| StrataError::Database("Lock poisoned on SQLite connection".to_string()))?;
 
         let now = Utc::now().timestamp();
+        let tx = conn
+            .transaction_with_behavior(rusqlite::TransactionBehavior::Immediate)
+            .map_err(|e| StrataError::Database(format!("Failed to start transaction: {e}")))?;
 
-        // Get task to know required_resources
-        let mut stmt = conn
-            .prepare("SELECT required_resources_json FROM tasks WHERE task_id = ?1")
-            .map_err(|e| StrataError::Database(e.to_string()))?;
-        let res_json_opt: Option<String> = stmt
-            .query_row(params![task_id], |row| row.get(0))
-            .optional()
-            .map_err(|e| StrataError::Database(e.to_string()))?;
+        // Fetch status, assigned_agent, required_resources, claim_generation
+        let task_meta: Option<(String, Option<String>, String, i64)> = {
+            let mut stmt = tx
+                .prepare("SELECT status, assigned_agent, required_resources_json, claim_generation FROM tasks WHERE task_id = ?1")
+                .map_err(|e| StrataError::Database(e.to_string()))?;
+            stmt
+                .query_row(params![task_id], |row| {
+                    Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?))
+                })
+                .optional()
+                .map_err(|e| StrataError::Database(e.to_string()))?
+        };
 
-        let res_json = match res_json_opt {
-            Some(s) => s,
+        let (status_str, assigned_agent, res_json, current_gen) = match task_meta {
+            Some(m) => m,
             None => return Ok(false),
         };
+
+        // Enforce active status
+        if status_str != "claimed" && status_str != "running" {
+            return Ok(false);
+        }
+
+        // Enforce assigned agent ownership
+        if assigned_agent.as_deref() != Some(agent_id) {
+            return Ok(false);
+        }
+
+        // Enforce fencing token if provided
+        if let Some(expected) = expected_generation {
+            if current_gen != expected {
+                return Ok(false);
+            }
+        }
 
         let outputs_val = summary.map(|s| serde_json::json!({ "summary": s, "completed_by": agent_id }));
         let outputs_str = outputs_val.map(|v| serde_json::to_string(&v).unwrap_or_default());
 
-        conn.execute(
-            "UPDATE tasks SET status = 'completed', outputs_json = COALESCE(?1, outputs_json), updated_at = ?2 WHERE task_id = ?3",
-            params![outputs_str, now, task_id],
+        let rows = tx.execute(
+            "UPDATE tasks
+             SET status = 'completed',
+                 outputs_json = COALESCE(?1, outputs_json),
+                 updated_at = ?2
+             WHERE task_id = ?3
+               AND assigned_agent = ?4
+               AND status IN ('claimed', 'running')",
+            params![outputs_str, now, task_id, agent_id],
         )
         .map_err(|e| StrataError::Database(format!("Failed to update task to completed: {e}")))?;
 
+        if rows == 0 {
+            return Ok(false);
+        }
+
         // If artifact provided, insert into task_artifacts
         if let Some(art) = artifact {
-            conn.execute(
+            tx.execute(
                 "INSERT INTO task_artifacts (artifact_id, task_id, agent_id, kind, payload, created_at)
                  VALUES (?1, ?2, ?3, ?4, ?5, ?6)
                  ON CONFLICT(artifact_id) DO UPDATE SET payload = excluded.payload",
@@ -6212,39 +6304,49 @@ impl SqliteStore {
         // Release required_resources leases
         let resources: Vec<String> = serde_json::from_str(&res_json).unwrap_or_default();
         for res in resources {
-            let _ = conn.execute(
+            let _ = tx.execute(
                 "DELETE FROM resource_leases WHERE resource_id = ?1 AND agent_id = ?2",
                 params![res, agent_id],
             );
         }
+        let _ = tx.execute(
+            "DELETE FROM resource_leases WHERE agent_id = ?1 AND metadata LIKE ?2",
+            params![agent_id, format!("task:{task_id}%")],
+        );
 
         // Auto-unblock downstream blocked tasks
-        let mut completed_stmt = conn
-            .prepare("SELECT task_id FROM tasks WHERE status = 'completed'")
-            .map_err(|e| StrataError::Database(e.to_string()))?;
-        let completed_rows = completed_stmt
-            .query_map([], |row| row.get::<_, String>(0))
-            .map_err(|e| StrataError::Database(e.to_string()))?;
-        let completed_ids: Vec<String> = completed_rows.filter_map(|r| r.ok()).collect();
+        let completed_ids: Vec<String> = {
+            let mut completed_stmt = tx
+                .prepare("SELECT task_id FROM tasks WHERE status = 'completed'")
+                .map_err(|e| StrataError::Database(e.to_string()))?;
+            let completed_rows = completed_stmt
+                .query_map([], |row| row.get::<_, String>(0))
+                .map_err(|e| StrataError::Database(e.to_string()))?;
+            completed_rows.filter_map(|r| r.ok()).collect()
+        };
 
-        let mut blocked_stmt = conn
-            .prepare("SELECT task_id, dependencies_json FROM tasks WHERE status = 'blocked'")
-            .map_err(|e| StrataError::Database(e.to_string()))?;
-        let blocked_tasks: Vec<(String, String)> = blocked_stmt
-            .query_map([], |row| Ok((row.get(0)?, row.get(1)?)))
-            .map_err(|e| StrataError::Database(e.to_string()))?
-            .filter_map(|r| r.ok())
-            .collect();
+        let blocked_tasks: Vec<(String, String)> = {
+            let mut blocked_stmt = tx
+                .prepare("SELECT task_id, dependencies_json FROM tasks WHERE status = 'blocked'")
+                .map_err(|e| StrataError::Database(e.to_string()))?;
+            let rows = blocked_stmt
+                .query_map([], |row| Ok((row.get(0)?, row.get(1)?)))
+                .map_err(|e| StrataError::Database(e.to_string()))?;
+            rows.filter_map(|r| r.ok()).collect()
+        };
 
         for (b_id, b_deps_str) in blocked_tasks {
             let deps: Vec<String> = serde_json::from_str(&b_deps_str).unwrap_or_default();
             if deps.iter().all(|d| completed_ids.contains(d)) {
-                let _ = conn.execute(
+                let _ = tx.execute(
                     "UPDATE tasks SET status = 'pending', updated_at = ?1 WHERE task_id = ?2",
                     params![now, b_id],
                 );
             }
         }
+
+        tx.commit()
+            .map_err(|e| StrataError::Database(format!("Failed to commit completion transaction: {e}")))?;
 
         Ok(true)
     }
@@ -6256,32 +6358,97 @@ impl SqliteStore {
         agent_id: &str,
         error_message: &str,
     ) -> Result<bool, StrataError> {
-        let conn = self
+        self.fail_task_with_generation(task_id, agent_id, error_message, None)
+    }
+
+    /// Marks a task as failed with optional fencing token (`claim_generation`) verification.
+    ///
+    /// Rejects the failure transition if:
+    /// - The task does not exist
+    /// - The task is not currently in 'claimed' or 'running' status
+    /// - The assigned agent does not match `agent_id`
+    /// - An `expected_generation` is provided and does not match the stored `claim_generation`
+    pub fn fail_task_with_generation(
+        &self,
+        task_id: &str,
+        agent_id: &str,
+        error_message: &str,
+        expected_generation: Option<i64>,
+    ) -> Result<bool, StrataError> {
+        let mut conn = self
             .conn
             .lock()
             .map_err(|_| StrataError::Database("Lock poisoned on SQLite connection".to_string()))?;
 
         let now = Utc::now().timestamp();
+        let tx = conn
+            .transaction_with_behavior(rusqlite::TransactionBehavior::Immediate)
+            .map_err(|e| StrataError::Database(format!("Failed to start transaction: {e}")))?;
+
+        let task_meta: Option<(String, Option<String>, i64)> = {
+            let mut stmt = tx
+                .prepare("SELECT status, assigned_agent, claim_generation FROM tasks WHERE task_id = ?1")
+                .map_err(|e| StrataError::Database(e.to_string()))?;
+            stmt
+                .query_row(params![task_id], |row| {
+                    Ok((row.get(0)?, row.get(1)?, row.get(2)?))
+                })
+                .optional()
+                .map_err(|e| StrataError::Database(e.to_string()))?
+        };
+
+        let (status_str, assigned_agent, current_gen) = match task_meta {
+            Some(m) => m,
+            None => return Ok(false),
+        };
+
+        if status_str != "claimed" && status_str != "running" {
+            return Ok(false);
+        }
+
+        if assigned_agent.as_deref() != Some(agent_id) {
+            return Ok(false);
+        }
+
+        if let Some(expected) = expected_generation {
+            if current_gen != expected {
+                return Ok(false);
+            }
+        }
+
         let err_json = serde_json::to_string(&serde_json::json!({
             "error": error_message,
             "failed_by": agent_id
         }))
         .unwrap_or_default();
 
-        let rows = conn
+        let rows = tx
             .execute(
-                "UPDATE tasks SET status = 'failed', outputs_json = ?1, updated_at = ?2 WHERE task_id = ?3",
-                params![err_json, now, task_id],
+                "UPDATE tasks
+                 SET status = 'failed',
+                     outputs_json = ?1,
+                     updated_at = ?2
+                 WHERE task_id = ?3
+                   AND assigned_agent = ?4
+                   AND status IN ('claimed', 'running')",
+                params![err_json, now, task_id, agent_id],
             )
             .map_err(|e| StrataError::Database(format!("Failed to mark task as failed: {e}")))?;
 
+        if rows == 0 {
+            return Ok(false);
+        }
+
         // Release leases
-        let _ = conn.execute(
+        let _ = tx.execute(
             "DELETE FROM resource_leases WHERE agent_id = ?1 AND metadata LIKE ?2",
             params![agent_id, format!("task:{task_id}%")],
         );
 
-        Ok(rows > 0)
+        tx.commit()
+            .map_err(|e| StrataError::Database(format!("Failed to commit fail_task transaction: {e}")))?;
+
+        Ok(true)
     }
 
     /// Updates ongoing task progress or heartbeat.
@@ -6291,12 +6458,58 @@ impl SqliteStore {
         agent_id: &str,
         message: &str,
     ) -> Result<bool, StrataError> {
-        let conn = self
+        self.update_task_progress_with_generation(task_id, agent_id, message, None)
+    }
+
+    /// Updates ongoing task progress or heartbeat with optional fencing token verification.
+    pub fn update_task_progress_with_generation(
+        &self,
+        task_id: &str,
+        agent_id: &str,
+        message: &str,
+        expected_generation: Option<i64>,
+    ) -> Result<bool, StrataError> {
+        let mut conn = self
             .conn
             .lock()
             .map_err(|_| StrataError::Database("Lock poisoned on SQLite connection".to_string()))?;
 
         let now = Utc::now().timestamp();
+        let tx = conn
+            .transaction_with_behavior(rusqlite::TransactionBehavior::Immediate)
+            .map_err(|e| StrataError::Database(format!("Failed to start transaction: {e}")))?;
+
+        let task_meta: Option<(String, Option<String>, i64)> = {
+            let mut stmt = tx
+                .prepare("SELECT status, assigned_agent, claim_generation FROM tasks WHERE task_id = ?1")
+                .map_err(|e| StrataError::Database(e.to_string()))?;
+            stmt
+                .query_row(params![task_id], |row| {
+                    Ok((row.get(0)?, row.get(1)?, row.get(2)?))
+                })
+                .optional()
+                .map_err(|e| StrataError::Database(e.to_string()))?
+        };
+
+        let (status_str, assigned_agent, current_gen) = match task_meta {
+            Some(m) => m,
+            None => return Ok(false),
+        };
+
+        if status_str != "claimed" && status_str != "running" {
+            return Ok(false);
+        }
+
+        if assigned_agent.as_deref() != Some(agent_id) {
+            return Ok(false);
+        }
+
+        if let Some(expected) = expected_generation {
+            if current_gen != expected {
+                return Ok(false);
+            }
+        }
+
         let progress_json = serde_json::to_string(&serde_json::json!({
             "last_progress": message,
             "agent_id": agent_id,
@@ -6304,12 +6517,21 @@ impl SqliteStore {
         }))
         .unwrap_or_default();
 
-        let rows = conn
+        let rows = tx
             .execute(
-                "UPDATE tasks SET status = 'running', outputs_json = ?1, updated_at = ?2 WHERE task_id = ?3 AND (assigned_agent = ?4 OR assigned_agent IS NULL)",
+                "UPDATE tasks
+                 SET status = 'running',
+                     outputs_json = ?1,
+                     updated_at = ?2
+                 WHERE task_id = ?3
+                   AND assigned_agent = ?4
+                   AND status IN ('claimed', 'running')",
                 params![progress_json, now, task_id, agent_id],
             )
             .map_err(|e| StrataError::Database(format!("Failed to update task progress: {e}")))?;
+
+        tx.commit()
+            .map_err(|e| StrataError::Database(format!("Failed to commit update_task_progress transaction: {e}")))?;
 
         Ok(rows > 0)
     }
@@ -6317,6 +6539,7 @@ impl SqliteStore {
     /// Returns `claimed`/`running` tasks silent for longer than `stale_secs` to
     /// `pending` (unassigned) and drops their task-owned leases. `task progress`
     /// refreshes `updated_at`, so it acts as the liveness heartbeat.
+    /// Increments `claim_generation` so any in-flight requests from the stale worker are rejected.
     pub fn reclaim_stale_tasks(&self, stale_secs: i64) -> Result<Vec<String>, StrataError> {
         let mut conn = self
             .conn
@@ -6341,7 +6564,7 @@ impl SqliteStore {
 
         for id in &ids {
             tx.execute(
-                "UPDATE tasks SET status = 'pending', assigned_agent = NULL, updated_at = ?1 WHERE task_id = ?2",
+                "UPDATE tasks SET status = 'pending', assigned_agent = NULL, updated_at = ?1, claim_generation = claim_generation + 1 WHERE task_id = ?2",
                 params![now, id],
             )
             .map_err(|e| StrataError::Database(format!("Failed to reclaim task {id}: {e}")))?;
@@ -6349,11 +6572,12 @@ impl SqliteStore {
                 "DELETE FROM resource_leases WHERE metadata = ?1",
                 params![format!("task:{id}")],
             )
-            .map_err(|e| StrataError::Database(format!("Failed to release leases of task {id}: {e}")))?;
+            .map_err(|e| StrataError::Database(format!("Failed to drop leases for task {id}: {e}")))?;
         }
 
         tx.commit()
-            .map_err(|e| StrataError::Database(format!("Failed to commit reclaim: {e}")))?;
+            .map_err(|e| StrataError::Database(format!("Failed to commit reclaim transaction: {e}")))?;
+
         Ok(ids)
     }
 
@@ -8296,6 +8520,7 @@ fn map_task_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<TaskRecord> {
     let outputs_str: Option<String> = row.get(9)?;
     let created_at: i64 = row.get(10)?;
     let updated_at: i64 = row.get(11)?;
+    let claim_generation: i64 = row.get(12).unwrap_or(0);
 
     let status = status_str.parse::<TaskStatus>().unwrap_or(TaskStatus::Pending);
     let required_resources: Vec<String> = serde_json::from_str(&req_res_str).unwrap_or_default();
@@ -8315,6 +8540,7 @@ fn map_task_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<TaskRecord> {
         outputs,
         created_at,
         updated_at,
+        claim_generation,
     })
 }
 

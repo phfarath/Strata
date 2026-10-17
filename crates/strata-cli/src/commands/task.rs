@@ -89,6 +89,9 @@ pub enum TaskAction {
         #[arg(long, help = "Agent ID (defaults to STRATA_AGENT_ID)")]
         agent: Option<String>,
 
+        #[arg(long, help = "Expected claim generation (fencing token)")]
+        generation: Option<i64>,
+
         #[arg(long, help = "Output as raw JSON")]
         json: bool,
     },
@@ -110,6 +113,9 @@ pub enum TaskAction {
         #[arg(long, help = "Agent ID (defaults to STRATA_AGENT_ID)")]
         agent: Option<String>,
 
+        #[arg(long, help = "Expected claim generation (fencing token)")]
+        generation: Option<i64>,
+
         #[arg(long, help = "Output as raw JSON")]
         json: bool,
     },
@@ -124,6 +130,9 @@ pub enum TaskAction {
 
         #[arg(long, help = "Agent ID (defaults to STRATA_AGENT_ID)")]
         agent: Option<String>,
+
+        #[arg(long, help = "Expected claim generation (fencing token)")]
+        generation: Option<i64>,
 
         #[arg(long, help = "Output as raw JSON")]
         json: bool,
@@ -319,6 +328,7 @@ pub async fn run_task(args: TaskArgs, coordinator: StigmergyCoordinator) -> Resu
                         println!("Task ID:     \x1b[1;36m{}\x1b[0m", claimed.task_id);
                         println!("Title:       {}", claimed.title);
                         println!("Agent:       \x1b[1;32m{}\x1b[0m", agent_id);
+                        println!("Fencing Gen: \x1b[1;33m{}\x1b[0m", claimed.claim_generation);
                         println!("Plan:        {}", claimed.plan_id.as_deref().unwrap_or("-"));
                         println!(
                             "Locked Res:  {}",
@@ -357,6 +367,7 @@ pub async fn run_task(args: TaskArgs, coordinator: StigmergyCoordinator) -> Resu
             task,
             message,
             agent,
+            generation,
             json,
         } => {
             let json_mode = is_json_mode(json);
@@ -364,9 +375,9 @@ pub async fn run_task(args: TaskArgs, coordinator: StigmergyCoordinator) -> Resu
             let task_id = resolve_task_id(task.as_deref())
                 .context("Task ID is required. Pass --task <id> or set STRATA_TASK_ID.")?;
 
-            let ok = coordinator.update_task_progress(&task_id, &agent_id, &message)?;
+            let ok = coordinator.update_task_progress_with_generation(&task_id, &agent_id, &message, generation)?;
             if !ok {
-                bail!("Could not update progress: task '{}' not found or assigned to another agent.", task_id);
+                bail!("Could not update progress: task '{}' not found, not active, assigned to another agent, or invalid claim generation.", task_id);
             }
 
             if json_mode {
@@ -382,6 +393,7 @@ pub async fn run_task(args: TaskArgs, coordinator: StigmergyCoordinator) -> Resu
             artifact,
             artifact_content,
             agent,
+            generation,
             json,
         } => {
             let json_mode = is_json_mode(json);
@@ -407,15 +419,16 @@ pub async fn run_task(args: TaskArgs, coordinator: StigmergyCoordinator) -> Resu
                 )
             });
 
-            let completed = coordinator.complete_task(
+            let completed = coordinator.complete_task_with_generation(
                 &task_id,
                 &agent_id,
                 summary.as_deref(),
                 task_artifact.as_ref(),
+                generation,
             )?;
 
             if !completed {
-                bail!("Could not complete task: task '{}' was not found.", task_id);
+                bail!("Could not complete task: task '{}' was not found, not active, assigned to another agent, or invalid claim generation.", task_id);
             }
 
             // Broadcast IPC notification for task completion and lock release
@@ -450,6 +463,7 @@ pub async fn run_task(args: TaskArgs, coordinator: StigmergyCoordinator) -> Resu
             task,
             error,
             agent,
+            generation,
             json,
         } => {
             let json_mode = is_json_mode(json);
@@ -457,9 +471,9 @@ pub async fn run_task(args: TaskArgs, coordinator: StigmergyCoordinator) -> Resu
             let task_id = resolve_task_id(task.as_deref())
                 .context("Task ID is required. Pass --task <id> or set STRATA_TASK_ID.")?;
 
-            let failed = coordinator.fail_task(&task_id, &agent_id, &error)?;
+            let failed = coordinator.fail_task_with_generation(&task_id, &agent_id, &error, generation)?;
             if !failed {
-                bail!("Could not mark task as failed: task '{}' was not found.", task_id);
+                bail!("Could not mark task as failed: task '{}' was not found, not active, assigned to another agent, or invalid claim generation.", task_id);
             }
 
             // Broadcast IPC notification
