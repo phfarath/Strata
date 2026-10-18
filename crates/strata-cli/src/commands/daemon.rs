@@ -236,6 +236,14 @@ pub async fn run_daemon(args: DaemonArgs, store: Arc<SqliteStore>) -> Result<()>
                         warn!("Auto-dreaming cycle warning in daemon loop: {e}");
                     }
                 }
+
+                // Run context rot detection and decay poisoned memories in background
+                let rot_detector = strata_memory::ContextRotDetector::with_default_config();
+                if let Ok(decayed) = rot_detector.apply_penalty_decay(&store) {
+                    if decayed > 0 {
+                        info!("Context rot detector quarantined and decayed {decayed} poisoned memories in daemon cycle");
+                    }
+                }
             }
         }
     }

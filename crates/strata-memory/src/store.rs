@@ -1560,6 +1560,11 @@ impl SqliteStore {
             query.push_str(" AND COALESCE(valid_from, created_at) <= ? AND (valid_until IS NULL OR valid_until > ?)");
             params_vec.push(Box::new(t_str.clone()));
             params_vec.push(Box::new(t_str));
+        } else if as_of_commit.is_none() {
+            let now_str = Utc::now().to_rfc3339();
+            query.push_str(" AND (valid_until IS NULL OR valid_until > ?)");
+            params_vec.push(Box::new(now_str));
+            query.push_str(" AND (json_extract(metadata_json, '$.status') IS NULL OR LOWER(json_extract(metadata_json, '$.status')) != 'deprecated')");
         }
 
         if let Some(c) = as_of_commit {
@@ -1653,6 +1658,11 @@ impl SqliteStore {
             query.push_str(" AND COALESCE(valid_from, created_at) <= ? AND (valid_until IS NULL OR valid_until > ?)");
             params_vec.push(Box::new(t_str.clone()));
             params_vec.push(Box::new(t_str));
+        } else if as_of_commit.is_none() {
+            let now_str = Utc::now().to_rfc3339();
+            query.push_str(" AND (valid_until IS NULL OR valid_until > ?)");
+            params_vec.push(Box::new(now_str));
+            query.push_str(" AND (json_extract(metadata_json, '$.status') IS NULL OR LOWER(json_extract(metadata_json, '$.status')) != 'deprecated')");
         }
 
         if let Some(c) = as_of_commit {
@@ -1774,6 +1784,11 @@ impl SqliteStore {
             sql.push_str(" AND COALESCE(m.valid_from, m.created_at) <= ? AND (m.valid_until IS NULL OR m.valid_until > ?)");
             params_vec.push(Box::new(t_str.clone()));
             params_vec.push(Box::new(t_str));
+        } else if as_of_commit.is_none() {
+            let now_str = Utc::now().to_rfc3339();
+            sql.push_str(" AND (m.valid_until IS NULL OR m.valid_until > ?)");
+            params_vec.push(Box::new(now_str));
+            sql.push_str(" AND (json_extract(m.metadata_json, '$.status') IS NULL OR LOWER(json_extract(m.metadata_json, '$.status')) != 'deprecated')");
         }
 
         if let Some(c) = as_of_commit {
@@ -3056,8 +3071,12 @@ impl SqliteStore {
     // Semantic Facts CRUD
     // ==========================================
 
+    pub fn upsert_semantic_fact(&self, fact: &SemanticFact) -> Result<(), StrataError> {
+        self.insert_or_update_semantic_fact(fact)
+    }
+
     pub fn insert_or_update_semantic_fact(&self, fact: &SemanticFact) -> Result<(), StrataError> {
-        let conn = self
+        let mut conn = self
             .conn
             .lock()
             .map_err(|_| StrataError::Database("Lock poisoned on SQLite connection".to_string()))?;
@@ -3105,7 +3124,11 @@ impl SqliteStore {
 
         let git_branch_str = fact.git_branch().map(|s| s.to_string());
 
-        conn.execute(
+        let tx = conn
+            .transaction()
+            .map_err(|e| StrataError::Database(format!("Failed to begin transaction for semantic fact: {e}")))?;
+
+        tx.execute(
             "INSERT INTO semantic_facts (
                 id, project, scope, statement, category, evidence_json,
                 importance, confidence, tier, approved_by_human, created_at, last_updated_at, status,
@@ -3160,16 +3183,26 @@ impl SqliteStore {
         )
         .map_err(|e| StrataError::Database(format!("Failed to persist semantic fact: {e}")))?;
 
-        // Also record dependencies in fact_dependencies table
+        // Atomic replacement of fact dependencies to prevent orphaned relations
+        tx.execute(
+            "DELETE FROM fact_dependencies WHERE dependent_fact_id = ?1",
+            params![id_str],
+        )
+        .map_err(|e| StrataError::Database(format!("Failed to clear existing fact dependencies: {e}")))?;
+
         for prereq_id in &fact.depends_on {
             let dep_id = format!("{}_{}", fact.id, prereq_id);
-            let _ = conn.execute(
+            tx.execute(
                 "INSERT INTO fact_dependencies (id, dependent_fact_id, prerequisite_fact_id, dependency_type, created_at)
                  VALUES (?1, ?2, ?3, 'supports', ?4)
                  ON CONFLICT(id) DO NOTHING",
                 params![dep_id, fact.id.to_string(), prereq_id.to_string(), created_at_str],
-            );
+            )
+            .map_err(|e| StrataError::Database(format!("Failed to insert fact dependency: {e}")))?;
         }
+
+        tx.commit()
+            .map_err(|e| StrataError::Database(format!("Failed to commit semantic fact transaction: {e}")))?;
 
         Ok(())
     }
@@ -3515,6 +3548,11 @@ impl SqliteStore {
             sql.push_str(" AND COALESCE(m.valid_from, m.created_at) <= ? AND (m.valid_until IS NULL OR m.valid_until > ?)");
             params_vec.push(Box::new(t_str.clone()));
             params_vec.push(Box::new(t_str));
+        } else if as_of_commit.is_none() {
+            let now_str = Utc::now().to_rfc3339();
+            sql.push_str(" AND (m.valid_until IS NULL OR m.valid_until > ?)");
+            params_vec.push(Box::new(now_str));
+            sql.push_str(" AND LOWER(m.status) != 'deprecated'");
         }
 
         if let Some(c) = as_of_commit {
