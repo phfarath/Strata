@@ -4817,6 +4817,9 @@ async fn test_embedding_provider_factory_and_compatibility() {
     assert!(are_embedding_models_compatible("mock-hash", "mock"));
     assert!(are_embedding_models_compatible("all-minilm-l6-v2", "allminilml6v2"));
     assert!(are_embedding_models_compatible("bge-small-en-v1.5", "bgesmallenv15"));
+    assert!(are_embedding_models_compatible("fastembed:AllMiniLML6V2", "all-minilm-l6-v2"));
+    assert!(are_embedding_models_compatible("fastembed/bge-small-en-v1.5", "bgesmallenv15"));
+    assert!(are_embedding_models_compatible("all-minilm-l6-v2", "fastembed:AllMiniLML6V2"));
     assert!(!are_embedding_models_compatible("all-minilm-l6-v2", "bge-small-en-v1.5"));
     assert!(!are_embedding_models_compatible("mock-hash", "all-minilm-l6-v2"));
 
@@ -4902,6 +4905,27 @@ async fn test_vector_consistency_stats_and_reindex() {
         .update_procedural_skill_embedding_with_model(&skill.id, &skill_vec, Some("all-minilm-l6-v2"), Some("1"))
         .unwrap();
 
+    // 4.5 Insert episodic memory with different model
+    let now = chrono::Utc::now();
+    let episode = strata_core::schemas::EpisodicMemory::new(
+        "sess-1",
+        "worker-1",
+        "Refactored authentication middleware to support token refresh",
+        now,
+        now,
+    );
+    store.insert_episodic_memory(&episode).unwrap();
+    store
+        .update_episodic_memory_embedding_with_model(&episode.id, &skill_vec, Some("all-minilm-l6-v2"), Some("1"))
+        .unwrap();
+
+    // Verify get_semantic_facts_with_embeddings_and_models returns tagged model
+    let facts_and_models = store
+        .get_semantic_facts_with_embeddings_and_models(None, None)
+        .expect("facts and models");
+    assert_eq!(facts_and_models.len(), 1);
+    assert_eq!(facts_and_models[0].2.as_deref(), Some("mock-hash"));
+
     // 5. Query consistency stats
     let stats = store
         .get_vector_consistency_stats(Some("mock-hash"))
@@ -4913,6 +4937,8 @@ async fn test_vector_consistency_stats_and_reindex() {
     assert_eq!(stats.facts_with_embeddings, 1);
     assert_eq!(stats.total_procedural_skills, 1);
     assert_eq!(stats.skills_with_embeddings, 1);
+    assert_eq!(stats.total_episodic_memories, 1);
+    assert_eq!(stats.episodes_with_embeddings, 1);
     assert_eq!(stats.distinct_models_count, 2, "Must detect 2 different embedding models");
     assert!(!stats.is_consistent, "Database is NOT consistent across models");
     assert!(!stats.recommendations.is_empty());
@@ -4927,6 +4953,7 @@ async fn test_vector_consistency_stats_and_reindex() {
     assert_eq!(report.memories_reindexed, 1, "Only mem2 had non-mock-hash model");
     assert_eq!(report.facts_reindexed, 0, "Fact already had mock-hash");
     assert_eq!(report.skills_reindexed, 1, "Skill had all-minilm-l6-v2");
+    assert_eq!(report.episodes_reindexed, 1, "Episode had all-minilm-l6-v2");
 
     // 7. Verify stats now show 100% consistent space
     let new_stats = store
@@ -4943,6 +4970,7 @@ async fn test_vector_consistency_stats_and_reindex() {
     assert_eq!(force_report.memories_reindexed, 2);
     assert_eq!(force_report.facts_reindexed, 1);
     assert_eq!(force_report.skills_reindexed, 1);
+    assert_eq!(force_report.episodes_reindexed, 1);
 }
 
 #[tokio::test]
@@ -5049,5 +5077,66 @@ async fn test_memory_engine_write_and_promote_sets_embedding_metadata() {
     assert!(stored_novel.embedding.is_some());
     assert_eq!(stored_novel.embedding_model.as_deref(), Some("mock-hash"));
     assert_eq!(stored_novel.embedding_version.as_deref(), Some("1"));
+}
+
+#[tokio::test]
+async fn test_audn_pipeline_rejects_incompatible_embedding_spaces() {
+    use crate::embedding::MockEmbeddingProvider;
+    use crate::pipeline::AudnPipeline;
+    use crate::store::SqliteStore;
+    use strata_core::schemas::SemanticFact;
+    use strata_core::state::{MemoryRecord, MemoryTier, MemoryType, Scope};
+
+    let store = SqliteStore::open_in_memory().expect("open store");
+    let pipeline = AudnPipeline::default();
+
+    // 1. Existing memory with model "all-minilm-l6-v2"
+    let vec_raw = vec![1.0f32; 384];
+    let mut existing_mem = MemoryRecord::new(
+        MemoryType::Semantic,
+        "Distributed consensus raft protocol leader election",
+        Scope::Global,
+    )
+    .with_summary("Raft Consensus")
+    .with_tier(MemoryTier::Working);
+    existing_mem.embedding = Some(vec_raw.clone());
+    existing_mem.embedding_model = Some("all-minilm-l6-v2".to_string());
+    existing_mem.embedding_version = Some("1".to_string());
+    store.insert_or_update_memory(&existing_mem).unwrap();
+
+    // Candidate memory with DIFFERENT model "mock-hash" but identical vector
+    let mut cand_mem = MemoryRecord::new(
+        MemoryType::Semantic,
+        "Completely different statement about network sockets",
+        Scope::Global,
+    );
+    cand_mem.embedding = Some(vec_raw.clone());
+    cand_mem.embedding_model = Some("mock-hash".to_string());
+    cand_mem.embedding_version = Some("1".to_string());
+
+    let decision = pipeline.classify_memory(&store, &cand_mem).expect("classify");
+    assert_eq!(
+        decision.cosine_similarity, 0.0,
+        "Cross-model vector similarity must be 0.0 to prevent space corruption"
+    );
+
+    // 2. Existing semantic fact with "all-minilm-l6-v2"
+    let fact = SemanticFact::new("Database uses WAL mode", "database", Scope::Global);
+    store.insert_or_update_semantic_fact(&fact).unwrap();
+    store
+        .update_semantic_fact_embedding_with_model(&fact.id, &vec_raw, Some("all-minilm-l6-v2"), Some("1"))
+        .unwrap();
+
+    // Candidate fact evaluated with Mock embedder ("mock-hash")
+    let mock = MockEmbeddingProvider::default();
+    let cand_fact = SemanticFact::new("Unrelated fact about compilers", "tooling", Scope::Global);
+    let fact_decision = pipeline
+        .ingest_fact(&store, Some(&mock), &cand_fact)
+        .await
+        .expect("ingest fact");
+    assert_eq!(
+        fact_decision.cosine_similarity, 0.0,
+        "Fact ingestion must reject cosine similarity across different models"
+    );
 }
 

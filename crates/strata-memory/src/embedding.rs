@@ -438,7 +438,11 @@ pub fn are_embedding_models_compatible(model_a: &str, model_b: &str) -> bool {
     }
     fn normalize_model(m: &str) -> String {
         let clean = m.trim().to_ascii_lowercase().replace('_', "-");
-        match clean.as_str() {
+        let stripped = clean
+            .strip_prefix("fastembed:")
+            .or_else(|| clean.strip_prefix("fastembed/"))
+            .unwrap_or(&clean);
+        match stripped {
             "mock" | "mock-hash" => "mock-hash".to_string(),
             "all-minilm-l6-v2" | "allminilml6v2" | "minilm" => "all-minilm-l6-v2".to_string(),
             "bge-small-en-v1.5" | "bgesmallenv15" | "bge-small" | "bgesmall" => {

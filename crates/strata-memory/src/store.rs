@@ -201,6 +201,8 @@ impl SqliteStore {
         let _ = conn.execute("ALTER TABLE procedural_skills ADD COLUMN embedding_version TEXT DEFAULT NULL", []);
         let _ = conn.execute("CREATE INDEX IF NOT EXISTS idx_memories_embedding_model ON memories(embedding_model)", []);
         let _ = conn.execute("CREATE INDEX IF NOT EXISTS idx_facts_embedding_model ON semantic_facts(embedding_model)", []);
+        let _ = conn.execute("CREATE INDEX IF NOT EXISTS idx_skills_embedding_model ON procedural_skills(embedding_model)", []);
+        let _ = conn.execute("CREATE INDEX IF NOT EXISTS idx_episodic_embedding_model ON episodic_memories(embedding_model)", []);
         let _ = conn.execute("DROP TRIGGER IF EXISTS trg_memories_au", []);
 
         // Idempotently backfill valid_until for legacy deprecated records
@@ -272,6 +274,7 @@ impl SqliteStore {
             CREATE INDEX IF NOT EXISTS idx_memories_valid_until ON memories(valid_until);
             CREATE INDEX IF NOT EXISTS idx_memories_commit ON memories(git_commit_hash);
             CREATE INDEX IF NOT EXISTS idx_memories_branch ON memories(git_branch);
+            CREATE INDEX IF NOT EXISTS idx_memories_embedding_model ON memories(embedding_model);
 
             -- Full-text search virtual table for memories
             CREATE VIRTUAL TABLE IF NOT EXISTS memories_fts USING fts5(
@@ -441,6 +444,7 @@ impl SqliteStore {
             CREATE INDEX IF NOT EXISTS idx_episodic_created ON episodic_memories(created_at);
             CREATE INDEX IF NOT EXISTS idx_episodic_project ON episodic_memories(project);
             CREATE INDEX IF NOT EXISTS idx_episodic_branch ON episodic_memories(git_branch);
+            CREATE INDEX IF NOT EXISTS idx_episodic_embedding_model ON episodic_memories(embedding_model);
 
             -- Full-text search virtual table for episodic memories
             CREATE VIRTUAL TABLE IF NOT EXISTS episodic_memories_fts USING fts5(
@@ -509,6 +513,7 @@ impl SqliteStore {
             CREATE INDEX IF NOT EXISTS idx_facts_valid_until ON semantic_facts(valid_until);
             CREATE INDEX IF NOT EXISTS idx_facts_commit ON semantic_facts(git_commit_hash);
             CREATE INDEX IF NOT EXISTS idx_facts_branch ON semantic_facts(git_branch);
+            CREATE INDEX IF NOT EXISTS idx_facts_embedding_model ON semantic_facts(embedding_model);
 
             -- Full-text search virtual table for semantic facts
             CREATE VIRTUAL TABLE IF NOT EXISTS semantic_facts_fts USING fts5(
@@ -558,6 +563,7 @@ impl SqliteStore {
 
             CREATE INDEX IF NOT EXISTS idx_skills_name ON procedural_skills(name);
             CREATE INDEX IF NOT EXISTS idx_skills_project ON procedural_skills(project);
+            CREATE INDEX IF NOT EXISTS idx_skills_embedding_model ON procedural_skills(embedding_model);
 
             -- Full-text search virtual table for procedural skills
             CREATE VIRTUAL TABLE IF NOT EXISTS procedural_skills_fts USING fts5(
@@ -2702,6 +2708,27 @@ impl SqliteStore {
         Ok(())
     }
 
+    pub fn update_episodic_memory_embedding_with_model(
+        &self,
+        id: &Uuid,
+        embedding: &[f32],
+        model: Option<&str>,
+        version: Option<&str>,
+    ) -> Result<(), StrataError> {
+        let conn = self
+            .conn
+            .lock()
+            .map_err(|_| StrataError::Database("Lock poisoned on SQLite connection".to_string()))?;
+
+        conn.execute(
+            "UPDATE episodic_memories SET embedding = ?1, embedding_model = ?2, embedding_version = ?3 WHERE id = ?4",
+            params![embedding_to_bytes(embedding), model, version, id.to_string()],
+        )
+        .map_err(|e| StrataError::Database(format!("Failed to update episodic memory embedding: {e}")))?;
+
+        Ok(())
+    }
+
     pub fn get_episodic_memory(&self, id: &Uuid) -> Result<Option<EpisodicMemory>, StrataError> {
         let conn = self
             .conn
@@ -3264,6 +3291,56 @@ impl SqliteStore {
                 let blob_opt: Option<Vec<u8>> = row.get(18)?;
                 let emb = blob_opt.and_then(|b| bytes_to_embedding(&b).ok());
                 Ok((fact, emb))
+            })
+            .map_err(|e| StrataError::Database(e.to_string()))?;
+
+        let mut results = Vec::new();
+        for r in rows {
+            results.push(r.map_err(|e| StrataError::Database(e.to_string()))?);
+        }
+        Ok(results)
+    }
+
+    pub fn get_semantic_facts_with_embeddings_and_models(
+        &self,
+        project: Option<&str>,
+        status: Option<FactStatus>,
+    ) -> Result<Vec<(SemanticFact, Option<Vec<f32>>, Option<String>)>, StrataError> {
+        let conn = self
+            .conn
+            .lock()
+            .map_err(|_| StrataError::Database("Lock poisoned on SQLite connection".to_string()))?;
+
+        let mut sql = "SELECT id, project, scope, statement, category, evidence_json,
+                              importance, confidence, tier, approved_by_human, created_at, last_updated_at, status,
+                              version, replaced_by, tags_json, code_anchor_json, depends_on_json, embedding, embedding_model
+                       FROM semantic_facts WHERE 1=1".to_string();
+
+        let mut params_vec: Vec<Box<dyn rusqlite::ToSql>> = Vec::new();
+
+        if let Some(p) = project {
+            sql.push_str(" AND (project = ? OR project IS NULL)");
+            params_vec.push(Box::new(p.to_string()));
+        }
+
+        if let Some(st) = status {
+            sql.push_str(" AND status = ?");
+            params_vec.push(Box::new(st.to_string()));
+        }
+
+        let mut stmt = conn
+            .prepare(&sql)
+            .map_err(|e| StrataError::Database(e.to_string()))?;
+        let params_slice: Vec<&dyn rusqlite::ToSql> =
+            params_vec.iter().map(|b| b.as_ref()).collect();
+
+        let rows = stmt
+            .query_map(params_slice.as_slice(), |row| {
+                let fact = Self::row_to_fact(row)?;
+                let blob_opt: Option<Vec<u8>> = row.get(18)?;
+                let emb = blob_opt.and_then(|b| bytes_to_embedding(&b).ok());
+                let model: Option<String> = row.get(19).ok();
+                Ok((fact, emb, model))
             })
             .map_err(|e| StrataError::Database(e.to_string()))?;
 
@@ -8944,18 +9021,22 @@ impl SqliteStore {
                 .collect();
             let vectors = embedder.embed_batch(&texts).await?;
             {
-                let conn = self
+                let mut conn = self
                     .conn
                     .lock()
                     .map_err(|_| StrataError::Database("Lock poisoned on SQLite connection".to_string()))?;
+                let tx = conn
+                    .transaction_with_behavior(rusqlite::TransactionBehavior::Immediate)
+                    .map_err(|e| StrataError::Database(e.to_string()))?;
                 for ((id_str, _, _), vec) in chunk.iter().zip(vectors.into_iter()) {
                     let blob = crate::embedding::embedding_to_bytes(&vec);
-                    let _ = conn.execute(
+                    let rows_affected = tx.execute(
                         "UPDATE memories SET embedding = ?1, embedding_model = ?2, embedding_version = ?3, updated_at = ?4 WHERE id = ?5",
                         params![blob, target_model, target_version, Utc::now().to_rfc3339(), id_str],
-                    );
-                    report.memories_reindexed += 1;
+                    ).map_err(|e| StrataError::Database(e.to_string()))?;
+                    report.memories_reindexed += rows_affected;
                 }
+                tx.commit().map_err(|e| StrataError::Database(e.to_string()))?;
             }
         }
 
@@ -8990,18 +9071,22 @@ impl SqliteStore {
             let texts: Vec<String> = chunk.iter().map(|(_, stmt)| stmt.clone()).collect();
             let vectors = embedder.embed_batch(&texts).await?;
             {
-                let conn = self
+                let mut conn = self
                     .conn
                     .lock()
                     .map_err(|_| StrataError::Database("Lock poisoned on SQLite connection".to_string()))?;
+                let tx = conn
+                    .transaction_with_behavior(rusqlite::TransactionBehavior::Immediate)
+                    .map_err(|e| StrataError::Database(e.to_string()))?;
                 for ((id_str, _), vec) in chunk.iter().zip(vectors.into_iter()) {
                     let blob = crate::embedding::embedding_to_bytes(&vec);
-                    let _ = conn.execute(
+                    let rows_affected = tx.execute(
                         "UPDATE semantic_facts SET embedding = ?1, embedding_model = ?2, embedding_version = ?3, last_updated_at = ?4 WHERE id = ?5",
                         params![blob, target_model, target_version, Utc::now().to_rfc3339(), id_str],
-                    );
-                    report.facts_reindexed += 1;
+                    ).map_err(|e| StrataError::Database(e.to_string()))?;
+                    report.facts_reindexed += rows_affected;
                 }
+                tx.commit().map_err(|e| StrataError::Database(e.to_string()))?;
             }
         }
 
@@ -9036,18 +9121,72 @@ impl SqliteStore {
             let texts: Vec<String> = chunk.iter().map(|(_, name, desc)| format!("{name}: {desc}")).collect();
             let vectors = embedder.embed_batch(&texts).await?;
             {
-                let conn = self
+                let mut conn = self
                     .conn
                     .lock()
                     .map_err(|_| StrataError::Database("Lock poisoned on SQLite connection".to_string()))?;
+                let tx = conn
+                    .transaction_with_behavior(rusqlite::TransactionBehavior::Immediate)
+                    .map_err(|e| StrataError::Database(e.to_string()))?;
                 for ((id_str, _, _), vec) in chunk.iter().zip(vectors.into_iter()) {
                     let blob = crate::embedding::embedding_to_bytes(&vec);
-                    let _ = conn.execute(
+                    let rows_affected = tx.execute(
                         "UPDATE procedural_skills SET embedding = ?1, embedding_model = ?2, embedding_version = ?3 WHERE id = ?4",
                         params![blob, target_model, target_version, id_str],
-                    );
-                    report.skills_reindexed += 1;
+                    ).map_err(|e| StrataError::Database(e.to_string()))?;
+                    report.skills_reindexed += rows_affected;
                 }
+                tx.commit().map_err(|e| StrataError::Database(e.to_string()))?;
+            }
+        }
+
+        // 4. Reindex episodic_memories
+        let candidate_episodes = {
+            let conn = self
+                .conn
+                .lock()
+                .map_err(|_| StrataError::Database("Lock poisoned on SQLite connection".to_string()))?;
+            let mut sql = "SELECT id, summary FROM episodic_memories WHERE 1=1".to_string();
+            if !force_all {
+                sql.push_str(" AND (embedding IS NULL OR embedding_model IS NULL OR embedding_model != ?1)");
+            }
+            let mut stmt = conn
+                .prepare(&sql)
+                .map_err(|e| StrataError::Database(e.to_string()))?;
+            let rows: Vec<(String, String)> = if force_all {
+                stmt.query_map([], |r| Ok((r.get::<_, String>(0)?, r.get::<_, String>(1)?)))
+                    .map_err(|e| StrataError::Database(e.to_string()))?
+                    .collect::<Result<Vec<_>, _>>()
+                    .map_err(|e| StrataError::Database(e.to_string()))?
+            } else {
+                stmt.query_map(params![target_model], |r| Ok((r.get::<_, String>(0)?, r.get::<_, String>(1)?)))
+                    .map_err(|e| StrataError::Database(e.to_string()))?
+                    .collect::<Result<Vec<_>, _>>()
+                    .map_err(|e| StrataError::Database(e.to_string()))?
+            };
+            rows
+        };
+
+        for chunk in candidate_episodes.chunks(bsize) {
+            let texts: Vec<String> = chunk.iter().map(|(_, summary)| summary.clone()).collect();
+            let vectors = embedder.embed_batch(&texts).await?;
+            {
+                let mut conn = self
+                    .conn
+                    .lock()
+                    .map_err(|_| StrataError::Database("Lock poisoned on SQLite connection".to_string()))?;
+                let tx = conn
+                    .transaction_with_behavior(rusqlite::TransactionBehavior::Immediate)
+                    .map_err(|e| StrataError::Database(e.to_string()))?;
+                for ((id_str, _), vec) in chunk.iter().zip(vectors.into_iter()) {
+                    let blob = crate::embedding::embedding_to_bytes(&vec);
+                    let rows_affected = tx.execute(
+                        "UPDATE episodic_memories SET embedding = ?1, embedding_model = ?2, embedding_version = ?3 WHERE id = ?4",
+                        params![blob, target_model, target_version, id_str],
+                    ).map_err(|e| StrataError::Database(e.to_string()))?;
+                    report.episodes_reindexed += rows_affected;
+                }
+                tx.commit().map_err(|e| StrataError::Database(e.to_string()))?;
             }
         }
 
