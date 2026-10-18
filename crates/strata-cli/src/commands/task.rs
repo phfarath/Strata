@@ -5,7 +5,7 @@ use std::path::PathBuf;
 use uuid::Uuid;
 
 use strata_core::a2a::IpcEvent;
-use strata_core::blackboard::{TaskArtifact, TaskFilter, TaskRecord, TaskStatus};
+use strata_core::blackboard::{TaskArtifact, TaskFilter, TaskPayload, TaskRecord, TaskStatus};
 use strata_memory::{endpoint_for_workspace, IpcClient, StigmergyCoordinator};
 
 use crate::agent_env::{is_json_mode, resolve_agent_id, resolve_task_id};
@@ -50,6 +50,15 @@ pub enum TaskAction {
         #[arg(long, help = "Detailed task description")]
         description: Option<String>,
 
+        #[arg(long, help = "Shell command to execute for this task")]
+        cmd: Option<String>,
+
+        #[arg(long, help = "Agent prompt for this task")]
+        prompt: Option<String>,
+
+        #[arg(long, help = "Explicit task payload type (shell_command, agent_prompt, manual_verification, descriptive)")]
+        r#type: Option<String>,
+
         #[arg(long, help = "Comma-separated list of prerequisite task IDs")]
         dependencies: Option<String>,
 
@@ -73,6 +82,9 @@ pub enum TaskAction {
 
         #[arg(long, default_value_t = 180, help = "Lease TTL in seconds for locked resources (default: 180s)")]
         ttl: i64,
+
+        #[arg(long, help = "Comma-separated list of supported task payload types (e.g. 'shell_command')")]
+        types: Option<String>,
 
         #[arg(long, help = "Output as raw JSON")]
         json: bool,
@@ -229,6 +241,9 @@ pub async fn run_task(args: TaskArgs, coordinator: StigmergyCoordinator) -> Resu
             id,
             plan,
             description,
+            cmd,
+            prompt,
+            r#type,
             dependencies,
             resources,
             json,
@@ -258,8 +273,49 @@ pub async fn run_task(args: TaskArgs, coordinator: StigmergyCoordinator) -> Resu
             if let Some(p) = plan {
                 task = task.with_plan_id(p);
             }
-            if let Some(desc) = description {
+            if let Some(desc) = &description {
                 task = task.with_description(desc);
+            }
+
+            let payload = if let Some(command) = cmd {
+                Some(TaskPayload::ShellCommand {
+                    command,
+                    cwd: None,
+                    timeout_secs: None,
+                })
+            } else if let Some(p) = prompt {
+                Some(TaskPayload::AgentPrompt {
+                    prompt: p,
+                    context_files: vec![],
+                    expected_artifacts: vec![],
+                })
+            } else if let Some(t) = r#type.as_deref() {
+                match t.to_lowercase().as_str() {
+                    "shell_command" => Some(TaskPayload::ShellCommand {
+                        command: description.clone().unwrap_or_default(),
+                        cwd: None,
+                        timeout_secs: None,
+                    }),
+                    "agent_prompt" => Some(TaskPayload::AgentPrompt {
+                        prompt: description.clone().unwrap_or_default(),
+                        context_files: vec![],
+                        expected_artifacts: vec![],
+                    }),
+                    "manual_verification" => Some(TaskPayload::ManualVerification {
+                        instructions: description.clone().unwrap_or_default(),
+                        checklist: vec![],
+                    }),
+                    "descriptive" => Some(TaskPayload::Descriptive {
+                        details: description.clone(),
+                    }),
+                    other => bail!("Unknown task type: '{other}'. Expected one of: shell_command, agent_prompt, manual_verification, descriptive"),
+                }
+            } else {
+                None
+            };
+
+            if let Some(pay) = payload {
+                task = task.with_payload(pay);
             }
 
             coordinator.create_task(&task)?;
@@ -276,6 +332,7 @@ pub async fn run_task(args: TaskArgs, coordinator: StigmergyCoordinator) -> Resu
             next,
             agent,
             ttl,
+            types,
             json,
         } => {
             let json_mode = is_json_mode(json);
@@ -286,7 +343,16 @@ pub async fn run_task(args: TaskArgs, coordinator: StigmergyCoordinator) -> Resu
                 resolve_task_id(task.as_deref())
             };
 
-            let claimed_opt = coordinator.claim_task_atomic(target_task_id.as_deref(), &agent_id, ttl)?;
+            let supported_types: Option<Vec<&str>> = types.as_ref().map(|s| {
+                s.split(',').map(|t| t.trim()).filter(|t| !t.is_empty()).collect()
+            });
+
+            let claimed_opt = coordinator.claim_task_atomic_typed(
+                target_task_id.as_deref(),
+                &agent_id,
+                ttl,
+                supported_types.as_deref(),
+            )?;
 
             match claimed_opt {
                 Some(claimed) => {

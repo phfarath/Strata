@@ -115,6 +115,16 @@ impl StigmergyCoordinator {
         self.store.claim_task_atomic(task_id_opt, agent_id, lease_ttl_secs)
     }
 
+    pub fn claim_task_atomic_typed(
+        &self,
+        task_id_opt: Option<&str>,
+        agent_id: &str,
+        lease_ttl_secs: i64,
+        supported_types: Option<&[&str]>,
+    ) -> Result<Option<TaskRecord>, StrataError> {
+        self.store.claim_task_atomic_typed(task_id_opt, agent_id, lease_ttl_secs, supported_types)
+    }
+
     pub fn complete_task(
         &self,
         task_id: &str,
@@ -722,6 +732,75 @@ mod tests {
 
         // All leases were cleaned up
         assert!(coordinator.get_lease("src/database.rs").unwrap().is_none());
+    }
+
+    #[test]
+    fn test_claim_task_atomic_typed_filtering() {
+        use strata_core::blackboard::TaskPayload;
+
+        let store = Arc::new(SqliteStore::open_in_memory().expect("in-memory db"));
+        let coordinator = StigmergyCoordinator::new(store);
+
+        // Task 1: purely descriptive task
+        let task_desc = TaskRecord::new("task-desc", "Design architecture doc")
+            .with_description("Please analyze the modular monolith");
+        coordinator.create_task(&task_desc).unwrap();
+
+        // Task 2: prompt task for LLM agent
+        let task_prompt = TaskRecord::new("task-prompt", "Refactor auth module")
+            .with_payload(TaskPayload::AgentPrompt {
+                prompt: "Refactor auth tokens to use asymmetric keys".to_string(),
+                context_files: vec!["crates/strata-core/src/auth.rs".to_string()],
+                expected_artifacts: vec![],
+            });
+        coordinator.create_task(&task_prompt).unwrap();
+
+        // Task 3: shell command task for worker daemon
+        let task_cmd = TaskRecord::new("task-cmd", "Run test suite")
+            .with_payload(TaskPayload::ShellCommand {
+                command: "cargo test -p strata-core".to_string(),
+                cwd: None,
+                timeout_secs: Some(60),
+            });
+        coordinator.create_task(&task_cmd).unwrap();
+
+        // Verify payload persistence and retrieval
+        let fetched_prompt = coordinator.get_task("task-prompt").unwrap().expect("found prompt task");
+        assert_eq!(fetched_prompt.payload_type(), "agent_prompt");
+        assert!(!fetched_prompt.is_executable_by_worker());
+
+        let fetched_cmd = coordinator.get_task("task-cmd").unwrap().expect("found cmd task");
+        assert_eq!(fetched_cmd.payload_type(), "shell_command");
+        assert!(fetched_cmd.is_executable_by_worker());
+
+        // 1. Worker daemon claims next task filtering by ["shell_command"]
+        // Should skip task-desc and task-prompt, claiming task-cmd!
+        let worker_claim = coordinator
+            .claim_task_atomic_typed(None, "daemon-worker", 60, Some(&["shell_command"]))
+            .unwrap()
+            .expect("worker claimed shell_command task");
+        assert_eq!(worker_claim.task_id, "task-cmd");
+
+        // 2. Next claim with ["shell_command"] returns None because no more shell tasks exist
+        let worker_claim_none = coordinator
+            .claim_task_atomic_typed(None, "daemon-worker", 60, Some(&["shell_command"]))
+            .unwrap();
+        assert!(worker_claim_none.is_none());
+
+        // 3. LLM agent claims with ["agent_prompt"]
+        // Should claim task-prompt!
+        let agent_claim = coordinator
+            .claim_task_atomic_typed(None, "claude-agent", 60, Some(&["agent_prompt"]))
+            .unwrap()
+            .expect("agent claimed agent_prompt task");
+        assert_eq!(agent_claim.task_id, "task-prompt");
+
+        // 4. Untyped claim (None) claims the remaining descriptive task
+        let untyped_claim = coordinator
+            .claim_task_atomic(None, "human-reviewer", 60)
+            .unwrap()
+            .expect("untyped claim grabs remaining task");
+        assert_eq!(untyped_claim.task_id, "task-desc");
     }
 }
 

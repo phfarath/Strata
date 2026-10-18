@@ -9,7 +9,7 @@ use tracing::{info, warn};
 use uuid::Uuid;
 
 use strata_core::a2a::AgentPresence;
-use strata_core::blackboard::{TaskArtifact, TaskFilter, TaskStatus};
+use strata_core::blackboard::{TaskArtifact, TaskFilter, TaskPayload, TaskStatus};
 use strata_memory::StigmergyCoordinator;
 
 use crate::agent_env::{resolve_agent_host, resolve_agent_id};
@@ -59,6 +59,14 @@ pub struct WorkerArgs {
     /// Execute command dry-run (simulation mode without running subprocesses)
     #[arg(long, help = "Simulate task execution without running shell subprocesses")]
     pub dry_run: bool,
+
+    /// Comma-separated list of supported task payload types to claim (defaults to "shell_command")
+    #[arg(
+        long,
+        default_value = "shell_command",
+        help = "Comma-separated list of supported task payload types to claim"
+    )]
+    pub supported_types: String,
 
     /// Output raw JSON events/logs
     #[arg(long, help = "Output as raw JSON")]
@@ -146,8 +154,19 @@ pub async fn run_worker(args: WorkerArgs, coordinator: StigmergyCoordinator) -> 
             }
         }
 
-        // 2. Atomic Work-Stealing: Claim next ready task
-        let claimed_task = match coordinator.claim_task_atomic(None, &agent_id, args.lease_ttl) {
+        // 2. Atomic Work-Stealing: Claim next ready task matching supported types
+        let supported_type_slices: Vec<&str> = args
+            .supported_types
+            .split(',')
+            .map(|s| s.trim())
+            .filter(|s| !s.is_empty())
+            .collect();
+        let claimed_task = match coordinator.claim_task_atomic_typed(
+            None,
+            &agent_id,
+            args.lease_ttl,
+            Some(&supported_type_slices),
+        ) {
             Ok(opt) => opt,
             Err(e) => {
                 warn!("Worker encountered error while claiming task: {e}");
@@ -244,6 +263,30 @@ pub async fn run_worker(args: WorkerArgs, coordinator: StigmergyCoordinator) -> 
 
                 match exec_result {
                     Ok(artifact_content) => {
+                        if artifact_content.trim().is_empty() {
+                            stats.tasks_failed += 1;
+                            let err_msg = "Task execution rejected: produced empty output/artifact";
+                            let _ = coordinator.fail_task_with_generation(
+                                &task_id,
+                                &agent_id,
+                                err_msg,
+                                Some(task.claim_generation),
+                            );
+                            if !args.json {
+                                println!("❌ Failed task [{}]: {}", task_id, err_msg);
+                            } else {
+                                println!(
+                                    "{}",
+                                    serde_json::json!({
+                                        "event": "task_failed",
+                                        "task_id": task_id,
+                                        "error": err_msg
+                                    })
+                                );
+                            }
+                            continue;
+                        }
+
                         stats.tasks_succeeded += 1;
                         let artifact = TaskArtifact::new(
                             format!("art-{}", Uuid::new_v4()),
@@ -382,60 +425,218 @@ pub async fn run_worker(args: WorkerArgs, coordinator: StigmergyCoordinator) -> 
 }
 
 /// Executes the payload associated with a task.
-/// Supports deterministic commands embedded in description (e.g. "cmd: <command>" or "run: <command>"),
-/// or marks normal completion with structured artifacts.
+/// Strictly executes supported payloads (e.g. ShellCommand), and returns an error with
+/// 'incompatible_runner' for descriptive or unexecutable tasks to prevent false-positive completions.
 async fn execute_task_payload(task: &strata_core::blackboard::TaskRecord, dry_run: bool) -> Result<String> {
     if dry_run {
         sleep(Duration::from_millis(50)).await;
         return Ok(format!("Simulated dry-run execution of task '{}'", task.title));
     }
 
-    let cmd_opt = task
-        .description
-        .as_deref()
-        .and_then(|desc| {
-            for line in desc.lines() {
-                let trimmed = line.trim();
-                if let Some(cmd) = trimmed.strip_prefix("cmd:") {
-                    return Some(cmd.trim().to_string());
+    let payload = task.resolve_payload();
+    match payload {
+        TaskPayload::ShellCommand {
+            command,
+            cwd,
+            timeout_secs,
+        } => {
+            info!("Worker executing shell command: {command}");
+            let timeout_duration = Duration::from_secs(timeout_secs.unwrap_or(300).max(1));
+
+            let fut = async {
+                #[cfg(target_os = "windows")]
+                let mut cmd = tokio::process::Command::new("powershell");
+                #[cfg(target_os = "windows")]
+                cmd.args(["-NoProfile", "-Command", &command]);
+
+                #[cfg(not(target_os = "windows"))]
+                let mut cmd = tokio::process::Command::new("sh");
+                #[cfg(not(target_os = "windows"))]
+                cmd.args(["-c", &command]);
+
+                if let Some(dir) = &cwd {
+                    cmd.current_dir(dir);
                 }
-                if let Some(cmd) = trimmed.strip_prefix("run:") {
-                    return Some(cmd.trim().to_string());
-                }
-                if let Some(cmd) = trimmed.strip_prefix("$ ") {
-                    return Some(cmd.trim().to_string());
-                }
+                cmd.kill_on_drop(true);
+                cmd.output().await
+            };
+
+            let output = tokio::time::timeout(timeout_duration, fut)
+                .await
+                .map_err(|_| anyhow::anyhow!("Command timed out after {}s: {command}", timeout_duration.as_secs()))??;
+
+            if !output.status.success() {
+                let stderr = String::from_utf8_lossy(&output.stderr);
+                let stdout = String::from_utf8_lossy(&output.stdout);
+                let code = output.status.code().unwrap_or(-1);
+                anyhow::bail!("Command '{command}' exited with code {code}:\nstderr: {stderr}\nstdout: {stdout}");
             }
-            None
-        });
 
-    if let Some(command_str) = cmd_opt {
-        info!("Worker executing shell command: {command_str}");
-        #[cfg(target_os = "windows")]
-        let output = tokio::process::Command::new("powershell")
-            .kill_on_drop(true)
-            .args(["-NoProfile", "-Command", &command_str])
-            .output()
-            .await?;
-
-        #[cfg(not(target_os = "windows"))]
-        let output = tokio::process::Command::new("sh")
-            .kill_on_drop(true)
-            .args(["-c", &command_str])
-            .output()
-            .await?;
-
-        if !output.status.success() {
+            let stdout = String::from_utf8_lossy(&output.stdout);
             let stderr = String::from_utf8_lossy(&output.stderr);
-            let code = output.status.code().unwrap_or(-1);
-            anyhow::bail!("Command '{command_str}' exited with code {code}: {stderr}");
-        }
+            let result_str = if stderr.is_empty() {
+                stdout.to_string()
+            } else {
+                format!("{stdout}\n[stderr]: {stderr}")
+            };
 
-        let stdout = String::from_utf8_lossy(&output.stdout);
-        Ok(format!("Command '{command_str}' succeeded:\n{stdout}"))
-    } else {
-        // Default deterministic execution: success
-        sleep(Duration::from_millis(20)).await;
-        Ok(format!("Executed task '{}' [ID: {}]", task.title, task.task_id))
+            if result_str.trim().is_empty() {
+                Ok(format!("Command '{command}' executed successfully with exit status 0 (no output)"))
+            } else {
+                Ok(format!("Command '{command}' succeeded:\n{result_str}"))
+            }
+        }
+        TaskPayload::AgentPrompt { .. } => {
+            anyhow::bail!("incompatible_runner: task requires LLM agent runner (payload: AgentPrompt)")
+        }
+        TaskPayload::ManualVerification { .. } => {
+            anyhow::bail!("incompatible_runner: task requires manual verification (payload: ManualVerification)")
+        }
+        TaskPayload::Descriptive { .. } => {
+            anyhow::bail!("incompatible_runner: task is purely descriptive without an executable shell command")
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use strata_core::blackboard::{TaskRecord, TaskStatus};
+    use strata_memory::SqliteStore;
+
+    #[tokio::test]
+    async fn test_execute_task_payload_rejects_descriptive_task() {
+        // Purely descriptive task without shell command prefix
+        let task = TaskRecord::new("t-desc", "Write architecture RFC")
+            .with_description("This task has no executable shell command.");
+        let result = execute_task_payload(&task, false).await;
+        assert!(result.is_err());
+        let err_str = result.unwrap_err().to_string();
+        assert!(
+            err_str.contains("incompatible_runner") && err_str.contains("purely descriptive"),
+            "Error was: {err_str}"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_execute_task_payload_rejects_agent_prompt() {
+        let task = TaskRecord::new("t-prompt", "Implement OAuth2")
+            .with_payload(TaskPayload::AgentPrompt {
+                prompt: "Please write auth provider for GitHub OAuth2".to_string(),
+                context_files: vec![],
+                expected_artifacts: vec![],
+            });
+        let result = execute_task_payload(&task, false).await;
+        assert!(result.is_err());
+        let err_str = result.unwrap_err().to_string();
+        assert!(
+            err_str.contains("incompatible_runner") && err_str.contains("AgentPrompt"),
+            "Error was: {err_str}"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_execute_task_payload_rejects_manual_verification() {
+        let task = TaskRecord::new("t-manual", "Review deployment")
+            .with_payload(TaskPayload::ManualVerification {
+                instructions: "Verify staging site is up".to_string(),
+                checklist: vec!["Site loads".to_string()],
+            });
+        let result = execute_task_payload(&task, false).await;
+        assert!(result.is_err());
+        let err_str = result.unwrap_err().to_string();
+        assert!(
+            err_str.contains("incompatible_runner") && err_str.contains("ManualVerification"),
+            "Error was: {err_str}"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_execute_task_payload_runs_shell_command_success() {
+        #[cfg(target_os = "windows")]
+        let cmd = "Write-Output 'worker-ok-123'";
+        #[cfg(not(target_os = "windows"))]
+        let cmd = "echo 'worker-ok-123'";
+
+        let task = TaskRecord::new("t-cmd", "Echo test")
+            .with_payload(TaskPayload::ShellCommand {
+                command: cmd.to_string(),
+                cwd: None,
+                timeout_secs: Some(30),
+            });
+        let result = execute_task_payload(&task, false).await;
+        assert!(result.is_ok());
+        let out = result.unwrap();
+        assert!(out.contains("worker-ok-123"), "Output was: {out}");
+    }
+
+    #[tokio::test]
+    async fn test_execute_task_payload_captures_shell_failure() {
+        #[cfg(target_os = "windows")]
+        let cmd = "powershell -Command exit 42";
+        #[cfg(not(target_os = "windows"))]
+        let cmd = "sh -c 'exit 42'";
+
+        let task = TaskRecord::new("t-fail", "Failing command")
+            .with_payload(TaskPayload::ShellCommand {
+                command: cmd.to_string(),
+                cwd: None,
+                timeout_secs: Some(30),
+            });
+        let result = execute_task_payload(&task, false).await;
+        assert!(result.is_err());
+    }
+
+    #[tokio::test]
+    async fn test_worker_skips_descriptive_and_executes_shell_command() {
+        let store = Arc::new(SqliteStore::open_in_memory().expect("in-memory db"));
+        let coordinator = StigmergyCoordinator::new(store);
+
+        // 1. Create a descriptive task
+        let desc_task = TaskRecord::new("task-doc", "Draft design document")
+            .with_description("Descriptive notes only, not a command");
+        coordinator.create_task(&desc_task).unwrap();
+
+        // 2. Create a shell command task
+        #[cfg(target_os = "windows")]
+        let cmd = "Write-Output 'task-executed-successfully'";
+        #[cfg(not(target_os = "windows"))]
+        let cmd = "echo 'task-executed-successfully'";
+
+        let shell_task = TaskRecord::new("task-sh", "Execute unit test")
+            .with_payload(TaskPayload::ShellCommand {
+                command: cmd.to_string(),
+                cwd: None,
+                timeout_secs: Some(30),
+            });
+        coordinator.create_task(&shell_task).unwrap();
+
+        let args = WorkerArgs {
+            agent: Some("worker-test-agent".to_string()),
+            host: Some("test-host".to_string()),
+            plan: None,
+            poll_interval: 1,
+            heartbeat_interval: 1,
+            lease_ttl: 60,
+            stale_timeout: 300,
+            auto_reclaim: false,
+            max_tasks: Some(1),
+            exit_when_idle: true,
+            dry_run: false,
+            supported_types: "shell_command".to_string(),
+            json: true,
+        };
+
+        let stats = run_worker(args, coordinator.clone()).await.unwrap();
+        assert_eq!(stats.tasks_executed, 1);
+        assert_eq!(stats.tasks_succeeded, 1);
+
+        // The shell task must be completed!
+        let t_sh = coordinator.get_task("task-sh").unwrap().unwrap();
+        assert_eq!(t_sh.status, TaskStatus::Completed);
+
+        // The descriptive task must STILL be pending (never falsely completed!)
+        let t_doc = coordinator.get_task("task-doc").unwrap().unwrap();
+        assert_eq!(t_doc.status, TaskStatus::Pending);
     }
 }

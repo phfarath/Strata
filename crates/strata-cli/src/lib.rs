@@ -1020,6 +1020,7 @@ export function login(username: string): boolean {
                 next: true,
                 agent: Some("agent-claude".to_string()),
                 ttl: 60,
+                types: None,
                 json: true,
             },
         };
@@ -1104,6 +1105,7 @@ export function login(username: string): boolean {
                 next: true,
                 agent: Some("agent-cursor".to_string()),
                 ttl: 60,
+                types: None,
                 json: true,
             },
         };
@@ -1557,6 +1559,7 @@ export function login(username: string): boolean {
         let task1 = TaskRecord::new("w-task-1", "Compile core models")
             .with_description("cmd: echo \"Core compiled\"");
         let task2 = TaskRecord::new("w-task-2", "Package binary")
+            .with_description("cmd: echo \"Package built\"")
             .with_status(TaskStatus::Blocked)
             .with_dependencies(vec!["w-task-1".to_string()]);
         let task_failing = TaskRecord::new("w-task-fail", "Run broken oracle")
@@ -1584,6 +1587,7 @@ export function login(username: string): boolean {
             max_tasks: Some(1),
             exit_when_idle: true,
             dry_run: false,
+            supported_types: "shell_command".to_string(),
             json: true,
         };
 
@@ -1609,7 +1613,8 @@ export function login(username: string): boolean {
         assert_eq!(coordinator.get_task("w-task-fail").unwrap().unwrap().status, TaskStatus::Failed);
 
         // 3. Test orphan reclamation by worker
-        let mut orphan_task = TaskRecord::new("w-orphan", "Orphaned background task");
+        let mut orphan_task = TaskRecord::new("w-orphan", "Orphaned background task")
+            .with_description("cmd: echo \"Orphan executed\"");
         orphan_task.status = TaskStatus::Running;
         orphan_task.assigned_agent = Some("dead-worker".to_string());
         orphan_task.updated_at = chrono::Utc::now().timestamp() - 1000;
@@ -1627,6 +1632,7 @@ export function login(username: string): boolean {
             max_tasks: Some(1),
             exit_when_idle: true,
             dry_run: true,
+            supported_types: "shell_command".to_string(),
             json: true,
         };
 
@@ -1667,6 +1673,7 @@ export function login(username: string): boolean {
             max_tasks: Some(1),
             exit_when_idle: true,
             dry_run: false,
+            supported_types: "shell_command".to_string(),
             json: true,
         };
 
@@ -2044,6 +2051,7 @@ pub fn verify_token(token: &str) -> bool {
                 max_tasks: None,
                 exit_when_idle: true,
                 dry_run: true,
+                supported_types: "shell_command,descriptive".to_string(),
                 json: true,
             };
 

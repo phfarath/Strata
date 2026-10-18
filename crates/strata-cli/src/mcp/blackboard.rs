@@ -55,6 +55,7 @@ pub fn definitions() -> Vec<ToolDefinition> {
             &[
                 ("task_id", "string", "Specific task to claim; omit to claim the next ready task"),
                 ("ttl_seconds", "integer", "Resource lease TTL (default 180)"),
+                ("supported_types", "string", "Comma-separated list of supported payload types (e.g. 'shell_command', 'agent_prompt')"),
             ],
             &[],
         ),
@@ -211,8 +212,11 @@ async fn run(
 
         "task_claim" => {
             let ttl = args.get("ttl_seconds").and_then(Value::as_i64).unwrap_or(180);
+            let supported_types: Option<Vec<&str>> = opt(args, "supported_types").map(|s| {
+                s.split(',').map(|t| t.trim()).filter(|t| !t.is_empty()).collect()
+            });
             let Some(task) = coordinator
-                .claim_task_atomic(opt(args, "task_id"), &agent, ttl)
+                .claim_task_atomic_typed(opt(args, "task_id"), &agent, ttl, supported_types.as_deref())
                 .map_err(err)?
             else {
                 return Ok(json!({
