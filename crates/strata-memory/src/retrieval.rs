@@ -463,6 +463,8 @@ pub struct HybridRankerConfig {
     pub min_community_memories_for_isolation: usize,
     /// Whether explicit bridge dependencies are included when scoped to a community (default: true)
     pub include_cross_cluster_bridges: bool,
+    /// Continuous recency / retention weighting in hybrid ranking (default: 0.15)
+    pub recency_weight: f32,
     /// Active file & cursor proximity biasing configuration
     pub proximity_config: ProximityBiasConfig,
 }
@@ -474,6 +476,7 @@ impl Default for HybridRankerConfig {
             bm25_weight: 0.4,
             vector_weight: 0.4,
             graph_weight: 0.35,
+            recency_weight: 0.15,
             min_similarity: 0.0,
             enable_spreading_activation: true,
             activation_config: SpreadingActivationConfig::default(),
@@ -635,32 +638,37 @@ impl HybridRanker {
         let mut vector_results: Vec<(MemoryRecord, f32)> = Vec::new();
         if let Some(embedder) = embedding_provider {
             if let Ok(query_embedding) = embedder.embed_text(query).await {
-                // Fetch candidates in scope to score against
-                let all_candidates = store.get_all_memories_as_of(
+                // Stream all eligible candidates with embeddings across the scope without premature chronological limit
+                store.for_each_vector_candidate_as_of(
                     effective_scope,
                     memory_types,
                     as_of_time,
                     as_of_commit,
                     as_of_branch,
-                    candidate_limit * 2,
-                )?;
-                for memory in all_candidates {
-                    if !is_embedding_compatible_with_query(
-                        embedder.model_name(),
-                        memory.embedding_model.as_deref(),
-                    ) {
-                        continue;
-                    }
-                    if let Some(ref mem_emb) = memory.embedding {
-                        let sim = cosine_similarity(&query_embedding, mem_emb);
-                        if sim >= self.config.min_similarity {
-                            vector_results.push((memory, sim));
+                    |memory| {
+                        if !is_embedding_compatible_with_query(
+                            embedder.model_name(),
+                            memory.embedding_model.as_deref(),
+                        ) {
+                            return Ok(true);
                         }
-                    }
-                }
+                        if let Some(ref mem_emb) = memory.embedding {
+                            let sim = cosine_similarity(&query_embedding, mem_emb);
+                            if sim >= self.config.min_similarity {
+                                vector_results.push((memory, sim));
+                            }
+                        }
+                        Ok(true)
+                    },
+                )?;
                 // Sort vector results by similarity descending
                 vector_results
                     .sort_by(|a, b| b.1.partial_cmp(&a.1).unwrap_or(std::cmp::Ordering::Equal));
+                // Retain top vector candidates for multi-modal ranking fusion
+                let max_vector_candidates = (candidate_limit * 5).max(100);
+                if vector_results.len() > max_vector_candidates {
+                    vector_results.truncate(max_vector_candidates);
+                }
             }
         }
 
@@ -783,13 +791,14 @@ impl HybridRanker {
             }
         }
 
-        // 4. Compute Tri-Modal Reciprocal Rank Fusion (RRF) with optional active file proximity bias
-        let fused = self.fuse_tri_ranks_with_proximity(
+        // 4. Compute Tri-Modal Reciprocal Rank Fusion (RRF) with optional active file proximity bias and continuous recency weighting
+        let fused = self.fuse_tri_ranks_with_temporal(
             &fts_results,
             &vector_results,
             &graph_results,
             proximity_engine.as_ref(),
             active_files,
+            as_of_time,
             limit,
         );
         Ok(fused)
@@ -825,6 +834,29 @@ impl HybridRanker {
         graph_ranked: &[(MemoryRecord, f32)],
         proximity_engine: Option<&ProximityBiasEngine>,
         active_files: &[String],
+        limit: usize,
+    ) -> Vec<MemoryRecord> {
+        self.fuse_tri_ranks_with_temporal(
+            fts_ranked,
+            vector_ranked,
+            graph_ranked,
+            proximity_engine,
+            active_files,
+            None,
+            limit,
+        )
+    }
+
+    /// Fuse BM25, Vector, and Spreading Activation rankings using Tri-Modal RRF,
+    /// augmented by Active File & Cursor Proximity Biasing and Continuous Recency Weighting.
+    pub fn fuse_tri_ranks_with_temporal(
+        &self,
+        fts_ranked: &[(MemoryRecord, f32)],
+        vector_ranked: &[(MemoryRecord, f32)],
+        graph_ranked: &[(MemoryRecord, f32)],
+        proximity_engine: Option<&ProximityBiasEngine>,
+        active_files: &[String],
+        as_of_time: Option<DateTime<Utc>>,
         limit: usize,
     ) -> Vec<MemoryRecord> {
         let mut score_map: HashMap<Uuid, f32> = HashMap::new();
@@ -896,6 +928,24 @@ impl HybridRanker {
                 let importance_factor = 0.8 + 0.4 * rec.importance;
                 let confidence_factor = 0.5 + 0.5 * rec.confidence;
                 *score *= importance_factor * confidence_factor;
+
+                // Continuous recency weighting via ACT-R / Ebbinghaus retention
+                if self.config.recency_weight > 0.0 {
+                    let decay_calc = crate::decay::DecayCalculator::with_default_config();
+                    let eval_time = as_of_time.unwrap_or_else(Utc::now);
+                    let access_times = rec.last_accessed_at.map(|t| vec![t]).unwrap_or_default();
+                    let metrics = decay_calc.evaluate_decay_with_tier(
+                        rec.tier,
+                        rec.importance,
+                        rec.confidence,
+                        rec.created_at,
+                        &access_times,
+                        eval_time,
+                    );
+                    let recency_factor = (1.0 - self.config.recency_weight)
+                        + self.config.recency_weight * metrics.retention;
+                    *score *= recency_factor;
+                }
 
                 if let (Some(prox), Some(ref hmap)) = (proximity_engine, &hop_map) {
                     let proximity_boost = prox.memory_proximity_boost_with_map(rec, hmap);
