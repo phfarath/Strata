@@ -19,7 +19,7 @@ use strata_core::schemas::{
 use strata_core::a2a::{
     A2aMessage, AgentCard, AgentPresence, DomainAuthority, LeaseAcquireResult, ResourceLease,
 };
-use strata_core::blackboard::{TaskArtifact, TaskFilter, TaskRecord, TaskStatus};
+use strata_core::blackboard::{TaskArtifact, TaskFilter, TaskPayload, TaskRecord, TaskStatus};
 use strata_core::state::{
     FailurePattern, FailureSeverity, MemoryRecord, MemoryTier, MemoryType, Scope,
 };
@@ -191,6 +191,7 @@ impl SqliteStore {
         let _ = conn.execute("CREATE INDEX IF NOT EXISTS idx_episodic_branch ON episodic_memories(git_branch)", []);
         let _ = conn.execute("CREATE INDEX IF NOT EXISTS idx_episodes_branch ON episodes(git_branch)", []);
         let _ = conn.execute("ALTER TABLE tasks ADD COLUMN claim_generation INTEGER NOT NULL DEFAULT 0", []);
+        let _ = conn.execute("ALTER TABLE tasks ADD COLUMN payload_json TEXT DEFAULT NULL", []);
         let _ = conn.execute("ALTER TABLE memories ADD COLUMN embedding_model TEXT DEFAULT NULL", []);
         let _ = conn.execute("ALTER TABLE memories ADD COLUMN embedding_version TEXT DEFAULT NULL", []);
         let _ = conn.execute("ALTER TABLE episodic_memories ADD COLUMN embedding_model TEXT DEFAULT NULL", []);
@@ -759,7 +760,8 @@ impl SqliteStore {
                 outputs_json TEXT,
                 created_at INTEGER NOT NULL,
                 updated_at INTEGER NOT NULL,
-                claim_generation INTEGER NOT NULL DEFAULT 0
+                claim_generation INTEGER NOT NULL DEFAULT 0,
+                payload_json TEXT
             );
 
             CREATE INDEX IF NOT EXISTS idx_tasks_plan ON tasks(plan_id);
@@ -6018,13 +6020,14 @@ impl SqliteStore {
         let req_res = serde_json::to_string(&task.required_resources).unwrap_or_else(|_| "[]".to_string());
         let deps = serde_json::to_string(&task.dependencies).unwrap_or_else(|_| "[]".to_string());
         let outputs = task.outputs.as_ref().map(|o| serde_json::to_string(o).unwrap_or_default());
+        let payload_json = task.payload.as_ref().map(|p| serde_json::to_string(p).unwrap_or_default());
 
         conn.execute(
             "INSERT INTO tasks (
                 task_id, plan_id, parent_id, title, description, status,
                 assigned_agent, required_resources_json, dependencies_json,
-                outputs_json, created_at, updated_at, claim_generation
-            ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13)
+                outputs_json, created_at, updated_at, claim_generation, payload_json
+            ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14)
             ON CONFLICT(task_id) DO UPDATE SET
                 plan_id = excluded.plan_id,
                 parent_id = excluded.parent_id,
@@ -6036,7 +6039,8 @@ impl SqliteStore {
                 dependencies_json = excluded.dependencies_json,
                 outputs_json = excluded.outputs_json,
                 updated_at = excluded.updated_at,
-                claim_generation = excluded.claim_generation",
+                claim_generation = excluded.claim_generation,
+                payload_json = excluded.payload_json",
             params![
                 task.task_id,
                 task.plan_id,
@@ -6051,6 +6055,7 @@ impl SqliteStore {
                 task.created_at,
                 task.updated_at,
                 task.claim_generation,
+                payload_json,
             ],
         )
         .map_err(|e| StrataError::Database(format!("Failed to create task: {e}")))?;
@@ -6073,13 +6078,14 @@ impl SqliteStore {
             let req_res = serde_json::to_string(&task.required_resources).unwrap_or_else(|_| "[]".to_string());
             let deps = serde_json::to_string(&task.dependencies).unwrap_or_else(|_| "[]".to_string());
             let outputs = task.outputs.as_ref().map(|o| serde_json::to_string(o).unwrap_or_default());
+            let payload_json = task.payload.as_ref().map(|p| serde_json::to_string(p).unwrap_or_default());
 
             tx.execute(
                 "INSERT INTO tasks (
                     task_id, plan_id, parent_id, title, description, status,
                     assigned_agent, required_resources_json, dependencies_json,
-                    outputs_json, created_at, updated_at, claim_generation
-                ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13)
+                    outputs_json, created_at, updated_at, claim_generation, payload_json
+                ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14)
                 ON CONFLICT(task_id) DO UPDATE SET
                     plan_id = excluded.plan_id,
                     parent_id = excluded.parent_id,
@@ -6091,7 +6097,8 @@ impl SqliteStore {
                     dependencies_json = excluded.dependencies_json,
                     outputs_json = excluded.outputs_json,
                     updated_at = excluded.updated_at,
-                    claim_generation = excluded.claim_generation",
+                    claim_generation = excluded.claim_generation,
+                    payload_json = excluded.payload_json",
                 params![
                     task.task_id,
                     task.plan_id,
@@ -6106,6 +6113,7 @@ impl SqliteStore {
                     task.created_at,
                     task.updated_at,
                     task.claim_generation,
+                    payload_json,
                 ],
             )
             .map_err(|e| StrataError::Database(format!("Failed to insert batch task: {e}")))?;
@@ -6128,7 +6136,7 @@ impl SqliteStore {
             .prepare(
                 "SELECT task_id, plan_id, parent_id, title, description, status,
                         assigned_agent, required_resources_json, dependencies_json,
-                        outputs_json, created_at, updated_at, claim_generation
+                        outputs_json, created_at, updated_at, claim_generation, payload_json
                  FROM tasks WHERE task_id = ?1",
             )
             .map_err(|e| StrataError::Database(e.to_string()))?;
@@ -6151,7 +6159,7 @@ impl SqliteStore {
         let mut sql = String::from(
             "SELECT task_id, plan_id, parent_id, title, description, status,
                     assigned_agent, required_resources_json, dependencies_json,
-                    outputs_json, created_at, updated_at, claim_generation
+                    outputs_json, created_at, updated_at, claim_generation, payload_json
              FROM tasks WHERE 1=1",
         );
 
@@ -6206,6 +6214,18 @@ impl SqliteStore {
         agent_id: &str,
         lease_ttl_secs: i64,
     ) -> Result<Option<TaskRecord>, StrataError> {
+        self.claim_task_atomic_typed(task_id_opt, agent_id, lease_ttl_secs, None)
+    }
+
+    /// Atomically claims a task (or finds the next unblocked task matching the optional
+    /// supported payload types) and acquires exclusive leases for all of its required resources.
+    pub fn claim_task_atomic_typed(
+        &self,
+        task_id_opt: Option<&str>,
+        agent_id: &str,
+        lease_ttl_secs: i64,
+        supported_types: Option<&[&str]>,
+    ) -> Result<Option<TaskRecord>, StrataError> {
         let mut conn = self
             .conn
             .lock()
@@ -6236,7 +6256,7 @@ impl SqliteStore {
                     .prepare(
                         "SELECT task_id, plan_id, parent_id, title, description, status,
                                 assigned_agent, required_resources_json, dependencies_json,
-                                outputs_json, created_at, updated_at, claim_generation
+                                outputs_json, created_at, updated_at, claim_generation, payload_json
                          FROM tasks WHERE task_id = ?1",
                     )
                     .map_err(|e| StrataError::Database(e.to_string()))?;
@@ -6263,7 +6283,7 @@ impl SqliteStore {
                     .prepare(
                         "SELECT task_id, plan_id, parent_id, title, description, status,
                                 assigned_agent, required_resources_json, dependencies_json,
-                                outputs_json, created_at, updated_at, claim_generation
+                                outputs_json, created_at, updated_at, claim_generation, payload_json
                          FROM tasks
                          WHERE status IN ('pending', 'blocked')
                          ORDER BY created_at ASC",
@@ -6277,6 +6297,14 @@ impl SqliteStore {
         };
 
         for candidate in candidate_tasks {
+            // Check 0: Does candidate match supported task types?
+            if let Some(types) = supported_types {
+                let ptype = candidate.payload_type();
+                if !types.iter().any(|&t| t.eq_ignore_ascii_case(ptype)) {
+                    continue;
+                }
+            }
+
             // Check 1: Are all prerequisite dependencies completed?
             if !candidate.dependencies.iter().all(|dep| completed_ids.contains(dep)) {
                 continue;
@@ -9253,11 +9281,13 @@ fn map_task_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<TaskRecord> {
     let created_at: i64 = row.get(10)?;
     let updated_at: i64 = row.get(11)?;
     let claim_generation: i64 = row.get(12).unwrap_or(0);
+    let payload_str: Option<String> = row.get(13).ok();
 
     let status = status_str.parse::<TaskStatus>().unwrap_or(TaskStatus::Pending);
     let required_resources: Vec<String> = serde_json::from_str(&req_res_str).unwrap_or_default();
     let dependencies: Vec<String> = serde_json::from_str(&deps_str).unwrap_or_default();
     let outputs: Option<serde_json::Value> = outputs_str.and_then(|s| serde_json::from_str(&s).ok());
+    let payload: Option<TaskPayload> = payload_str.and_then(|s| serde_json::from_str(&s).ok());
 
     Ok(TaskRecord {
         task_id,
@@ -9273,6 +9303,7 @@ fn map_task_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<TaskRecord> {
         created_at,
         updated_at,
         claim_generation,
+        payload,
     })
 }
 
