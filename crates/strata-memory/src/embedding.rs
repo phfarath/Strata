@@ -14,6 +14,18 @@ pub trait EmbeddingProvider: Send + Sync {
     }
 
     fn dimension(&self) -> usize;
+
+    fn provider_name(&self) -> &str {
+        "custom"
+    }
+
+    fn model_name(&self) -> &str {
+        "unknown"
+    }
+
+    fn model_version(&self) -> &str {
+        "1"
+    }
 }
 
 /// Compute cosine similarity between two vectors.
@@ -134,26 +146,75 @@ impl EmbeddingProvider for MockEmbeddingProvider {
     fn dimension(&self) -> usize {
         self.dimension
     }
+
+    fn provider_name(&self) -> &str {
+        "mock"
+    }
+
+    fn model_name(&self) -> &str {
+        "mock-hash"
+    }
+
+    fn model_version(&self) -> &str {
+        "1"
+    }
 }
 
 /// FastEmbed local embedding provider using ONNX models.
 pub struct FastEmbedProvider {
     model: std::sync::Arc<std::sync::Mutex<fastembed::TextEmbedding>>,
     dimension: usize,
+    model_name: String,
 }
 
 impl FastEmbedProvider {
     pub fn try_new() -> Result<Self, StrataError> {
+        Self::try_new_with_model(fastembed::EmbeddingModel::AllMiniLML6V2)
+    }
+
+    pub fn try_new_with_model(model: fastembed::EmbeddingModel) -> Result<Self, StrataError> {
+        let model_name = format!("fastembed:{:?}", model);
+        let dimension = match model {
+            fastembed::EmbeddingModel::BGEBaseENV15 => 768,
+            _ => 384,
+        };
         let mut options = fastembed::InitOptions::default();
-        options.model_name = fastembed::EmbeddingModel::AllMiniLML6V2;
+        options.model_name = model;
         options.show_download_progress = false;
-        let model = fastembed::TextEmbedding::try_new(options)
+        let model_inst = fastembed::TextEmbedding::try_new(options)
             .map_err(|e| StrataError::Embedding(format!("Failed to initialize FastEmbed: {e}")))?;
 
         Ok(Self {
-            model: std::sync::Arc::new(std::sync::Mutex::new(model)),
-            dimension: 384,
+            model: std::sync::Arc::new(std::sync::Mutex::new(model_inst)),
+            dimension,
+            model_name,
         })
+    }
+
+    pub fn try_new_with_model_str(model_str: Option<&str>) -> Result<Self, StrataError> {
+        match model_str.map(|s| s.trim()) {
+            None | Some("") => Self::try_new(),
+            Some(name) => {
+                let clean = name.strip_prefix("fastembed:").unwrap_or(name).to_lowercase();
+                let model = match clean.as_str() {
+                    "allminilml6v2" | "all-minilm-l6-v2" | "minilm" => {
+                        fastembed::EmbeddingModel::AllMiniLML6V2
+                    }
+                    "bgesmallenv15" | "bge-small-en-v1.5" | "bge-small" => {
+                        fastembed::EmbeddingModel::BGESmallENV15
+                    }
+                    "bgebaseenv15" | "bge-base-en-v1.5" | "bge-base" => {
+                        fastembed::EmbeddingModel::BGEBaseENV15
+                    }
+                    other => {
+                        return Err(StrataError::Validation(format!(
+                            "Unknown FastEmbed embedding model: '{other}'. Supported: 'AllMiniLML6V2', 'BGESmallENV15', 'BGEBaseENV15'"
+                        )));
+                    }
+                };
+                Self::try_new_with_model(model)
+            }
+        }
     }
 }
 
@@ -197,5 +258,214 @@ impl EmbeddingProvider for FastEmbedProvider {
 
     fn dimension(&self) -> usize {
         self.dimension
+    }
+
+    fn provider_name(&self) -> &str {
+        "fastembed"
+    }
+
+    fn model_name(&self) -> &str {
+        &self.model_name
+    }
+
+    fn model_version(&self) -> &str {
+        "1"
+    }
+}
+
+/// Supported embedding provider kinds.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum EmbeddingProviderKind {
+    Mock,
+    FastEmbed,
+}
+
+impl std::fmt::Display for EmbeddingProviderKind {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            EmbeddingProviderKind::Mock => write!(f, "mock"),
+            EmbeddingProviderKind::FastEmbed => write!(f, "fastembed"),
+        }
+    }
+}
+
+/// Metadata description of a resolved embedding provider.
+#[derive(Clone)]
+pub struct ResolvedEmbeddingProvider {
+    pub provider: std::sync::Arc<dyn EmbeddingProvider>,
+    pub kind: EmbeddingProviderKind,
+    pub model_name: String,
+    pub model_version: String,
+    pub dimension: usize,
+    pub is_fallback: bool,
+    pub fallback_reason: Option<String>,
+}
+
+/// Centralized factory for initializing embedding providers across CLI, MCP, daemon, and consolidation.
+pub struct EmbeddingProviderFactory;
+
+impl EmbeddingProviderFactory {
+    /// Create a provider given optional explicit provider name and model name.
+    ///
+    /// Rules:
+    /// - If provider is explicitly Some("mock") / Some("mock-hash"):
+    ///     Creates `MockEmbeddingProvider`, `is_fallback: false`.
+    /// - If provider is explicitly Some("fastembed") / Some("onnx"):
+    ///     Tries to create `FastEmbedProvider`. If it fails, returns `Err(StrataError::Embedding(...))`
+    ///     (strict: explicit user configuration is not silently downgraded).
+    /// - If provider is None (auto-detect / default):
+    ///     Attempts to create `FastEmbedProvider`.
+    ///     If successful -> `is_fallback: false`.
+    ///     If it fails -> Falls back to `MockEmbeddingProvider`, `is_fallback: true`, logs warning.
+    pub fn create(
+        provider: Option<&str>,
+        model: Option<&str>,
+    ) -> Result<ResolvedEmbeddingProvider, StrataError> {
+        let normalized_prov = provider.map(|p| p.trim().to_lowercase());
+        match normalized_prov.as_deref() {
+            Some("mock") | Some("mock-hash") => {
+                let dim = 384;
+                let mock = std::sync::Arc::new(MockEmbeddingProvider::new(dim));
+                Ok(ResolvedEmbeddingProvider {
+                    provider: mock,
+                    kind: EmbeddingProviderKind::Mock,
+                    model_name: "mock-hash".to_string(),
+                    model_version: "1".to_string(),
+                    dimension: dim,
+                    is_fallback: false,
+                    fallback_reason: None,
+                })
+            }
+            Some("fastembed") | Some("onnx") => {
+                let fast = FastEmbedProvider::try_new_with_model_str(model)?;
+                let model_name = fast.model_name().to_string();
+                let dim = fast.dimension();
+                Ok(ResolvedEmbeddingProvider {
+                    provider: std::sync::Arc::new(fast),
+                    kind: EmbeddingProviderKind::FastEmbed,
+                    model_name,
+                    model_version: "1".to_string(),
+                    dimension: dim,
+                    is_fallback: false,
+                    fallback_reason: None,
+                })
+            }
+            Some(other) => {
+                Err(StrataError::Validation(format!(
+                    "Unsupported embedding provider: '{other}'. Supported providers: 'fastembed', 'mock'"
+                )))
+            }
+            None => {
+                match FastEmbedProvider::try_new_with_model_str(model) {
+                    Ok(fast) => {
+                        let model_name = fast.model_name().to_string();
+                        let dim = fast.dimension();
+                        Ok(ResolvedEmbeddingProvider {
+                            provider: std::sync::Arc::new(fast),
+                            kind: EmbeddingProviderKind::FastEmbed,
+                            model_name,
+                            model_version: "1".to_string(),
+                            dimension: dim,
+                            is_fallback: false,
+                            fallback_reason: None,
+                        })
+                    }
+                    Err(err) => {
+                        let reason = format!("FastEmbed auto-initialization unavailable ({err})");
+                        tracing::warn!("{reason}; falling back to MockEmbeddingProvider");
+                        let dim = 384;
+                        let mock = std::sync::Arc::new(MockEmbeddingProvider::new(dim));
+                        Ok(ResolvedEmbeddingProvider {
+                            provider: mock,
+                            kind: EmbeddingProviderKind::Mock,
+                            model_name: "mock-hash".to_string(),
+                            model_version: "1".to_string(),
+                            dimension: dim,
+                            is_fallback: true,
+                            fallback_reason: Some(reason),
+                        })
+                    }
+                }
+            }
+        }
+    }
+
+    /// Creates an embedding provider from StrataConfig or environment variables (`STRATA_EMBEDDING_PROVIDER`, `STRATA_EMBEDDING_MODEL`).
+    pub fn create_from_config(
+        config: &strata_core::config::StrataConfig,
+    ) -> Result<ResolvedEmbeddingProvider, StrataError> {
+        let env_prov = std::env::var("STRATA_EMBEDDING_PROVIDER").ok();
+        let env_model = std::env::var("STRATA_EMBEDDING_MODEL").ok();
+
+        let provider = config
+            .embedding_provider
+            .as_deref()
+            .or_else(|| env_prov.as_deref());
+        let model = config
+            .embedding_model
+            .as_deref()
+            .or_else(|| env_model.as_deref());
+
+        Self::create(provider, model)
+    }
+
+    /// Helper to create a Mock provider for testing without disk/network dependencies.
+    pub fn create_mock(dimension: usize) -> ResolvedEmbeddingProvider {
+        let dim = if dimension == 0 { 384 } else { dimension };
+        ResolvedEmbeddingProvider {
+            provider: std::sync::Arc::new(MockEmbeddingProvider::new(dim)),
+            kind: EmbeddingProviderKind::Mock,
+            model_name: "mock-hash".to_string(),
+            model_version: "1".to_string(),
+            dimension: dim,
+            is_fallback: false,
+            fallback_reason: None,
+        }
+    }
+}
+
+/// Validate whether two embedding model identifiers belong to the same semantic space.
+/// Returns false if either model is different or if a neural model is compared to mock.
+pub fn are_embedding_models_compatible(model_a: &str, model_b: &str) -> bool {
+    let a = model_a.trim();
+    let b = model_b.trim();
+    if a.is_empty() || b.is_empty() {
+        return false;
+    }
+    if a.eq_ignore_ascii_case(b) {
+        return true;
+    }
+    fn normalize_model(m: &str) -> String {
+        let clean = m.trim().to_ascii_lowercase().replace('_', "-");
+        let stripped = clean
+            .strip_prefix("fastembed:")
+            .or_else(|| clean.strip_prefix("fastembed/"))
+            .unwrap_or(&clean);
+        match stripped {
+            "mock" | "mock-hash" => "mock-hash".to_string(),
+            "all-minilm-l6-v2" | "allminilml6v2" | "minilm" => "all-minilm-l6-v2".to_string(),
+            "bge-small-en-v1.5" | "bgesmallenv15" | "bge-small" | "bgesmall" => {
+                "bge-small-en-v1.5".to_string()
+            }
+            "bge-base-en-v1.5" | "bgebaseenv15" | "bge-base" | "bgebase" => {
+                "bge-base-en-v1.5".to_string()
+            }
+            other => other.to_string(),
+        }
+    }
+    normalize_model(a) == normalize_model(b)
+}
+
+/// Check if a query embedding model can be matched against a stored embedding model.
+/// If `stored_model` is None (legacy record created before model tagging),
+/// only mock query models are permitted to match for backwards compatibility.
+pub fn is_embedding_compatible_with_query(query_model: &str, stored_model: Option<&str>) -> bool {
+    match stored_model {
+        Some(stored) => are_embedding_models_compatible(query_model, stored),
+        None => {
+            let q = query_model.trim().to_lowercase();
+            q == "mock" || q == "mock-hash"
+        }
     }
 }

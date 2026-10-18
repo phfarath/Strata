@@ -1611,7 +1611,25 @@ impl DreamEngine {
                 if !is_contradiction && records[i].memory_type == records[j].memory_type {
                     let sim = lexical_jaccard_similarity(text_a, text_b);
                     let emb_sim = match (&records[i].embedding, &records[j].embedding) {
-                        (Some(ea), Some(eb)) => crate::embedding::cosine_similarity(ea, eb),
+                        (Some(ea), Some(eb)) => {
+                            let compatible = match (
+                                &records[i].embedding_model,
+                                &records[j].embedding_model,
+                            ) {
+                                (Some(ma), Some(mb)) => {
+                                    crate::embedding::are_embedding_models_compatible(ma, mb)
+                                }
+                                (Some(m), None) | (None, Some(m)) => {
+                                    crate::embedding::is_embedding_compatible_with_query(m, None)
+                                }
+                                (None, None) => true,
+                            };
+                            if compatible {
+                                crate::embedding::cosine_similarity(ea, eb)
+                            } else {
+                                0.0
+                            }
+                        }
                         _ => 0.0,
                     };
                     let norm_equal =

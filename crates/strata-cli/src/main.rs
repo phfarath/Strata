@@ -29,6 +29,7 @@ use strata_cli::{
         key::{run_key, KeyArgs},
         login::{run_login, run_logout, LoginArgs},
         mcp_install::{run_mcp_install, run_mcp_uninstall, McpInstallOptions, McpUninstallOptions},
+        memory::{run_memory, MemoryArgs},
         observe::{run_observe, ObserveArgs},
         plan::{run_plan, PlanArgs},
         promote::{run_promote, PromoteArgs},
@@ -391,6 +392,10 @@ enum Commands {
     /// View or modify Strata runtime configuration and local/cloud reasoning providers
     #[command(name = "config", alias = "cfg", alias = "settings")]
     Config(ConfigArgs),
+
+    /// Manage persistent memory embeddings, reindexing, and vector consistency
+    #[command(name = "memory", alias = "mem")]
+    Memory(MemoryArgs),
 }
 
 #[derive(Subcommand, Debug)]
@@ -539,14 +544,23 @@ async fn main() -> Result<()> {
     let stores = resolve_stores(cli.db_path, cli.no_global);
     let db_path = stores.local_path.clone();
 
+    let config = strata_cli::config::StrataConfig::load();
+    let resolved_emb = strata_memory::EmbeddingProviderFactory::create_from_config(&config)
+        .with_context(|| "Failed to initialize embedding provider from configuration")?;
+    let embedding_provider = resolved_emb.provider;
+
     let engine = Arc::new(
-        SqliteMemoryEngine::open_federated(&stores.local_path, stores.global_path.as_deref(), None)
-            .with_context(|| {
-                format!(
-                    "Failed to open Strata SQLite database at: {}",
-                    stores.local_path.display()
-                )
-            })?,
+        SqliteMemoryEngine::open_federated(
+            &stores.local_path,
+            stores.global_path.as_deref(),
+            Some(embedding_provider),
+        )
+        .with_context(|| {
+            format!(
+                "Failed to open Strata SQLite database at: {}",
+                stores.local_path.display()
+            )
+        })?,
     );
 
     match cli.command {
@@ -877,6 +891,11 @@ async fn main() -> Result<()> {
 
         Commands::Config(args) => {
             run_config(args).await?;
+        }
+
+        Commands::Memory(args) => {
+            let store = engine.store_arc();
+            run_memory(args, store).await?;
         }
     }
 

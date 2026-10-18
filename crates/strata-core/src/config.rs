@@ -30,6 +30,12 @@ pub struct StrataConfig {
     pub workspace_slug: Option<String>,
     pub user_email: Option<String>,
     pub jwt: Option<String>,
+
+    /// Active embedding provider: "fastembed", "mock", or None (auto-detect)
+    pub embedding_provider: Option<String>,
+
+    /// Active embedding model identifier (e.g. "AllMiniLML6V2", "BGESmallENV15", "mock-hash")
+    pub embedding_model: Option<String>,
 }
 
 impl StrataConfig {
@@ -154,6 +160,12 @@ impl StrataConfig {
         if other.jwt.is_some() {
             self.jwt = other.jwt;
         }
+        if other.embedding_provider.is_some() {
+            self.embedding_provider = other.embedding_provider;
+        }
+        if other.embedding_model.is_some() {
+            self.embedding_model = other.embedding_model;
+        }
     }
 
     /// Sets a configuration key by string name.
@@ -182,9 +194,15 @@ impl StrataConfig {
             "token" => self.token = Some(value.trim().to_string()),
             "workspace_id" => self.workspace_id = Some(value.trim().to_string()),
             "workspace_slug" => self.workspace_slug = Some(value.trim().to_string()),
+            "embedding_provider" | "emb_provider" => {
+                self.embedding_provider = Some(value.trim().to_lowercase())
+            }
+            "embedding_model" | "emb_model" => {
+                self.embedding_model = Some(value.trim().to_string())
+            }
             unknown => {
                 return Err(StrataError::Configuration(format!(
-                    "Unknown configuration key '{}'. Valid keys: provider, model, api_key, ollama_url, temperature, endpoint, token, workspace_id, workspace_slug",
+                    "Unknown configuration key '{}'. Valid keys: provider, model, api_key, ollama_url, temperature, endpoint, token, workspace_id, workspace_slug, embedding_provider, embedding_model",
                     unknown
                 )));
             }
@@ -206,6 +224,8 @@ impl StrataConfig {
             }),
             "ollama_url" | "url" => self.ollama_url.clone(),
             "temperature" | "temp" => self.temperature.map(|t| t.to_string()),
+            "embedding_provider" | "emb_provider" => self.embedding_provider.clone(),
+            "embedding_model" | "emb_model" => self.embedding_model.clone(),
             _ => None,
         }
     }

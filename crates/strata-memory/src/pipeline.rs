@@ -1130,6 +1130,31 @@ impl AudnPipeline {
         None
     }
 
+    /// Evaluates cosine similarity between two embeddings only if their embedding models are compatible.
+    fn audn_cosine_similarity(
+        cand_emb: Option<&[f32]>,
+        cand_model: Option<&str>,
+        ex_emb: Option<&[f32]>,
+        ex_model: Option<&str>,
+    ) -> f32 {
+        match (cand_emb, ex_emb) {
+            (Some(ca), Some(ex)) => {
+                let compatible = match (cand_model, ex_model) {
+                    (Some(cm), Some(em)) => crate::embedding::are_embedding_models_compatible(cm, em),
+                    (Some(cm), None) => crate::embedding::is_embedding_compatible_with_query(cm, None),
+                    (None, Some(em)) => crate::embedding::is_embedding_compatible_with_query(em, None),
+                    (None, None) => true,
+                };
+                if compatible {
+                    crate::embedding::cosine_similarity(ca, ex)
+                } else {
+                    0.0
+                }
+            }
+            _ => 0.0,
+        }
+    }
+
     /// Classifies a candidate `MemoryRecord` against `SqliteStore` into `Add`, `Update`, `Delete`, or `Noop`
     /// without mutating the database.
     pub fn classify_memory(
@@ -1166,10 +1191,12 @@ impl AudnPipeline {
                     let ex_sig =
                         compute_minhash_signature(&existing.content, self.config.num_hashes);
                     let mh_sim = minhash_jaccard_similarity(&cand_sig, &ex_sig);
-                    let cos_sim = match (&candidate.embedding, &existing.embedding) {
-                        (Some(ca), Some(ex)) => crate::embedding::cosine_similarity(ca, ex),
-                        _ => 0.0,
-                    };
+                    let cos_sim = Self::audn_cosine_similarity(
+                        candidate.embedding.as_deref(),
+                        candidate.embedding_model.as_deref(),
+                        existing.embedding.as_deref(),
+                        existing.embedding_model.as_deref(),
+                    );
                     if is_delete {
                         return Ok(AudnDecision {
                             operation: AudnOperation::Delete {
@@ -1217,10 +1244,12 @@ impl AudnPipeline {
                 }
                 let ex_sig = compute_minhash_signature(&existing.content, self.config.num_hashes);
                 let mh_sim = minhash_jaccard_similarity(&cand_sig, &ex_sig);
-                let cos_sim = match (&candidate.embedding, &existing.embedding) {
-                    (Some(ca), Some(ex)) => crate::embedding::cosine_similarity(ca, ex),
-                    _ => 0.0,
-                };
+                let cos_sim = Self::audn_cosine_similarity(
+                    candidate.embedding.as_deref(),
+                    candidate.embedding_model.as_deref(),
+                    existing.embedding.as_deref(),
+                    existing.embedding_model.as_deref(),
+                );
                 let lex_sim = audn_lexical_jaccard(&existing.content, &cleaned_candidate_text);
                 let combined_score = mh_sim.max(cos_sim).max(lex_sim);
                 if best_target.map_or(true, |(_, _, _, best)| combined_score > best) {
@@ -1253,10 +1282,12 @@ impl AudnPipeline {
         for existing in &existing_records {
             let ex_sig = compute_minhash_signature(&existing.content, self.config.num_hashes);
             let mh_sim = minhash_jaccard_similarity(&cand_sig, &ex_sig);
-            let cos_sim = match (&candidate.embedding, &existing.embedding) {
-                (Some(ca), Some(ex)) => crate::embedding::cosine_similarity(ca, ex),
-                _ => 0.0,
-            };
+            let cos_sim = Self::audn_cosine_similarity(
+                candidate.embedding.as_deref(),
+                candidate.embedding_model.as_deref(),
+                existing.embedding.as_deref(),
+                existing.embedding_model.as_deref(),
+            );
 
             if cos_sim > max_cos_sim {
                 max_cos_sim = cos_sim;
@@ -1365,7 +1396,14 @@ impl AudnPipeline {
             if let Some(emb_provider) = embedder {
                 if let Ok(emb) = emb_provider.embed_text(&prepared.content).await {
                     prepared.embedding = Some(emb);
+                    prepared.embedding_model = Some(emb_provider.model_name().to_string());
+                    prepared.embedding_version = Some(emb_provider.model_version().to_string());
                 }
+            }
+        } else if prepared.embedding.is_some() && prepared.embedding_model.is_none() {
+            if let Some(emb_provider) = embedder {
+                prepared.embedding_model = Some(emb_provider.model_name().to_string());
+                prepared.embedding_version = Some(emb_provider.model_version().to_string());
             }
         }
 
@@ -1380,6 +1418,8 @@ impl AudnPipeline {
                 {
                     if let Ok(emb) = emb_provider.embed_text(&mem.content).await {
                         mem.embedding = Some(emb);
+                        mem.embedding_model = Some(emb_provider.model_name().to_string());
+                        mem.embedding_version = Some(emb_provider.model_version().to_string());
                         let _ = store.insert_or_update_memory(&mem);
                     }
                 }
@@ -1408,6 +1448,8 @@ impl AudnPipeline {
                         existing.approved_by_human || prepared.approved_by_human;
                     if prepared.embedding.is_some() {
                         existing.embedding = prepared.embedding.clone();
+                        existing.embedding_model = prepared.embedding_model.clone();
+                        existing.embedding_version = prepared.embedding_version.clone();
                     }
                     for tag in &prepared.tags {
                         if !existing.tags.contains(tag) {
@@ -1464,8 +1506,9 @@ impl AudnPipeline {
         } else {
             None
         };
+        let cand_model = embedder.map(|e| e.model_name());
 
-        let existing_with_embs = store.get_semantic_facts_with_embeddings(
+        let existing_with_embs = store.get_semantic_facts_with_embeddings_and_models(
             None,
             Some(strata_core::schemas::FactStatus::Active),
         )?;
@@ -1480,9 +1523,9 @@ impl AudnPipeline {
         let cand_sig = compute_minhash_signature(&cleaned_stmt, self.config.num_hashes);
         let cand_norm = canonical_audn_words(&cleaned_stmt).join(" ");
 
-        let eligible: Vec<&(SemanticFact, Option<Vec<f32>>)> = existing_with_embs
+        let eligible: Vec<&(SemanticFact, Option<Vec<f32>>, Option<String>)> = existing_with_embs
             .iter()
-            .filter(|(f, _)| {
+            .filter(|(f, _, _)| {
                 f.id != candidate.id && audn_scopes_compatible(&f.scope, &candidate.scope)
             })
             .collect();
@@ -1490,7 +1533,7 @@ impl AudnPipeline {
         // 1. Delete directive check
         if is_delete {
             let mut best_target: Option<(&SemanticFact, f32, f32, f32)> = None;
-            for (existing, ex_emb) in &eligible {
+            for (existing, ex_emb, ex_model) in &eligible {
                 if !has_audn_topic_overlap(
                     &existing.statement,
                     &existing.tags,
@@ -1501,10 +1544,12 @@ impl AudnPipeline {
                 }
                 let ex_sig = compute_minhash_signature(&existing.statement, self.config.num_hashes);
                 let mh_sim = minhash_jaccard_similarity(&cand_sig, &ex_sig);
-                let cos_sim = match (&cand_emb, ex_emb) {
-                    (Some(ca), Some(ex)) => crate::embedding::cosine_similarity(ca, ex),
-                    _ => 0.0,
-                };
+                let cos_sim = Self::audn_cosine_similarity(
+                    cand_emb.as_deref(),
+                    cand_model,
+                    ex_emb.as_deref(),
+                    ex_model.as_deref(),
+                );
                 let lex_sim = audn_lexical_jaccard(&existing.statement, &cleaned_stmt);
                 let score = mh_sim.max(cos_sim).max(lex_sim);
                 if best_target.map_or(true, |(_, _, _, b)| score > b) {
@@ -1542,13 +1587,15 @@ impl AudnPipeline {
         let mut max_cos_sim = 0.0f32;
         let mut max_mh_sim = 0.0f32;
 
-        for (existing, ex_emb) in &eligible {
+        for (existing, ex_emb, ex_model) in &eligible {
             let ex_sig = compute_minhash_signature(&existing.statement, self.config.num_hashes);
             let mh_sim = minhash_jaccard_similarity(&cand_sig, &ex_sig);
-            let cos_sim = match (&cand_emb, ex_emb) {
-                (Some(ca), Some(ex)) => crate::embedding::cosine_similarity(ca, ex),
-                _ => 0.0,
-            };
+            let cos_sim = Self::audn_cosine_similarity(
+                cand_emb.as_deref(),
+                cand_model,
+                ex_emb.as_deref(),
+                ex_model.as_deref(),
+            );
 
             if cos_sim > max_cos_sim {
                 max_cos_sim = cos_sim;

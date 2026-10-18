@@ -72,8 +72,9 @@ pub use decay::{DecayCalculator, PruneReport};
 pub use futility::{record_shadow_failure, record_shadow_success, FutilityAccumulator, FutilityTraceRow, Signal as FutilitySignal, Verdict as FutilityVerdict};
 pub use gating::{should_recall, IntentKind, RecallDecision, RecallGatingClassifier, TaskType};
 pub use embedding::{
-    bytes_to_embedding, cosine_similarity, embedding_to_bytes, EmbeddingProvider,
-    FastEmbedProvider, MockEmbeddingProvider,
+    are_embedding_models_compatible, bytes_to_embedding, cosine_similarity, embedding_to_bytes,
+    is_embedding_compatible_with_query, EmbeddingProvider, EmbeddingProviderFactory,
+    EmbeddingProviderKind, FastEmbedProvider, MockEmbeddingProvider, ResolvedEmbeddingProvider,
 };
 pub use enricher::{AsyncLlmEnricher, CanonicalTemplateEnricher, MemoryEnricher};
 pub use ipc::{
@@ -104,7 +105,9 @@ pub use spreading_activation::{
     EdgeKind, GraphEdge, GraphNode, KnowledgeGraph, SpreadingActivationConfig,
     SpreadingActivationEngine,
 };
-pub use store::{MemoryEdgeRecord, SqliteStore};
+pub use store::{
+    MemoryEdgeRecord, ModelVectorCount, ReindexReport, SqliteStore, VectorConsistencyStats,
+};
 pub use strata_reasoning::{
     ProceduralOptimizerConfig, ProceduralRule, ProceduralRuleVersion, ProceduralSelfEditor,
     TextGradientFeedback,
@@ -392,6 +395,8 @@ impl SqliteMemoryEngine {
         if record.embedding.is_none() && !record.content.trim().is_empty() {
             if let Ok(emb) = self.embedding_provider.embed_text(&record.content).await {
                 record.embedding = Some(emb);
+                record.embedding_model = Some(self.embedding_provider.model_name().to_string());
+                record.embedding_version = Some(self.embedding_provider.model_version().to_string());
             }
         }
 
@@ -712,7 +717,12 @@ impl MemoryEngine for SqliteMemoryEngine {
         if to_write.embedding.is_none() && !to_write.content.trim().is_empty() {
             if let Ok(emb) = self.embedding_provider.embed_text(&to_write.content).await {
                 to_write.embedding = Some(emb);
+                to_write.embedding_model = Some(self.embedding_provider.model_name().to_string());
+                to_write.embedding_version = Some(self.embedding_provider.model_version().to_string());
             }
+        } else if to_write.embedding.is_some() && to_write.embedding_model.is_none() {
+            to_write.embedding_model = Some(self.embedding_provider.model_name().to_string());
+            to_write.embedding_version = Some(self.embedding_provider.model_version().to_string());
         }
 
         self.store.insert_or_update_memory(&to_write)?;

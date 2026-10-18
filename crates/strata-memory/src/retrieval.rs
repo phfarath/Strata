@@ -7,7 +7,9 @@ use uuid::Uuid;
 
 use crate::call_graph::CallEdge;
 use crate::compiler::{matches_path_glob, PathScopedExt};
-use crate::embedding::{cosine_similarity, EmbeddingProvider};
+use crate::embedding::{
+    cosine_similarity, is_embedding_compatible_with_query, EmbeddingProvider,
+};
 use crate::spreading_activation::{
     GraphNode, SpreadingActivationConfig, SpreadingActivationEngine,
 };
@@ -643,6 +645,12 @@ impl HybridRanker {
                     candidate_limit * 2,
                 )?;
                 for memory in all_candidates {
+                    if !is_embedding_compatible_with_query(
+                        embedder.model_name(),
+                        memory.embedding_model.as_deref(),
+                    ) {
+                        continue;
+                    }
                     if let Some(ref mem_emb) = memory.embedding {
                         let sim = cosine_similarity(&query_embedding, mem_emb);
                         if sim >= self.config.min_similarity {
