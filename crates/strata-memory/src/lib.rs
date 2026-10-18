@@ -39,6 +39,7 @@ use strata_core::events::{Event, EventId};
 use strata_core::state::{
     DigestOutput, FailurePattern, MemoryHandle, MemoryRecord, MemoryTier, Scope,
 };
+pub use strata_core::state::{HumanApprovalRecord, ProvenanceBlock};
 use strata_core::traits::{EventStore, MemoryEngine};
 
 pub use alignment::PreferenceMiner;
@@ -307,6 +308,15 @@ impl SqliteMemoryEngine {
         Ok(combined_results)
     }
 
+    /// Promotes a memory record to Core Tier with verified human approval metadata.
+    pub async fn promote_to_core_with_approval(
+        &self,
+        id: &Uuid,
+        approval: HumanApprovalRecord,
+    ) -> Result<MemoryRecord, StrataError> {
+        self.store.promote_memory_to_core_with_approval(id, approval)
+    }
+
     /// Promotes a memory record to Core Tier with explicit human approval.
     pub async fn promote_to_core(
         &self,
@@ -316,6 +326,15 @@ impl SqliteMemoryEngine {
     ) -> Result<MemoryRecord, StrataError> {
         self.store
             .promote_memory_to_core(id, approved_by_human, reason)
+    }
+
+    /// Promotes a semantic fact to Core Tier with verified human approval metadata.
+    pub async fn promote_fact_to_core_with_approval(
+        &self,
+        id: &Uuid,
+        approval: HumanApprovalRecord,
+    ) -> Result<SemanticFact, StrataError> {
+        self.store.promote_semantic_fact_to_core_with_approval(id, approval)
     }
 
     /// Promotes a semantic fact to Core Tier with explicit human approval.
@@ -356,20 +375,12 @@ impl SqliteMemoryEngine {
         Ok(results)
     }
 
-    /// Promotes a memory record to the Developer-Global store (~/.strata/global.db) with Scope::Global.
-    /// Requires explicit human approval.
-    pub async fn promote_to_global(
+    /// Promotes a memory record to the Developer-Global store (~/.strata/global.db) with verified human approval.
+    pub async fn promote_to_global_with_approval(
         &self,
         id: &Uuid,
-        approved_by_human: bool,
-        reason: Option<&str>,
+        approval: HumanApprovalRecord,
     ) -> Result<MemoryRecord, StrataError> {
-        if !approved_by_human {
-            return Err(StrataError::Validation(
-                "Cannot promote memory to Global Tier without explicit human approval (approved_by_human=true)".to_string(),
-            ));
-        }
-
         let global = self.global_store.as_ref().ok_or_else(|| {
             StrataError::Configuration(
                 "No global store configured for federation (global_store is None)".to_string(),
@@ -380,16 +391,26 @@ impl SqliteMemoryEngine {
             StrataError::NotFound(format!("Memory record {id} not found in local store"))
         })?;
 
+        if !approval.matches_content(&record.content) {
+            return Err(StrataError::Validation(format!(
+                "Content hash mismatch for memory '{id}': expected approval hash '{}', but actual content hash is '{}'. Memory content may have changed.",
+                approval.content_hash,
+                HumanApprovalRecord::compute_content_hash(&record.content),
+            )));
+        }
+
         record.scope = Scope::Global;
         record.tier = MemoryTier::Core;
         record.approved_by_human = true;
+        record.human_approval = Some(approval.clone());
         record.updated_at = chrono::Utc::now();
 
         let mut meta = record.metadata.clone();
-        if let Some(r) = reason {
-            meta["promotion_reason"] = serde_json::Value::String(r.to_string());
+        if let Some(ref r) = approval.rationale {
+            meta["promotion_reason"] = serde_json::Value::String(r.clone());
         }
         meta["promoted_to_global_at"] = serde_json::Value::String(chrono::Utc::now().to_rfc3339());
+        meta["human_approval"] = serde_json::to_value(&approval).unwrap_or(serde_json::json!({}));
         record.metadata = meta;
 
         if record.embedding.is_none() && !record.content.trim().is_empty() {
@@ -404,6 +425,73 @@ impl SqliteMemoryEngine {
         let _ = self.store.insert_or_update_memory(&record);
 
         Ok(record)
+    }
+
+    /// Promotes a memory record to the Developer-Global store (~/.strata/global.db) with Scope::Global.
+    /// Requires explicit human approval.
+    pub async fn promote_to_global(
+        &self,
+        id: &Uuid,
+        approved_by_human: bool,
+        reason: Option<&str>,
+    ) -> Result<MemoryRecord, StrataError> {
+        if !approved_by_human {
+            return Err(StrataError::Validation(
+                "Cannot promote memory to Global Tier without explicit human approval (approved_by_human=true)".to_string(),
+            ));
+        }
+
+        let mem = self.store.get_memory(id)?.ok_or_else(|| {
+            StrataError::NotFound(format!("Memory record {id} not found in local store"))
+        })?;
+
+        let approval = HumanApprovalRecord::new(
+            "cli_user",
+            "cli_direct",
+            &mem.content,
+            reason.map(String::from),
+        );
+
+        self.promote_to_global_with_approval(id, approval).await
+    }
+
+    /// Generates a single-use verifiable approval token for an entity.
+    pub fn generate_approval_token(
+        &self,
+        entity_id: &Uuid,
+        entity_type: &str,
+        content_hash: &str,
+        approved_by: &str,
+        ttl_seconds: u64,
+        rationale: Option<&str>,
+    ) -> Result<String, StrataError> {
+        self.store.generate_approval_token(
+            entity_id,
+            entity_type,
+            content_hash,
+            approved_by,
+            ttl_seconds,
+            rationale,
+        )
+    }
+
+    /// Verifies and consumes a verifiable approval token.
+    pub fn verify_and_consume_approval_token(
+        &self,
+        token_str: &str,
+        expected_entity_id: &Uuid,
+        expected_content_hash: &str,
+    ) -> Result<HumanApprovalRecord, StrataError> {
+        match self.store.verify_and_consume_approval_token(token_str, expected_entity_id, expected_content_hash) {
+            Ok(rec) => Ok(rec),
+            Err(e) => {
+                if let Some(ref global) = self.global_store {
+                    global.verify_and_consume_approval_token(token_str, expected_entity_id, expected_content_hash)
+                } else {
+                    Err(e)
+                }
+            }
+        }
     }
 
     /// Promotes a FailurePattern to the Developer-Global store (~/.strata/global.db).

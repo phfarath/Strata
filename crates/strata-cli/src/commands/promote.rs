@@ -5,7 +5,7 @@ use std::sync::Arc;
 use uuid::Uuid;
 
 use strata_core::schemas::SemanticFact;
-use strata_core::state::{MemoryRecord, MemoryTier};
+use strata_core::state::{HumanApprovalRecord, MemoryRecord, MemoryTier};
 use strata_memory::SqliteMemoryEngine;
 
 #[derive(Debug, Clone, Args)]
@@ -47,14 +47,63 @@ pub struct PromoteArgs {
     )]
     pub to_global: bool,
 
+    /// Generate a single-use cryptographically secure approval token instead of promoting immediately
+    #[arg(
+        long = "generate-token",
+        help = "Generate a single-use cryptographically secure approval token instead of promoting immediately"
+    )]
+    pub generate_token: bool,
+
+    /// Verifiable approval token to consume for promotion
+    #[arg(
+        long = "token",
+        help = "Verifiable approval token to consume for promotion"
+    )]
+    pub token: Option<String>,
+
+    /// Approver identity (defaults to detected developer / system username)
+    #[arg(
+        long = "approver",
+        help = "Approver identity (defaults to detected developer / system username)"
+    )]
+    pub approver: Option<String>,
+
     /// Output result as raw JSON
     #[arg(long, help = "Output as raw JSON")]
     pub json: bool,
 }
 
+pub fn detect_human_user(approver_arg: Option<&str>) -> String {
+    if let Some(app) = approver_arg {
+        if !app.trim().is_empty() {
+            return app.trim().to_string();
+        }
+    }
+    if let Ok(val) = std::env::var("STRATA_APPROVER") {
+        if !val.trim().is_empty() {
+            return val.trim().to_string();
+        }
+    }
+    if let Ok(val) = std::env::var("USER") {
+        if !val.trim().is_empty() {
+            return val.trim().to_string();
+        }
+    }
+    if let Ok(val) = std::env::var("USERNAME") {
+        if !val.trim().is_empty() {
+            return val.trim().to_string();
+        }
+    }
+    "cli_user".to_string()
+}
+
 pub async fn run_promote(args: PromoteArgs, engine: Arc<SqliteMemoryEngine>) -> Result<()> {
     let id = Uuid::parse_str(&args.id)
         .with_context(|| format!("Invalid UUID format for id: '{}'", args.id))?;
+
+    if args.generate_token {
+        return generate_token_flow(&id, &args, engine).await;
+    }
 
     if args.to_global {
         return promote_to_global_store(&id, &args, engine).await;
@@ -68,6 +117,75 @@ pub async fn run_promote(args: PromoteArgs, engine: Arc<SqliteMemoryEngine>) -> 
     } else {
         promote_memory_record(&id, &args, engine).await
     }
+}
+
+async fn generate_token_flow(
+    id: &Uuid,
+    args: &PromoteArgs,
+    engine: Arc<SqliteMemoryEngine>,
+) -> Result<()> {
+    let is_fact = args.entity_type.to_lowercase() == "fact" || args.entity_type.to_lowercase() == "semantic";
+    let (content_hash, entity_desc) = if is_fact {
+        let fact = engine.store().get_semantic_fact(id)?
+            .with_context(|| format!("Semantic fact with ID '{}' not found", id))?;
+        (
+            blake3::hash(fact.statement.as_bytes()).to_hex().to_string(),
+            format!("Semantic Fact: \"{}\"", fact.statement),
+        )
+    } else {
+        let mem = engine.store().get_memory(id)?
+            .with_context(|| format!("Memory record with ID '{}' not found", id))?;
+        (
+            blake3::hash(mem.content.as_bytes()).to_hex().to_string(),
+            format!("Memory: \"{}\"", mem.summary.as_deref().unwrap_or(&mem.content)),
+        )
+    };
+
+    let approver = detect_human_user(args.approver.as_deref());
+    let ttl_seconds = 3600u64;
+
+    let token = engine.generate_approval_token(
+        id,
+        if is_fact { "fact" } else { "memory" },
+        &content_hash,
+        &approver,
+        ttl_seconds,
+        args.reason.as_deref(),
+    ).with_context(|| "Failed to generate verifiable approval token")?;
+
+    if args.json {
+        let res = serde_json::json!({
+            "status": "token_generated",
+            "id": id.to_string(),
+            "entity_type": if is_fact { "fact" } else { "memory" },
+            "token": token,
+            "content_hash": content_hash,
+            "approved_by": approver,
+            "expires_in_seconds": ttl_seconds,
+            "reason": args.reason,
+        });
+        println!("{}", serde_json::to_string_pretty(&res)?);
+    } else {
+        println!("\n╔══════════════════════════════════════════════════════════════════════════════════════╗");
+        println!("║               🔑  STRATA VERIFIABLE HUMAN APPROVAL TOKEN GENERATED                   ║");
+        println!("╚══════════════════════════════════════════════════════════════════════════════════════╝");
+        println!("  Target ID:          {}", id);
+        println!("  Entity:             {}", entity_desc);
+        println!("  BLAKE3 Hash:        {}", content_hash);
+        println!("  Approver:           {}", approver);
+        println!("  Expires In:         {} seconds (1 hour)", ttl_seconds);
+        if let Some(r) = &args.reason {
+            println!("  Rationale:          {}", r);
+        }
+        println!("────────────────────────────────────────────────────────────────────────────────────────");
+        println!("  Token:              {}", token);
+        println!("────────────────────────────────────────────────────────────────────────────────────────");
+        println!("  ℹ️  AI agents may now promote this record via MCP tool `strata_promote`");
+        println!("     passing `approval_token: \"{}\"`.", token);
+        println!("────────────────────────────────────────────────────────────────────────────────────────\n");
+    }
+
+    Ok(())
 }
 
 async fn promote_memory_record(
@@ -88,6 +206,7 @@ async fn promote_memory_record(
                 "tier": "core",
                 "approved_by_human": true,
                 "importance": mem.importance,
+                "human_approval": mem.human_approval,
             });
             println!("{}", serde_json::to_string_pretty(&res)?);
         } else {
@@ -99,38 +218,69 @@ async fn promote_memory_record(
         return Ok(());
     }
 
-    if !args.yes {
-        render_memory_modal(&mem, args.reason.as_deref());
-        print!(
-            "\n  [?] Promote this memory to permanent Core Tier (frozen retention, R=1.0)? [y/N]: "
-        );
-        io::stdout().flush()?;
+    let content_hash = blake3::hash(mem.content.as_bytes()).to_hex().to_string();
 
-        let mut input = String::new();
-        io::stdin().read_line(&mut input)?;
-        let trimmed = input.trim().to_lowercase();
-
-        if trimmed != "y" && trimmed != "yes" {
-            if args.json {
-                let res = serde_json::json!({
-                    "status": "aborted",
-                    "id": id.to_string(),
-                    "reason": "Promotion cancelled by user",
-                });
-                println!("{}", serde_json::to_string_pretty(&res)?);
-            } else {
-                println!(
-                    "\n❌ [ABORTED] Promotion cancelled by user. Memory remains in current tier.\n"
-                );
+    let approval = if let Some(ref tok) = args.token {
+        let mut rec = engine
+            .verify_and_consume_approval_token(tok, id, &content_hash)
+            .with_context(|| "Failed to verify approval token")?;
+        if let Some(ref r) = args.reason {
+            if rec.rationale.is_none() {
+                rec.rationale = Some(r.clone());
             }
-            return Ok(());
         }
-    }
+        rec
+    } else {
+        if !args.yes {
+            render_memory_modal(&mem, args.reason.as_deref());
+            print!(
+                "\n  [?] Promote this memory to permanent Core Tier (frozen retention, R=1.0)? [y/N]: "
+            );
+            io::stdout().flush()?;
+
+            let mut input = String::new();
+            io::stdin().read_line(&mut input)?;
+            let trimmed = input.trim().to_lowercase();
+
+            if trimmed != "y" && trimmed != "yes" {
+                if args.json {
+                    let res = serde_json::json!({
+                        "status": "aborted",
+                        "id": id.to_string(),
+                        "reason": "Promotion cancelled by user",
+                    });
+                    println!("{}", serde_json::to_string_pretty(&res)?);
+                } else {
+                    println!(
+                        "\n❌ [ABORTED] Promotion cancelled by user. Memory remains in current tier.\n"
+                    );
+                }
+                return Ok(());
+            }
+        }
+
+        let channel = if args.yes {
+            "cli_flag".to_string()
+        } else {
+            "cli_interactive".to_string()
+        };
+        let approver = detect_human_user(args.approver.as_deref());
+
+        HumanApprovalRecord {
+            approved_by: approver,
+            approved_at: chrono::Utc::now(),
+            channel,
+            content_hash,
+            rationale: args.reason.clone(),
+        }
+    };
 
     let promoted = engine
-        .promote_to_core(id, true, args.reason.as_deref())
+        .promote_to_core_with_approval(id, approval.clone())
         .await
         .with_context(|| format!("Failed to promote memory '{}' to Core Tier", id))?;
+
+    let provenance = promoted.build_provenance(Some("Promoted to Core Tier with verified human approval"));
 
     if args.json {
         let res = serde_json::json!({
@@ -140,6 +290,8 @@ async fn promote_memory_record(
             "approved_by_human": promoted.approved_by_human,
             "importance": promoted.importance,
             "promotion_reason": args.reason,
+            "human_approval": promoted.human_approval,
+            "provenance": provenance,
         });
         println!("{}", serde_json::to_string_pretty(&res)?);
     } else {
@@ -149,8 +301,11 @@ async fn promote_memory_record(
         println!("  ID:                 {}", promoted.id);
         println!("  Tier:               Core (Permanent / Frozen)");
         println!("  Human Approval:     true (Explicitly Approved)");
+        println!("  Approver:           {}", approval.approved_by);
+        println!("  Channel:            {}", approval.channel);
+        println!("  BLAKE3 Hash:        {}", approval.content_hash);
         println!("  Retention (R):      1.0 (Exempt from ACT-R decay / never pruned)");
-        if let Some(r) = &args.reason {
+        if let Some(r) = &approval.rationale {
             println!("  Rationale:          {}", r);
         }
         println!("────────────────────────────────────────────────────────────────────────────────────────\n");
@@ -177,36 +332,67 @@ async fn promote_to_global_store(
         )
     })?;
 
-    if !args.yes {
-        render_memory_modal(&mem, args.reason.as_deref());
-        print!(
-            "\n  [?] Promote this memory to Developer-Global Store (~/.strata/global.db) with Scope::Global? [y/N]: "
-        );
-        io::stdout().flush()?;
+    let content_hash = blake3::hash(mem.content.as_bytes()).to_hex().to_string();
 
-        let mut input = String::new();
-        io::stdin().read_line(&mut input)?;
-        let trimmed = input.trim().to_lowercase();
-
-        if trimmed != "y" && trimmed != "yes" {
-            if args.json {
-                let res = serde_json::json!({
-                    "status": "aborted",
-                    "id": id.to_string(),
-                    "reason": "Promotion cancelled by user",
-                });
-                println!("{}", serde_json::to_string_pretty(&res)?);
-            } else {
-                println!("\n❌ [ABORTED] Global promotion cancelled by user.\n");
+    let approval = if let Some(ref tok) = args.token {
+        let mut rec = engine
+            .verify_and_consume_approval_token(tok, id, &content_hash)
+            .with_context(|| "Failed to verify approval token")?;
+        if let Some(ref r) = args.reason {
+            if rec.rationale.is_none() {
+                rec.rationale = Some(r.clone());
             }
-            return Ok(());
         }
-    }
+        rec
+    } else {
+        if !args.yes {
+            render_memory_modal(&mem, args.reason.as_deref());
+            print!(
+                "\n  [?] Promote this memory to Developer-Global Store (~/.strata/global.db) with Scope::Global? [y/N]: "
+            );
+            io::stdout().flush()?;
+
+            let mut input = String::new();
+            io::stdin().read_line(&mut input)?;
+            let trimmed = input.trim().to_lowercase();
+
+            if trimmed != "y" && trimmed != "yes" {
+                if args.json {
+                    let res = serde_json::json!({
+                        "status": "aborted",
+                        "id": id.to_string(),
+                        "reason": "Promotion cancelled by user",
+                    });
+                    println!("{}", serde_json::to_string_pretty(&res)?);
+                } else {
+                    println!("\n❌ [ABORTED] Global promotion cancelled by user.\n");
+                }
+                return Ok(());
+            }
+        }
+
+        let channel = if args.yes {
+            "cli_flag".to_string()
+        } else {
+            "cli_interactive".to_string()
+        };
+        let approver = detect_human_user(args.approver.as_deref());
+
+        HumanApprovalRecord {
+            approved_by: approver,
+            approved_at: chrono::Utc::now(),
+            channel,
+            content_hash,
+            rationale: args.reason.clone(),
+        }
+    };
 
     let promoted = engine
-        .promote_to_global(id, true, args.reason.as_deref())
+        .promote_to_global_with_approval(id, approval.clone())
         .await
         .with_context(|| format!("Failed to promote memory '{}' to Global Store", id))?;
+
+    let provenance = promoted.build_provenance(Some("Promoted to Global Store with verified human approval"));
 
     if args.json {
         let res = serde_json::json!({
@@ -217,6 +403,8 @@ async fn promote_to_global_store(
             "approved_by_human": promoted.approved_by_human,
             "promotion_reason": args.reason,
             "destination": "~/.strata/global.db",
+            "human_approval": promoted.human_approval,
+            "provenance": provenance,
         });
         println!("{}", serde_json::to_string_pretty(&res)?);
     } else {
@@ -227,7 +415,10 @@ async fn promote_to_global_store(
         println!("  Scope:              Global (Accessible across all repositories)");
         println!("  Tier:               Core (Permanent / Frozen retention)");
         println!("  Destination:        ~/.strata/global.db");
-        if let Some(r) = &args.reason {
+        println!("  Approver:           {}", approval.approved_by);
+        println!("  Channel:            {}", approval.channel);
+        println!("  BLAKE3 Hash:        {}", approval.content_hash);
+        if let Some(r) = &approval.rationale {
             println!("  Rationale:          {}", r);
         }
         println!("────────────────────────────────────────────────────────────────────────────────────────\n");
@@ -254,6 +445,7 @@ async fn promote_semantic_fact(
                 "tier": "core",
                 "approved_by_human": true,
                 "importance": fact.importance,
+                "human_approval": fact.human_approval,
             });
             println!("{}", serde_json::to_string_pretty(&res)?);
         } else {
@@ -262,34 +454,65 @@ async fn promote_semantic_fact(
         return Ok(());
     }
 
-    if !args.yes {
-        render_fact_modal(&fact, args.reason.as_deref());
-        print!("\n  [?] Promote this semantic fact to permanent Core Tier (frozen retention, R=1.0)? [y/N]: ");
-        io::stdout().flush()?;
+    let content_hash = blake3::hash(fact.statement.as_bytes()).to_hex().to_string();
 
-        let mut input = String::new();
-        io::stdin().read_line(&mut input)?;
-        let trimmed = input.trim().to_lowercase();
-
-        if trimmed != "y" && trimmed != "yes" {
-            if args.json {
-                let res = serde_json::json!({
-                    "status": "aborted",
-                    "id": id.to_string(),
-                    "reason": "Promotion cancelled by user",
-                });
-                println!("{}", serde_json::to_string_pretty(&res)?);
-            } else {
-                println!("\n❌ [ABORTED] Promotion cancelled by user. Semantic fact remains in current tier.\n");
+    let approval = if let Some(ref tok) = args.token {
+        let mut rec = engine
+            .verify_and_consume_approval_token(tok, id, &content_hash)
+            .with_context(|| "Failed to verify approval token")?;
+        if let Some(ref r) = args.reason {
+            if rec.rationale.is_none() {
+                rec.rationale = Some(r.clone());
             }
-            return Ok(());
         }
-    }
+        rec
+    } else {
+        if !args.yes {
+            render_fact_modal(&fact, args.reason.as_deref());
+            print!("\n  [?] Promote this semantic fact to permanent Core Tier (frozen retention, R=1.0)? [y/N]: ");
+            io::stdout().flush()?;
+
+            let mut input = String::new();
+            io::stdin().read_line(&mut input)?;
+            let trimmed = input.trim().to_lowercase();
+
+            if trimmed != "y" && trimmed != "yes" {
+                if args.json {
+                    let res = serde_json::json!({
+                        "status": "aborted",
+                        "id": id.to_string(),
+                        "reason": "Promotion cancelled by user",
+                    });
+                    println!("{}", serde_json::to_string_pretty(&res)?);
+                } else {
+                    println!("\n❌ [ABORTED] Promotion cancelled by user. Semantic fact remains in current tier.\n");
+                }
+                return Ok(());
+            }
+        }
+
+        let channel = if args.yes {
+            "cli_flag".to_string()
+        } else {
+            "cli_interactive".to_string()
+        };
+        let approver = detect_human_user(args.approver.as_deref());
+
+        HumanApprovalRecord {
+            approved_by: approver,
+            approved_at: chrono::Utc::now(),
+            channel,
+            content_hash,
+            rationale: args.reason.clone(),
+        }
+    };
 
     let promoted = engine
-        .promote_fact_to_core(id, true, args.reason.as_deref())
+        .promote_fact_to_core_with_approval(id, approval.clone())
         .await
         .with_context(|| format!("Failed to promote semantic fact '{}' to Core Tier", id))?;
+
+    let provenance = promoted.build_provenance(Some("Promoted to Core Tier with verified human approval"));
 
     if args.json {
         let res = serde_json::json!({
@@ -299,6 +522,8 @@ async fn promote_semantic_fact(
             "approved_by_human": promoted.approved_by_human,
             "importance": promoted.importance,
             "promotion_reason": args.reason,
+            "human_approval": promoted.human_approval,
+            "provenance": provenance,
         });
         println!("{}", serde_json::to_string_pretty(&res)?);
     } else {
@@ -308,8 +533,11 @@ async fn promote_semantic_fact(
         println!("  ID:                 {}", promoted.id);
         println!("  Tier:               Core (Permanent / Frozen)");
         println!("  Human Approval:     true (Explicitly Approved)");
+        println!("  Approver:           {}", approval.approved_by);
+        println!("  Channel:            {}", approval.channel);
+        println!("  BLAKE3 Hash:        {}", approval.content_hash);
         println!("  Retention (R):      1.0 (Exempt from ACT-R decay / never pruned)");
-        if let Some(r) = &args.reason {
+        if let Some(r) = &approval.rationale {
             println!("  Rationale:          {}", r);
         }
         println!("────────────────────────────────────────────────────────────────────────────────────────\n");
@@ -389,4 +617,175 @@ fn render_fact_modal(fact: &SemanticFact, reason: Option<&str>) {
     println!(
         "────────────────────────────────────────────────────────────────────────────────────────"
     );
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use strata_core::state::{MemoryRecord, MemoryTier, MemoryType, Scope};
+    use strata_memory::SqliteMemoryEngine;
+
+    #[tokio::test]
+    pub async fn test_cli_promote_generate_token_and_consume() {
+        let engine = Arc::new(SqliteMemoryEngine::open_in_memory(None).unwrap());
+
+        let mem = MemoryRecord::new(
+            MemoryType::Semantic,
+            "Architectural Invariant: Authentication state is immutable",
+            Scope::Global,
+        )
+        .with_tier(MemoryTier::Working);
+
+        engine.store().insert_or_update_memory(&mem).unwrap();
+
+        // 1. Generate token via promote flow
+        let gen_args = PromoteArgs {
+            id: mem.id.to_string(),
+            entity_type: "memory".to_string(),
+            reason: Some("Arch review approval".to_string()),
+            yes: true,
+            to_global: false,
+            generate_token: true,
+            token: None,
+            approver: Some("alice".to_string()),
+            json: true,
+        };
+
+        run_promote(gen_args, Arc::clone(&engine)).await.unwrap();
+
+        // Retrieve token directly using engine's store to get the exact token string
+        let hash = blake3::hash(mem.content.as_bytes()).to_hex().to_string();
+        let token = engine
+            .generate_approval_token(&mem.id, "memory", &hash, "alice", 3600, Some("Arch review approval"))
+            .unwrap();
+
+        // 2. Consume token to promote
+        let promote_args = PromoteArgs {
+            id: mem.id.to_string(),
+            entity_type: "memory".to_string(),
+            reason: Some("Arch review approval".to_string()),
+            yes: true,
+            to_global: false,
+            generate_token: false,
+            token: Some(token.clone()),
+            approver: None,
+            json: true,
+        };
+
+        run_promote(promote_args, Arc::clone(&engine)).await.unwrap();
+
+        let promoted = engine.store().get_memory(&mem.id).unwrap().unwrap();
+        assert_eq!(promoted.tier, MemoryTier::Core);
+        assert!(promoted.approved_by_human);
+        let appr = promoted.human_approval.expect("human_approval record");
+        assert_eq!(appr.approved_by, "alice");
+        assert_eq!(appr.channel, "approval_token");
+        assert_eq!(appr.content_hash, hash);
+
+        // Reusing same token must fail directly and via promote
+        assert!(
+            engine.verify_and_consume_approval_token(&token, &mem.id, &hash).is_err(),
+            "Direct reuse of consumed token must fail"
+        );
+
+        let mem2 = MemoryRecord::new(
+            MemoryType::Semantic,
+            "Second memory with same content",
+            Scope::Global,
+        )
+        .with_tier(MemoryTier::Working);
+        engine.store().insert_or_update_memory(&mem2).unwrap();
+
+        let reuse_args = PromoteArgs {
+            id: mem2.id.to_string(),
+            entity_type: "memory".to_string(),
+            reason: None,
+            yes: true,
+            to_global: false,
+            generate_token: false,
+            token: Some(token),
+            approver: None,
+            json: true,
+        };
+        assert!(
+            run_promote(reuse_args, Arc::clone(&engine)).await.is_err(),
+            "CLI promotion with consumed token must fail"
+        );
+    }
+
+    #[tokio::test]
+    pub async fn test_cli_promote_interactive_and_flag_records() {
+        let engine = Arc::new(SqliteMemoryEngine::open_in_memory(None).unwrap());
+
+        let mem = MemoryRecord::new(
+            MemoryType::Procedural,
+            "Always run database migrations in transactions",
+            Scope::Global,
+        )
+        .with_tier(MemoryTier::Working);
+
+        engine.store().insert_or_update_memory(&mem).unwrap();
+
+        let args = PromoteArgs {
+            id: mem.id.to_string(),
+            entity_type: "memory".to_string(),
+            reason: Some("Reliability baseline".to_string()),
+            yes: true,
+            to_global: false,
+            generate_token: false,
+            token: None,
+            approver: Some("bob".to_string()),
+            json: true,
+        };
+
+        run_promote(args, Arc::clone(&engine)).await.unwrap();
+
+        let promoted = engine.store().get_memory(&mem.id).unwrap().unwrap();
+        assert_eq!(promoted.tier, MemoryTier::Core);
+        assert!(promoted.approved_by_human);
+        let appr = promoted.human_approval.expect("human_approval record");
+        assert_eq!(appr.approved_by, "bob");
+        assert_eq!(appr.channel, "cli_flag");
+    }
+
+    #[tokio::test]
+    pub async fn test_cli_promote_semantic_fact_with_token() {
+        let engine = Arc::new(SqliteMemoryEngine::open_in_memory(None).unwrap());
+
+        let fact = SemanticFact::new(
+            "Service port must be greater than 1024",
+            "security",
+            Scope::Global,
+        )
+        .with_tier(MemoryTier::Working);
+
+        engine.store().insert_or_update_semantic_fact(&fact).unwrap();
+
+        let hash = blake3::hash(fact.statement.as_bytes()).to_hex().to_string();
+        let token = engine
+            .generate_approval_token(&fact.id, "fact", &hash, "security-lead", 1800, Some("RFC-011"))
+            .unwrap();
+
+        let args = PromoteArgs {
+            id: fact.id.to_string(),
+            entity_type: "fact".to_string(),
+            reason: Some("RFC-011".to_string()),
+            yes: true,
+            to_global: false,
+            generate_token: false,
+            token: Some(token),
+            approver: None,
+            json: true,
+        };
+
+        run_promote(args, Arc::clone(&engine)).await.unwrap();
+
+        let promoted = engine.store().get_semantic_fact(&fact.id).unwrap().unwrap();
+        assert_eq!(promoted.tier, MemoryTier::Core);
+        assert!(promoted.approved_by_human);
+        let appr = promoted.human_approval.expect("human_approval record");
+        assert_eq!(appr.approved_by, "security-lead");
+        assert_eq!(appr.channel, "approval_token");
+        assert_eq!(appr.content_hash, hash);
+    }
 }
