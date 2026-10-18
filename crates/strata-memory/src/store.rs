@@ -1600,6 +1600,123 @@ impl SqliteStore {
         Ok(results)
     }
 
+    /// Stream vector candidate memories that have non-null embeddings within bi-temporal and scope bounds.
+    /// Eliminates premature chronological truncation (`ORDER BY created_at DESC LIMIT N`) so cosine similarity
+    /// can be computed across the eligible corpus.
+    pub fn for_each_vector_candidate_as_of<F>(
+        &self,
+        scope: Option<&Scope>,
+        memory_types: Option<&[MemoryType]>,
+        as_of_time: Option<DateTime<Utc>>,
+        as_of_commit: Option<&str>,
+        as_of_branch: Option<&str>,
+        mut callback: F,
+    ) -> Result<(), StrataError>
+    where
+        F: FnMut(MemoryRecord) -> Result<bool, StrataError>,
+    {
+        let conn = self
+            .conn
+            .lock()
+            .map_err(|_| StrataError::Database("Lock poisoned on SQLite connection".to_string()))?;
+
+        let mut query =
+            "SELECT id, memory_type, content, summary, scope, tier, approved_by_human, importance,
+                    confidence, tags_json, created_at, updated_at, access_count,
+                    last_accessed_at, evidence_ids_json, embedding, metadata_json,
+                    embedding_model, embedding_version
+             FROM memories WHERE embedding IS NOT NULL"
+                .to_string();
+
+        let mut params_vec: Vec<Box<dyn rusqlite::ToSql>> = Vec::new();
+
+        if let Some(sc) = scope {
+            if *sc != Scope::Global {
+                query.push_str(" AND (scope = ? OR scope = 'global')");
+                params_vec.push(Box::new(sc.to_string()));
+            }
+        }
+
+        if let Some(types) = memory_types {
+            if !types.is_empty() {
+                let type_strs: Vec<String> = types.iter().map(|t| t.to_string()).collect();
+                let placeholders = vec!["?"; type_strs.len()].join(",");
+                query.push_str(&format!(" AND memory_type IN ({placeholders})"));
+                for t in type_strs {
+                    params_vec.push(Box::new(t));
+                }
+            }
+        }
+
+        if let Some(t) = as_of_time {
+            let t_str = t.to_rfc3339();
+            query.push_str(" AND COALESCE(valid_from, created_at) <= ? AND (valid_until IS NULL OR valid_until > ?)");
+            params_vec.push(Box::new(t_str.clone()));
+            params_vec.push(Box::new(t_str));
+        }
+
+        if let Some(c) = as_of_commit {
+            query.push_str(" AND (git_commit_hash = ? OR json_extract(metadata_json, '$.git_commit_hash') = ? OR json_extract(metadata_json, '$.git_commit') = ? OR json_extract(metadata_json, '$.commit') = ?)");
+            params_vec.push(Box::new(c.to_string()));
+            params_vec.push(Box::new(c.to_string()));
+            params_vec.push(Box::new(c.to_string()));
+            params_vec.push(Box::new(c.to_string()));
+        }
+
+        if let Some(b) = as_of_branch {
+            if b == "main" || b == "master" {
+                query.push_str(" AND (git_branch IS NULL OR git_branch = 'main' OR git_branch = 'master')");
+            } else if b != "*" && b != "all" {
+                query.push_str(" AND (git_branch IS NULL OR git_branch = 'main' OR git_branch = 'master' OR git_branch = ?)");
+                params_vec.push(Box::new(b.to_string()));
+            }
+        }
+
+        let mut stmt = conn
+            .prepare(&query)
+            .map_err(|e| StrataError::Database(e.to_string()))?;
+
+        let params_slice: Vec<&dyn rusqlite::ToSql> =
+            params_vec.iter().map(|b| b.as_ref()).collect();
+
+        let rows = stmt
+            .query_map(params_slice.as_slice(), |row| Self::row_to_memory(row))
+            .map_err(|e| StrataError::Database(e.to_string()))?;
+
+        for r in rows {
+            let record = r.map_err(|e| StrataError::Database(e.to_string()))?;
+            let keep_going = callback(record)?;
+            if !keep_going {
+                break;
+            }
+        }
+        Ok(())
+    }
+
+    /// Retrieve all vector candidates as a collection within bi-temporal and scope bounds.
+    pub fn get_vector_candidates_as_of(
+        &self,
+        scope: Option<&Scope>,
+        memory_types: Option<&[MemoryType]>,
+        as_of_time: Option<DateTime<Utc>>,
+        as_of_commit: Option<&str>,
+        as_of_branch: Option<&str>,
+    ) -> Result<Vec<MemoryRecord>, StrataError> {
+        let mut results = Vec::new();
+        self.for_each_vector_candidate_as_of(
+            scope,
+            memory_types,
+            as_of_time,
+            as_of_commit,
+            as_of_branch,
+            |rec| {
+                results.push(rec);
+                Ok(true)
+            },
+        )?;
+        Ok(results)
+    }
+
     /// Search memories using FTS5 Porter stemmer.
     /// Returns (MemoryRecord, raw BM25 score).
     pub fn search_fts(
