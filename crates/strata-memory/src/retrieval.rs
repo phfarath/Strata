@@ -898,6 +898,13 @@ impl HybridRanker {
             .filter(|_| !active_files.is_empty())
             .map(|prox| prox.compute_hop_distances(active_files));
 
+        let decay_calc = if self.config.recency_weight > 0.0 {
+            Some(crate::decay::DecayCalculator::with_default_config())
+        } else {
+            None
+        };
+        let eval_time = as_of_time.unwrap_or_else(Utc::now);
+
         // Apply quality weighting (importance & confidence) and active file proximity boost
         for (id, score) in score_map.iter_mut() {
             if let Some(rec) = record_map.get(id) {
@@ -930,11 +937,9 @@ impl HybridRanker {
                 *score *= importance_factor * confidence_factor;
 
                 // Continuous recency weighting via ACT-R / Ebbinghaus retention
-                if self.config.recency_weight > 0.0 {
-                    let decay_calc = crate::decay::DecayCalculator::with_default_config();
-                    let eval_time = as_of_time.unwrap_or_else(Utc::now);
+                if let Some(ref calc) = decay_calc {
                     let access_times = rec.last_accessed_at.map(|t| vec![t]).unwrap_or_default();
-                    let metrics = decay_calc.evaluate_decay_with_tier(
+                    let metrics = calc.evaluate_decay_with_tier(
                         rec.tier,
                         rec.importance,
                         rec.confidence,
