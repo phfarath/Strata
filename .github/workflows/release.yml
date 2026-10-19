@@ -7,17 +7,59 @@ on:
   workflow_dispatch:
     inputs:
       tag_name:
-        description: 'Git tag to build and publish release for (e.g. v0.1.1)'
-        required: false
+        description: 'Git tag to build and publish release for (e.g. v0.1.2)'
+        required: true
         type: string
 
 permissions:
   contents: write
 
 jobs:
+  prepare:
+    name: Resolve release tag
+    runs-on: ubuntu-latest
+    outputs:
+      tag: ${{ steps.resolve.outputs.tag }}
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Resolve and validate tag
+        id: resolve
+        shell: bash
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          REF_NAME: ${{ github.ref_name }}
+          INPUT_TAG: ${{ github.event.inputs.tag_name }}
+        run: |
+          TAG="$INPUT_TAG"
+          if [ "$EVENT_NAME" = "push" ]; then
+            TAG="$REF_NAME"
+          fi
+
+          if [ -z "$TAG" ]; then
+            echo "::error::A tag_name input is required for manual releases."
+            exit 1
+          fi
+
+          git fetch --tags --force
+
+          if ! git rev-parse "refs/tags/${TAG}^{commit}" > /dev/null 2>&1; then
+            echo "::error::Tag '${TAG}' does not exist in this repository."
+            exit 1
+          fi
+
+          echo "Resolved release tag: ${TAG}"
+          echo "tag=${TAG}" >> "$GITHUB_OUTPUT"
+
   build-release:
     name: Build (${{ matrix.target }})
+    needs: prepare
     runs-on: ${{ matrix.os }}
+    env:
+      RELEASE_TAG: ${{ needs.prepare.outputs.tag }}
     strategy:
       fail-fast: false
       matrix:
@@ -50,6 +92,19 @@ jobs:
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
+        with:
+          ref: refs/tags/${{ needs.prepare.outputs.tag }}
+          fetch-depth: 0
+
+      - name: Validate checkout is the release tag
+        shell: bash
+        run: |
+          EXPECTED="$(git rev-parse "refs/tags/${RELEASE_TAG}^{commit}")"
+          ACTUAL="$(git rev-parse HEAD)"
+          if [ "$EXPECTED" != "$ACTUAL" ]; then
+            echo "::error::Checkout HEAD (${ACTUAL}) does not match tag ${RELEASE_TAG} (${EXPECTED})."
+            exit 1
+          fi
 
       - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@stable
@@ -63,8 +118,7 @@ jobs:
         if: matrix.archive_ext == 'tar.gz'
         shell: bash
         run: |
-          TAG="${{ github.event.inputs.tag_name || github.ref_name }}"
-          PKG_NAME="strata-${TAG}-${{ matrix.target }}"
+          PKG_NAME="strata-${RELEASE_TAG}-${{ matrix.target }}"
           mkdir -p "dist/${PKG_NAME}"
           cp "target/${{ matrix.target }}/release/${{ matrix.bin_name }}" "dist/${PKG_NAME}/"
           cp README.md LICENSE-MIT LICENSE-APACHE "dist/${PKG_NAME}/"
@@ -76,8 +130,7 @@ jobs:
         if: matrix.archive_ext == 'zip'
         shell: pwsh
         run: |
-          $tag = "${{ github.event.inputs.tag_name || github.ref_name }}"
-          $pkgName = "strata-$tag-${{ matrix.target }}"
+          $pkgName = "strata-$env:RELEASE_TAG-${{ matrix.target }}"
           New-Item -ItemType Directory -Force -Path "dist/$pkgName" | Out-Null
           Copy-Item "target/${{ matrix.target }}/release/${{ matrix.bin_name }}" "dist/$pkgName/"
           Copy-Item README.md, LICENSE-MIT, LICENSE-APACHE "dist/$pkgName/"
@@ -85,10 +138,47 @@ jobs:
           $hash = (Get-FileHash "dist/$pkgName.zip" -Algorithm SHA256).Hash.ToLower()
           "$hash  $pkgName.zip" | Out-File "dist/$pkgName.zip.sha256" -Encoding ascii
 
+      - name: Smoke-test packaged binary (Unix)
+        if: matrix.archive_ext == 'tar.gz'
+        shell: bash
+        run: |
+          PKG_NAME="strata-${RELEASE_TAG}-${{ matrix.target }}"
+          mkdir -p "dist/verify-${PKG_NAME}"
+          tar -xzf "dist/${PKG_NAME}.tar.gz" -C "dist/verify-${PKG_NAME}" --strip-components=1
+          BIN="dist/verify-${PKG_NAME}/${{ matrix.bin_name }}"
+          OUTPUT="$("$BIN" --version)"
+          echo "$OUTPUT"
+          EXPECTED_VERSION="${RELEASE_TAG#v}"
+          case "$OUTPUT" in
+            *"$EXPECTED_VERSION"*) ;;
+            *)
+              echo "::error::Packaged binary version does not match tag ${RELEASE_TAG}: ${OUTPUT}"
+              exit 1
+              ;;
+          esac
+
+      - name: Smoke-test packaged binary (Windows)
+        if: matrix.archive_ext == 'zip'
+        shell: pwsh
+        run: |
+          $pkgName = "strata-$env:RELEASE_TAG-${{ matrix.target }}"
+          $verifyDir = "dist/verify-$pkgName"
+          Expand-Archive -Path "dist/$pkgName.zip" -DestinationPath $verifyDir -Force
+          $bin = Join-Path $verifyDir "$pkgName/${{ matrix.bin_name }}"
+          $output = & $bin --version
+          $exitCode = $LASTEXITCODE
+          $outputText = ($output | Out-String).Trim()
+          if ($exitCode -ne 0) { throw "Packaged binary failed to run: $outputText" }
+          $expected = $env:RELEASE_TAG -replace '^v', ''
+          if ($outputText -notmatch [regex]::Escape($expected)) {
+            throw "Packaged binary version '$outputText' does not match tag '$env:RELEASE_TAG'"
+          }
+          Write-Output $outputText
+
       - name: Upload binaries to GitHub Release
         uses: softprops/action-gh-release@v2
         with:
-          tag_name: ${{ github.event.inputs.tag_name || github.ref_name }}
+          tag_name: ${{ needs.prepare.outputs.tag }}
           generate_release_notes: true
           files: |
             dist/*.tar.gz

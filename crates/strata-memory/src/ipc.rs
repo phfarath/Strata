@@ -3,7 +3,7 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 use std::time::Duration;
 use tokio::io::{AsyncBufReadExt, AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt, BufReader};
-use tokio::sync::{broadcast, mpsc, watch};
+use tokio::sync::{broadcast, mpsc, oneshot, watch};
 use tracing::{debug, error, info, warn};
 
 use strata_core::a2a::{IpcEvent, IpcMessage};
@@ -88,6 +88,7 @@ impl IpcServer {
     pub async fn bind(endpoint: &str) -> Result<Self, StrataError> {
         let (tx, _) = broadcast::channel(BROADCAST_CAPACITY);
         let (shutdown_tx, shutdown_rx) = watch::channel(false);
+        let (ready_tx, ready_rx) = oneshot::channel();
         let is_running = Arc::new(AtomicBool::new(true));
 
         let endpoint_str = endpoint.to_string();
@@ -99,7 +100,8 @@ impl IpcServer {
             let pipe_name = endpoint_str.clone();
             tokio::spawn(async move {
                 if let Err(e) =
-                    run_windows_listener(&pipe_name, server_tx, shutdown_rx, running_flag).await
+                    run_windows_listener(&pipe_name, server_tx, shutdown_rx, running_flag, ready_tx)
+                        .await
                 {
                     error!("Windows Named Pipe listener exited with error: {e}");
                 }
@@ -111,7 +113,8 @@ impl IpcServer {
             let sock_path = PathBuf::from(&endpoint_str);
             tokio::spawn(async move {
                 if let Err(e) =
-                    run_unix_listener(&sock_path, server_tx, shutdown_rx, running_flag).await
+                    run_unix_listener(&sock_path, server_tx, shutdown_rx, running_flag, ready_tx)
+                        .await
                 {
                     error!("Unix Domain Socket listener exited with error: {e}");
                 }
@@ -119,9 +122,35 @@ impl IpcServer {
         };
 
         #[cfg(not(any(windows, unix)))]
-        let task = tokio::spawn(async move {
-            warn!("A2A IPC not supported on current OS platform");
-        });
+        let task = {
+            let _ = (server_tx, shutdown_rx, running_flag);
+            tokio::spawn(async move {
+                let _ = ready_tx.send(Err(StrataError::Internal(
+                    "A2A IPC not supported on current OS platform".to_string(),
+                )));
+                warn!("A2A IPC not supported on current OS platform");
+            })
+        };
+
+        match tokio::time::timeout(Duration::from_secs(5), ready_rx).await {
+            Ok(Ok(Ok(()))) => {}
+            Ok(Ok(Err(e))) => {
+                task.abort();
+                return Err(e);
+            }
+            Ok(Err(_)) => {
+                task.abort();
+                return Err(StrataError::Internal(
+                    "IPC listener task exited before signaling readiness".to_string(),
+                ));
+            }
+            Err(_) => {
+                task.abort();
+                return Err(StrataError::Internal(
+                    "Timed out waiting for IPC listener readiness".to_string(),
+                ));
+            }
+        }
 
         Ok(Self {
             endpoint: endpoint_str,
@@ -261,14 +290,29 @@ async fn run_windows_listener(
     tx: broadcast::Sender<IpcMessage>,
     mut shutdown_rx: watch::Receiver<bool>,
     running_flag: Arc<AtomicBool>,
+    ready_tx: oneshot::Sender<Result<(), StrataError>>,
 ) -> Result<(), StrataError> {
     use tokio::net::windows::named_pipe::ServerOptions;
 
     // Allocate the very first pipe instance
-    let mut server = ServerOptions::new()
+    let mut server = match ServerOptions::new()
         .first_pipe_instance(true)
         .create(pipe_name)
-        .map_err(|e| StrataError::Internal(format!("Failed to create initial Named Pipe: {e}")))?;
+    {
+        Ok(server) => server,
+        Err(e) => {
+            let _ = ready_tx.send(Err(StrataError::Internal(format!(
+                "Failed to create initial Named Pipe: {e}"
+            ))));
+            running_flag.store(false, Ordering::SeqCst);
+            return Ok(());
+        }
+    };
+
+    if ready_tx.send(Ok(())).is_err() {
+        running_flag.store(false, Ordering::SeqCst);
+        return Ok(());
+    }
 
     info!("Windows A2A Named Pipe server listening on {pipe_name}");
 
@@ -320,6 +364,7 @@ async fn run_unix_listener(
     tx: broadcast::Sender<IpcMessage>,
     mut shutdown_rx: watch::Receiver<bool>,
     running_flag: Arc<AtomicBool>,
+    ready_tx: oneshot::Sender<Result<(), StrataError>>,
 ) -> Result<(), StrataError> {
     use tokio::net::{UnixListener, UnixStream};
 
@@ -327,10 +372,12 @@ async fn run_unix_listener(
     if sock_path.exists() {
         match UnixStream::connect(sock_path).await {
             Ok(_) => {
-                return Err(StrataError::Internal(format!(
+                let _ = ready_tx.send(Err(StrataError::Internal(format!(
                     "Active Strata IPC server already listening at {:?}",
                     sock_path
-                )));
+                ))));
+                running_flag.store(false, Ordering::SeqCst);
+                return Ok(());
             }
             Err(_) => {
                 // Stale socket from previous crash; remove safely
@@ -343,14 +390,28 @@ async fn run_unix_listener(
         let _ = std::fs::create_dir_all(parent);
     }
 
-    let listener = UnixListener::bind(sock_path)
-        .map_err(|e| StrataError::Internal(format!("Failed to bind Unix socket: {e}")))?;
+    let listener = match UnixListener::bind(sock_path) {
+        Ok(listener) => listener,
+        Err(e) => {
+            let _ = ready_tx.send(Err(StrataError::Internal(format!(
+                "Failed to bind Unix socket: {e}"
+            ))));
+            running_flag.store(false, Ordering::SeqCst);
+            return Ok(());
+        }
+    };
 
     // Restrict permissions to owner only (0600)
     #[cfg(unix)]
     {
         use std::os::unix::fs::PermissionsExt;
         let _ = std::fs::set_permissions(sock_path, std::fs::Permissions::from_mode(0o600));
+    }
+
+    if ready_tx.send(Ok(())).is_err() {
+        let _ = std::fs::remove_file(sock_path);
+        running_flag.store(false, Ordering::SeqCst);
+        return Ok(());
     }
 
     info!("Unix A2A Domain Socket server listening on {:?}", sock_path);
@@ -623,8 +684,6 @@ impl IpcBrokerManager {
             Ok(server) => {
                 info!("Elected as workspace A2A IPC broker at {endpoint}");
                 let server_arc = Arc::new(server);
-                // Connect local client to self
-                tokio::time::sleep(Duration::from_millis(50)).await;
                 let client = IpcClient::connect(&endpoint).await.ok().map(Arc::new);
                 (client, Some(server_arc))
             }
@@ -757,5 +816,65 @@ mod tests {
             srv.stop();
         }
         let _ = std::fs::remove_dir_all(&temp_dir);
+    }
+
+    fn test_endpoint(prefix: &str) -> (String, PathBuf) {
+        let id = uuid::Uuid::new_v4();
+
+        #[cfg(windows)]
+        {
+            let endpoint = format!(r"\\.\pipe\strata-{prefix}-{id}");
+            (endpoint.clone(), PathBuf::from(endpoint))
+        }
+
+        #[cfg(unix)]
+        {
+            let path = PathBuf::from(format!(
+                "/tmp/strata-{prefix}-{}.sock",
+                &id.to_string()[..8]
+            ));
+            (path.to_string_lossy().to_string(), path)
+        }
+    }
+
+    #[tokio::test]
+    async fn test_bind_returns_after_endpoint_is_ready() {
+        let (endpoint, _path) = test_endpoint("ready");
+        let server = IpcServer::bind(&endpoint).await.expect("bind server");
+
+        #[cfg(unix)]
+        assert!(
+            _path.exists(),
+            "Unix socket must exist by the time bind returns"
+        );
+
+        #[cfg(windows)]
+        {
+            use tokio::net::windows::named_pipe::ClientOptions;
+            let probe = ClientOptions::new().open(&endpoint);
+            assert!(
+                probe.is_ok(),
+                "Named Pipe must be connectable by the time bind returns: {:?}",
+                probe.err()
+            );
+        }
+
+        server.stop();
+        tokio::time::sleep(Duration::from_millis(50)).await;
+    }
+
+    #[tokio::test]
+    async fn test_bind_fails_when_endpoint_is_already_active() {
+        let (endpoint, _) = test_endpoint("duplicate");
+        let server = IpcServer::bind(&endpoint).await.expect("first bind");
+
+        let second = IpcServer::bind(&endpoint).await;
+        assert!(
+            second.is_err(),
+            "a second bind on an active endpoint must fail"
+        );
+
+        server.stop();
+        tokio::time::sleep(Duration::from_millis(50)).await;
     }
 }
