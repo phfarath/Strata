@@ -1,10 +1,34 @@
 const fs = require('fs');
 const path = require('path');
 
+const ANALYSIS_COMPLETED = 'completed';
+const ANALYSIS_PARTIAL = 'partial';
+const ANALYSIS_FAILED = 'failed';
+const ANALYSIS_UNAVAILABLE = 'unavailable';
+const ANALYSIS_STATUSES = new Set([
+  ANALYSIS_COMPLETED,
+  ANALYSIS_PARTIAL,
+  ANALYSIS_FAILED,
+  ANALYSIS_UNAVAILABLE,
+]);
+
+function normalizeAnalysisStatus(value) {
+  if (typeof value !== 'string') return ANALYSIS_COMPLETED;
+  const normalized = value.toLowerCase();
+  return ANALYSIS_STATUSES.has(normalized) ? normalized : ANALYSIS_PARTIAL;
+}
+
 /**
  * Parses and formats Strata analysis into a structured PR review markdown document.
  */
 function formatReport(blastRadius, hookPrompt, prTitle) {
+  const analysisStatus = normalizeAnalysisStatus(blastRadius.analysis_status);
+  const analysisError = typeof blastRadius.analysis_error === 'string'
+    ? blastRadius.analysis_error
+    : '';
+  const analysisFailed = analysisStatus === ANALYSIS_FAILED || analysisStatus === ANALYSIS_UNAVAILABLE;
+  const analysisPartial = analysisStatus === ANALYSIS_PARTIAL;
+
   let riskScore = 0.0;
   if (typeof blastRadius.highest_risk_score === 'number') {
     riskScore = blastRadius.highest_risk_score;
@@ -30,6 +54,12 @@ function formatReport(blastRadius, hookPrompt, prTitle) {
     riskLevel = 'Moderate';
     riskEmoji = '🟡';
     riskBadge = '🟡 **MODERATE RISK**';
+  }
+
+  if (analysisFailed) {
+    riskLevel = 'Unavailable';
+    riskEmoji = '⚪';
+    riskBadge = '⚪ **ANALYSIS UNAVAILABLE**';
   }
 
   // Aggregate invariants
@@ -100,9 +130,12 @@ function formatReport(blastRadius, hookPrompt, prTitle) {
   const breakingRisks = blastRadius.breaking_risks_count !== undefined
     ? blastRadius.breaking_risks_count
     : (allDirectImpacts.filter(i => i.is_breaking_risk).length + allTransitiveImpacts.filter(i => i.is_breaking_risk).length);
-  const safeToApply = blastRadius.safe_to_apply !== undefined
-    ? blastRadius.safe_to_apply
+  let safeToApply = blastRadius.safe_to_apply !== undefined
+    ? Boolean(blastRadius.safe_to_apply)
     : (riskScore < 0.75 && breakingRisks === 0 && invariants.size === 0);
+  if (analysisFailed) {
+    safeToApply = false;
+  }
 
   const lines = [];
 
@@ -111,6 +144,25 @@ function formatReport(blastRadius, hookPrompt, prTitle) {
   lines.push('## 🛡️ Strata Guard — Cognitive Architecture & PR Review');
   lines.push('');
   lines.push('> Automated architectural risk assessment powered by **Strata Cognitive Memory & Causal World Model**.');
+  lines.push('');
+
+  lines.push('### 🧪 Analysis Status');
+  lines.push('');
+  if (analysisFailed) {
+    lines.push('> [!CAUTION]');
+    lines.push('> **Analysis failed or unavailable.** This report is not a PASS: `safe_to_apply` is forced to `false`.');
+    if (analysisError) {
+      lines.push(`> \n> **Reason**: ${analysisError}`);
+    }
+  } else if (analysisPartial) {
+    lines.push('> [!WARNING]');
+    lines.push('> **Partial analysis.** Blast-radius results are available, but some cognitive checks could not run.');
+    if (analysisError) {
+      lines.push(`> \n> **Reason**: ${analysisError}`);
+    }
+  } else {
+    lines.push('✅ **Blast-radius analysis completed successfully.**');
+  }
   lines.push('');
 
   // 1. 🎯 Causal Blast Radius & Risk Level
@@ -217,9 +269,19 @@ function formatReport(blastRadius, hookPrompt, prTitle) {
   // 4. 💡 Recommended Action & Verdict
   lines.push('### 💡 Recommended Action');
   lines.push('');
-  const verdictPass = safeToApply && riskScore < 0.50 && breakingRisks === 0 && invariants.size === 0;
+  const verdictPass = !analysisFailed && safeToApply && riskScore < 0.50 && breakingRisks === 0 && invariants.size === 0;
 
-  if (verdictPass) {
+  if (analysisFailed) {
+    lines.push('#### 🔴 **Verdict: ANALYSIS FAILED — NOT A PASS**');
+    lines.push('Strata Guard could not complete the causal blast-radius analysis, so safety cannot be asserted. Do not treat this report as approval.');
+    if (analysisError) {
+      lines.push('');
+      lines.push(`**Analysis error**: ${analysisError}`);
+    }
+  } else if (verdictPass && analysisPartial) {
+    lines.push('#### 🟡 **Verdict: PASS (PARTIAL ANALYSIS)**');
+    lines.push('Changes are within safe architectural thresholds, but some cognitive checks were unavailable. Review the analysis warning above.');
+  } else if (verdictPass) {
     lines.push('#### 🟢 **Verdict: PASS**');
     lines.push('Changes are within safe architectural thresholds. Contract invariants are satisfied, no high-risk ripple coupling was detected, and all memory guardrails passed.');
   } else {
@@ -248,26 +310,30 @@ function formatReport(blastRadius, hookPrompt, prTitle) {
     riskLevel,
     riskScore,
     riskPct,
-    safeToApply
+    safeToApply,
+    analysisStatus,
+    analysisError
   };
 }
 
 /**
  * Main entrypoint called by actions/github-script.
  */
-module.exports = async ({ github, context, core }) => {
+async function runGuard({ github, context, core }) {
   try {
     const reportsDir = path.resolve(process.env.GITHUB_WORKSPACE || '.', '.strata-reports');
     const blastPath = path.join(reportsDir, 'blast-radius.json');
     const hookPath = path.join(reportsDir, 'hook-prompt.json');
 
     let blastRadius = {
+      analysis_status: ANALYSIS_UNAVAILABLE,
+      analysis_error: 'blast-radius.json was missing or empty',
       modified_targets: [],
       total_impacted_nodes: 0,
       highest_risk_score: 0.0,
       breaking_risks_count: 0,
       triggered_anti_patterns: [],
-      safe_to_apply: true,
+      safe_to_apply: false,
       blast_reports: []
     };
 
@@ -276,6 +342,7 @@ module.exports = async ({ github, context, core }) => {
       memories: [],
       query: ''
     };
+    let hookError = '';
 
     if (fs.existsSync(blastPath)) {
       try {
@@ -284,6 +351,7 @@ module.exports = async ({ github, context, core }) => {
           blastRadius = JSON.parse(rawBlast);
         }
       } catch (err) {
+        blastRadius.analysis_error = `failed to parse blast-radius.json: ${err.message}`;
         if (core) core.warning(`Failed parsing blast-radius.json: ${err.message}`);
       }
     }
@@ -293,11 +361,45 @@ module.exports = async ({ github, context, core }) => {
         const rawHook = fs.readFileSync(hookPath, 'utf8').trim();
         if (rawHook) {
           hookPrompt = JSON.parse(rawHook);
+        } else {
+          hookError = 'hook-prompt.json was empty';
         }
       } catch (err) {
+        hookError = `failed to parse hook-prompt.json: ${err.message}`;
         if (core) core.warning(`Failed parsing hook-prompt.json: ${err.message}`);
       }
+    } else {
+      hookError = 'hook-prompt.json was missing';
     }
+
+    let analysisStatus = normalizeAnalysisStatus(blastRadius.analysis_status);
+    let analysisError = typeof blastRadius.analysis_error === 'string'
+      ? blastRadius.analysis_error
+      : '';
+
+    if (hookPrompt.analysis_status === ANALYSIS_PARTIAL) {
+      if (analysisStatus === ANALYSIS_COMPLETED) {
+        analysisStatus = ANALYSIS_PARTIAL;
+      }
+      if (typeof hookPrompt.analysis_error === 'string' && hookPrompt.analysis_error) {
+        analysisError = analysisError
+          ? `${analysisError}; ${hookPrompt.analysis_error}`
+          : hookPrompt.analysis_error;
+      }
+    }
+
+    if (hookError) {
+      if (analysisStatus === ANALYSIS_COMPLETED) {
+        analysisStatus = ANALYSIS_PARTIAL;
+      }
+      analysisError = analysisError ? `${analysisError}; ${hookError}` : hookError;
+    }
+
+    blastRadius = {
+      ...blastRadius,
+      analysis_status: analysisStatus,
+      analysis_error: analysisError
+    };
 
     const prTitle = process.env.PR_TITLE || '';
     const report = formatReport(blastRadius, hookPrompt, prTitle);
@@ -307,7 +409,11 @@ module.exports = async ({ github, context, core }) => {
       core.setOutput('risk-level', report.riskLevel);
       core.setOutput('risk-score', report.riskPct.toString());
       core.setOutput('safe-to-apply', report.safeToApply.toString());
+      core.setOutput('analysis-status', report.analysisStatus);
       core.setOutput('report-markdown', report.markdown);
+      if (report.analysisStatus === ANALYSIS_FAILED || report.analysisStatus === ANALYSIS_UNAVAILABLE) {
+        core.warning('Strata Guard analysis is incomplete; safe_to_apply is false.');
+      }
     }
 
     // 2. Write to GITHUB_STEP_SUMMARY
@@ -374,7 +480,11 @@ module.exports = async ({ github, context, core }) => {
     }
     throw globalErr;
   }
-};
+}
+
+module.exports = runGuard;
+module.exports.formatReport = formatReport;
+module.exports.normalizeAnalysisStatus = normalizeAnalysisStatus;
 
 // Allow standalone execution: node reviewer.js
 if (require.main === module) {

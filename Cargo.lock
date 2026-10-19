@@ -3142,7 +3142,7 @@ checksum = "a2eb9349b6444b326872e140eb1cf5e7c522154d69e7a0ffb0fb81c06b37543f"
 
 [[package]]
 name = "strata-cli"
-version = "0.1.1"
+version = "0.1.2"
 dependencies = [
  "anyhow",
  "axum",
@@ -3173,7 +3173,7 @@ dependencies = [
 
 [[package]]
 name = "strata-core"
-version = "0.1.1"
+version = "0.1.2"
 dependencies = [
  "async-trait",
  "blake3",
@@ -3190,7 +3190,7 @@ dependencies = [
 
 [[package]]
 name = "strata-evals"
-version = "0.1.1"
+version = "0.1.2"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -3208,7 +3208,7 @@ dependencies = [
 
 [[package]]
 name = "strata-memory"
-version = "0.1.1"
+version = "0.1.2"
 dependencies = [
  "async-trait",
  "blake3",
@@ -3234,7 +3234,7 @@ dependencies = [
 
 [[package]]
 name = "strata-reasoning"
-version = "0.1.1"
+version = "0.1.2"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -3252,7 +3252,7 @@ dependencies = [
 
 [[package]]
 name = "strata-tools"
-version = "0.1.1"
+version = "0.1.2"
 dependencies = [
  "anyhow",
  "async-trait",

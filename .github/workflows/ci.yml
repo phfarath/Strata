@@ -39,6 +39,10 @@ jobs:
       - name: Run all workspace unit and integration tests
         run: cargo test --workspace
 
+      - name: Run Strata Guard reviewer tests
+        if: matrix.os == 'ubuntu-latest'
+        run: node --test .github/actions/strata-guard/reviewer.test.js
+
       - name: Verify code formatting
         if: matrix.os == 'ubuntu-latest'
         run: cargo fmt --all -- --check

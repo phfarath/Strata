@@ -30,11 +30,14 @@ inputs:
 
 outputs:
   risk-level:
-    description: 'Overall architectural risk level (Low, Moderate, Elevated, Critical)'
+    description: 'Overall architectural risk level (Low, Moderate, Elevated, Critical, Unavailable)'
     value: ${{ steps.review.outputs.risk-level }}
   risk-score:
     description: 'Pre-code risk score as a percentage integer (0-100)'
     value: ${{ steps.review.outputs.risk-score }}
+  analysis-status:
+    description: 'Blast-radius analysis status (completed, partial, failed, unavailable)'
+    value: ${{ steps.review.outputs.analysis-status }}
   safe-to-apply:
     description: 'Whether the patch simulation indicates the change is safe to apply'
     value: ${{ steps.review.outputs.safe-to-apply }}
@@ -130,12 +133,13 @@ runs:
 
         if [ -n "$FILES" ]; then
           echo "Executing: $EXE blast-radius --files \"$FILES\" --json"
-          $EXE blast-radius --files "$FILES" --json > .strata-reports/blast-radius.json || {
-            echo '{"modified_targets":[],"total_impacted_nodes":0,"highest_risk_score":0.0,"breaking_risks_count":0,"triggered_anti_patterns":[],"safe_to_apply":true,"blast_reports":[]}' > .strata-reports/blast-radius.json
-          }
+          if ! $EXE blast-radius --files "$FILES" --json > .strata-reports/blast-radius.json 2> .strata-reports/blast-radius.err; then
+            echo "::warning::Strata Guard blast-radius analysis failed; safe_to_apply is forced to false."
+            printf '%s' '{"analysis_status":"failed","analysis_error":"blast-radius command failed; see .strata-reports/blast-radius.err","modified_targets":[],"total_impacted_nodes":0,"highest_risk_score":0.0,"breaking_risks_count":0,"triggered_anti_patterns":[],"safe_to_apply":false,"blast_reports":[]}' > .strata-reports/blast-radius.json
+          fi
         else
           echo "No modified files detected in diff. Generating clean baseline report."
-          echo '{"modified_targets":[],"total_impacted_nodes":0,"highest_risk_score":0.0,"breaking_risks_count":0,"triggered_anti_patterns":[],"safe_to_apply":true,"blast_reports":[]}' > .strata-reports/blast-radius.json
+          printf '%s' '{"analysis_status":"completed","modified_targets":[],"total_impacted_nodes":0,"highest_risk_score":0.0,"breaking_risks_count":0,"triggered_anti_patterns":[],"safe_to_apply":true,"blast_reports":[]}' > .strata-reports/blast-radius.json
         fi
 
     - name: Search Failure Anti-Patterns & Cognitive Memory
@@ -151,9 +155,10 @@ runs:
 
         QUERY="${PR_TITLE:-pull request review}"
         echo "Executing: $EXE hook user-prompt --query \"$QUERY\" --json"
-        $EXE hook user-prompt --query "$QUERY" --json > .strata-reports/hook-prompt.json || {
-          echo '{"known_failures":[],"memories":[],"query":""}' > .strata-reports/hook-prompt.json
-        }
+        if ! $EXE hook user-prompt --query "$QUERY" --json > .strata-reports/hook-prompt.json 2> .strata-reports/hook-prompt.err; then
+          echo "::warning::Strata Guard cognitive memory hook failed; analysis is partial."
+          printf '%s' '{"analysis_status":"partial","analysis_error":"hook user-prompt command failed; see .strata-reports/hook-prompt.err","known_failures":[],"memories":[],"query":""}' > .strata-reports/hook-prompt.json
+        fi
 
     - name: Strata Guard Reviewer & Sticky Comment
       id: review
