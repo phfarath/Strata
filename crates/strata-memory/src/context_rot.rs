@@ -64,11 +64,7 @@ pub struct MemoryInjectionRecord {
 }
 
 impl MemoryInjectionRecord {
-    pub fn new(
-        memory_id: Uuid,
-        session_id: impl Into<String>,
-        outcome: InjectionOutcome,
-    ) -> Self {
+    pub fn new(memory_id: Uuid, session_id: impl Into<String>, outcome: InjectionOutcome) -> Self {
         Self {
             id: Uuid::new_v4(),
             memory_id,
@@ -127,9 +123,9 @@ impl MemoryEfficacyMetric {
         for rec in outcomes {
             match rec.outcome {
                 InjectionOutcome::Success => success_count += 1,
-                InjectionOutcome::Failure | InjectionOutcome::Rejected | InjectionOutcome::Error => {
-                    failure_count += 1
-                }
+                InjectionOutcome::Failure
+                | InjectionOutcome::Rejected
+                | InjectionOutcome::Error => failure_count += 1,
             }
         }
 
@@ -145,8 +141,8 @@ impl MemoryEfficacyMetric {
             0.0
         };
 
-        let is_poisoned = total_injections >= config.min_samples
-            && rejection_rate > config.rejection_threshold;
+        let is_poisoned =
+            total_injections >= config.min_samples && rejection_rate > config.rejection_threshold;
 
         let penalty_factor = if is_poisoned {
             config.penalty_multiplier
@@ -311,7 +307,8 @@ impl ContextRotDetector {
                     .get("status")
                     .and_then(|v| v.as_str())
                     .map_or(false, |s| {
-                        s.eq_ignore_ascii_case("quarantined") || s.eq_ignore_ascii_case("suppressed")
+                        s.eq_ignore_ascii_case("quarantined")
+                            || s.eq_ignore_ascii_case("suppressed")
                     });
 
             if is_meta_suppressed {
@@ -373,7 +370,10 @@ mod tests {
         assert_eq!(m1.total_injections, 1);
         assert_eq!(m1.failure_count, 1);
         assert_eq!(m1.success_count, 0);
-        assert!(!m1.is_poisoned, "Insufficient samples for poisoning verdict");
+        assert!(
+            !m1.is_poisoned,
+            "Insufficient samples for poisoning verdict"
+        );
 
         // 5 samples: 4 failures, 1 success -> 80% failure rate > 60%
         let mut outcomes_5 = Vec::new();

@@ -29,7 +29,10 @@ pub struct PlanArgs {
     pub json: bool,
 }
 
-pub async fn run_plan(args: PlanArgs, coordinator: Option<strata_memory::StigmergyCoordinator>) -> Result<()> {
+pub async fn run_plan(
+    args: PlanArgs,
+    coordinator: Option<strata_memory::StigmergyCoordinator>,
+) -> Result<()> {
     let goal = args
         .goal
         .unwrap_or_else(|| "Refactor memory engine and add Redis sync".to_string());
@@ -64,7 +67,10 @@ pub async fn run_plan(args: PlanArgs, coordinator: Option<strata_memory::Stigmer
         } else {
             render_plan_preview(&goal, &dag);
             if args.persist {
-                println!("💾 Plan persisted to blackboard with PLAN ID: \x1b[1;36m{}\x1b[0m", plan_id);
+                println!(
+                    "💾 Plan persisted to blackboard with PLAN ID: \x1b[1;36m{}\x1b[0m",
+                    plan_id
+                );
                 println!("   Agents can claim subtasks using: \x1b[1mstrata task claim --plan {} --next\x1b[0m\n", plan_id);
             }
         }

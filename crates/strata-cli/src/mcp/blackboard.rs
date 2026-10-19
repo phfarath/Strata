@@ -8,9 +8,7 @@ use std::sync::Arc;
 use serde_json::{json, Value};
 use uuid::Uuid;
 
-use strata_core::a2a::{
-    A2aMessage, AgentCard, DomainAuthority, IpcEvent, TransactiveQuery,
-};
+use strata_core::a2a::{A2aMessage, AgentCard, DomainAuthority, IpcEvent, TransactiveQuery};
 use strata_core::blackboard::{TaskArtifact, TaskFilter, TaskStatus};
 use strata_memory::{IpcClient, StigmergyCoordinator};
 
@@ -22,7 +20,12 @@ const AGENT_ID: (&str, &str) = (
     "Identity of the calling agent (defaults to STRATA_AGENT_ID or host-pid)",
 );
 
-fn tool(name: &str, description: &str, props: &[(&str, &str, &str)], required: &[&str]) -> ToolDefinition {
+fn tool(
+    name: &str,
+    description: &str,
+    props: &[(&str, &str, &str)],
+    required: &[&str],
+) -> ToolDefinition {
     let properties: serde_json::Map<String, Value> = props
         .iter()
         .chain(std::iter::once(&(AGENT_ID.0, "string", AGENT_ID.1)))
@@ -154,7 +157,9 @@ pub async fn execute(
 }
 
 fn opt<'a>(args: &'a Value, key: &str) -> Option<&'a str> {
-    args.get(key).and_then(Value::as_str).filter(|s| !s.trim().is_empty())
+    args.get(key)
+        .and_then(Value::as_str)
+        .filter(|s| !s.trim().is_empty())
 }
 
 fn req<'a>(args: &'a Value, key: &str) -> Result<&'a str, String> {
@@ -167,7 +172,13 @@ async fn publish(ipc: Option<&Arc<IpcClient>>, event: IpcEvent) {
     }
 }
 
-fn state_changed(task_id: &str, plan_id: Option<String>, old: TaskStatus, new: TaskStatus, agent: &str) -> IpcEvent {
+fn state_changed(
+    task_id: &str,
+    plan_id: Option<String>,
+    old: TaskStatus,
+    new: TaskStatus,
+    agent: &str,
+) -> IpcEvent {
     IpcEvent::TaskStateChanged {
         task_id: task_id.to_string(),
         plan_id,
@@ -203,7 +214,9 @@ async fn run(
             }
             let filter = TaskFilter {
                 plan_id: opt(args, "plan").map(String::from),
-                status: opt(args, "status").map(|s| s.parse::<TaskStatus>()).transpose()?,
+                status: opt(args, "status")
+                    .map(|s| s.parse::<TaskStatus>())
+                    .transpose()?,
                 assigned_agent: opt(args, "agent").map(String::from),
                 limit: Some(args.get("limit").and_then(Value::as_u64).unwrap_or(50) as usize),
             };
@@ -211,12 +224,23 @@ async fn run(
         }
 
         "task_claim" => {
-            let ttl = args.get("ttl_seconds").and_then(Value::as_i64).unwrap_or(180);
+            let ttl = args
+                .get("ttl_seconds")
+                .and_then(Value::as_i64)
+                .unwrap_or(180);
             let supported_types: Option<Vec<&str>> = opt(args, "supported_types").map(|s| {
-                s.split(',').map(|t| t.trim()).filter(|t| !t.is_empty()).collect()
+                s.split(',')
+                    .map(|t| t.trim())
+                    .filter(|t| !t.is_empty())
+                    .collect()
             });
             let Some(task) = coordinator
-                .claim_task_atomic_typed(opt(args, "task_id"), &agent, ttl, supported_types.as_deref())
+                .claim_task_atomic_typed(
+                    opt(args, "task_id"),
+                    &agent,
+                    ttl,
+                    supported_types.as_deref(),
+                )
                 .map_err(err)?
             else {
                 return Ok(json!({
@@ -226,7 +250,13 @@ async fn run(
             };
             publish(
                 ipc,
-                state_changed(&task.task_id, task.plan_id.clone(), TaskStatus::Pending, TaskStatus::Claimed, &agent),
+                state_changed(
+                    &task.task_id,
+                    task.plan_id.clone(),
+                    TaskStatus::Pending,
+                    TaskStatus::Claimed,
+                    &agent,
+                ),
             )
             .await;
             let upstream: Vec<TaskArtifact> = task
@@ -241,7 +271,10 @@ async fn run(
         "task_progress" => {
             let id = req(args, "task_id")?;
             let gen = args.get("claim_generation").and_then(Value::as_i64);
-            if !coordinator.update_task_progress_with_generation(id, &agent, req(args, "message")?, gen).map_err(err)? {
+            if !coordinator
+                .update_task_progress_with_generation(id, &agent, req(args, "message")?, gen)
+                .map_err(err)?
+            {
                 return Err(format!("Task '{id}' not found, not active, assigned to another agent, or invalid claim generation."));
             }
             Ok(json!({ "status": "ok", "task_id": id, "agent": agent }))
@@ -253,31 +286,57 @@ async fn run(
             let artifact = opt(args, "artifact_content")
                 .map(|payload| TaskArtifact::new(new_id("art"), id, &agent, "text", payload));
             if !coordinator
-                .complete_task_with_generation(id, &agent, opt(args, "summary"), artifact.as_ref(), gen)
+                .complete_task_with_generation(
+                    id,
+                    &agent,
+                    opt(args, "summary"),
+                    artifact.as_ref(),
+                    gen,
+                )
                 .map_err(err)?
             {
                 return Err(format!("Task '{id}' was not found, not active, assigned to another agent, or invalid claim generation."));
             }
-            publish(ipc, state_changed(id, None, TaskStatus::Running, TaskStatus::Completed, &agent)).await;
-            Ok(json!({ "status": "completed", "task_id": id, "artifact_recorded": artifact.is_some() }))
+            publish(
+                ipc,
+                state_changed(id, None, TaskStatus::Running, TaskStatus::Completed, &agent),
+            )
+            .await;
+            Ok(
+                json!({ "status": "completed", "task_id": id, "artifact_recorded": artifact.is_some() }),
+            )
         }
 
         "task_fail" => {
             let id = req(args, "task_id")?;
             let gen = args.get("claim_generation").and_then(Value::as_i64);
             let error = req(args, "error")?;
-            if !coordinator.fail_task_with_generation(id, &agent, error, gen).map_err(err)? {
+            if !coordinator
+                .fail_task_with_generation(id, &agent, error, gen)
+                .map_err(err)?
+            {
                 return Err(format!("Task '{id}' was not found, not active, assigned to another agent, or invalid claim generation."));
             }
-            publish(ipc, state_changed(id, None, TaskStatus::Running, TaskStatus::Failed, &agent)).await;
+            publish(
+                ipc,
+                state_changed(id, None, TaskStatus::Running, TaskStatus::Failed, &agent),
+            )
+            .await;
             Ok(json!({ "status": "failed", "task_id": id, "error": error }))
         }
 
         "task_reclaim" => {
-            let stale = args.get("stale_secs").and_then(Value::as_i64).unwrap_or(600);
+            let stale = args
+                .get("stale_secs")
+                .and_then(Value::as_i64)
+                .unwrap_or(600);
             let reclaimed = coordinator.reclaim_stale_tasks(stale).map_err(err)?;
             for id in &reclaimed {
-                publish(ipc, state_changed(id, None, TaskStatus::Running, TaskStatus::Pending, &agent)).await;
+                publish(
+                    ipc,
+                    state_changed(id, None, TaskStatus::Running, TaskStatus::Pending, &agent),
+                )
+                .await;
             }
             Ok(json!({ "reclaimed": reclaimed }))
         }
@@ -333,7 +392,9 @@ async fn run(
 
         "a2a_directory" => {
             if let Some(domain) = opt(args, "resolve_domain") {
-                let authority = coordinator.find_best_authority_for_domain(domain).map_err(err)?;
+                let authority = coordinator
+                    .find_best_authority_for_domain(domain)
+                    .map_err(err)?;
                 Ok(json!({
                     "resolved_domain": domain,
                     "authority": authority
@@ -404,24 +465,22 @@ async fn run(
             let question = req(args, "question")?;
             let query_id = new_id("query");
 
-            let best_auth = coordinator.find_best_authority_for_domain(domain).map_err(err)?;
+            let best_auth = coordinator
+                .find_best_authority_for_domain(domain)
+                .map_err(err)?;
 
             let target_agent = best_auth.as_ref().map(|a| a.authoritative_agent.clone());
-            let query = TransactiveQuery::new(
-                &query_id,
-                &agent,
-                domain,
-                question,
-            );
+            let query = TransactiveQuery::new(&query_id, &agent, domain, question);
 
             // Persist as A2A message in sqlite inbox so recipient receives it
             let msg_id = new_id("msg");
-            let a2a_msg = match &target_agent {
-                Some(to) => A2aMessage::direct(&msg_id, &agent, to, question)
-                    .with_kind("transactive_query"),
-                None => A2aMessage::broadcast(&msg_id, &agent, question)
-                    .with_kind("transactive_query"),
-            };
+            let a2a_msg =
+                match &target_agent {
+                    Some(to) => A2aMessage::direct(&msg_id, &agent, to, question)
+                        .with_kind("transactive_query"),
+                    None => A2aMessage::broadcast(&msg_id, &agent, question)
+                        .with_kind("transactive_query"),
+                };
             coordinator.save_a2a_message(&a2a_msg).map_err(err)?;
 
             publish(

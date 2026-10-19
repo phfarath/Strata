@@ -85,7 +85,10 @@ impl ProceduralMacroCompiler {
     /// Matches a goal node against the procedural skill registry using precondition and invariant matching.
     pub fn find_best_macro_for_goal(&self, goal: &GoalNode) -> Option<&ProceduralSkill> {
         // Skip root nodes or verification gates unless explicitly targeted
-        if matches!(goal.kind, GoalNodeKind::Root | GoalNodeKind::Verification | GoalNodeKind::Rollback) {
+        if matches!(
+            goal.kind,
+            GoalNodeKind::Root | GoalNodeKind::Verification | GoalNodeKind::Rollback
+        ) {
             return None;
         }
 
@@ -113,20 +116,31 @@ impl ProceduralMacroCompiler {
                     if goal_title_lower.contains(domain) || domain.contains(&goal_title_lower) {
                         match_score += 0.8;
                     }
-                } else if goal_title_lower.contains(&pre_lower) || goal_desc_lower.contains(&pre_lower) {
+                } else if goal_title_lower.contains(&pre_lower)
+                    || goal_desc_lower.contains(&pre_lower)
+                {
                     match_score += 0.5;
                 }
             }
 
             // 2. Direct name or description matching
-            if goal_title_lower.contains(&skill_name_clean) || skill_name_clean.contains(&goal_title_lower) {
+            if goal_title_lower.contains(&skill_name_clean)
+                || skill_name_clean.contains(&goal_title_lower)
+            {
                 match_score += 0.7;
-            } else if goal_desc_lower.contains(&skill_name_clean) || skill_desc_clean.contains(&goal_title_lower) {
+            } else if goal_desc_lower.contains(&skill_name_clean)
+                || skill_desc_clean.contains(&goal_title_lower)
+            {
                 match_score += 0.4;
             }
 
             // 3. Action match
-            if !goal_action.is_empty() && skill.steps.iter().any(|s| s.tool.to_lowercase() == goal_action) {
+            if !goal_action.is_empty()
+                && skill
+                    .steps
+                    .iter()
+                    .any(|s| s.tool.to_lowercase() == goal_action)
+            {
                 match_score += 0.3;
             }
 
@@ -189,12 +203,19 @@ impl ProceduralMacroCompiler {
             // Check preconditions for error pattern match
             let matches_precondition = skill.preconditions.iter().any(|pre| {
                 let pre_lower = pre.to_lowercase();
-                pre_lower.contains(&err_type_lower) || (!err_msg_lower.is_empty() && pre_lower.contains(&err_msg_lower))
+                pre_lower.contains(&err_type_lower)
+                    || (!err_msg_lower.is_empty() && pre_lower.contains(&err_msg_lower))
             });
 
             // Check tags or name
-            let matches_tag = skill.tags.iter().any(|t| t.to_lowercase() == err_type_lower);
-            let matches_name = skill.name.to_lowercase().contains(&err_type_lower.replace(|c: char| !c.is_alphanumeric(), ""));
+            let matches_tag = skill
+                .tags
+                .iter()
+                .any(|t| t.to_lowercase() == err_type_lower);
+            let matches_name = skill
+                .name
+                .to_lowercase()
+                .contains(&err_type_lower.replace(|c: char| !c.is_alphanumeric(), ""));
 
             if matches_precondition || matches_tag || matches_name {
                 return Some(skill);
@@ -215,7 +236,10 @@ impl ProceduralMacroCompiler {
         let candidate_nodes: Vec<GoalNode> = dag
             .all_nodes()
             .into_iter()
-            .filter(|n| n.status == GoalStatus::Pending && matches!(n.kind, GoalNodeKind::Task | GoalNodeKind::Phase))
+            .filter(|n| {
+                n.status == GoalStatus::Pending
+                    && matches!(n.kind, GoalNodeKind::Task | GoalNodeKind::Phase)
+            })
             .cloned()
             .collect();
 
@@ -336,8 +360,10 @@ mod tests {
         dag.add_node(n2);
         dag.add_node(n3);
 
-        dag.add_edge("step_init", "step_db", GoalEdge::depends_on()).unwrap();
-        dag.add_edge("step_db", "step_server", GoalEdge::depends_on()).unwrap();
+        dag.add_edge("step_init", "step_db", GoalEdge::depends_on())
+            .unwrap();
+        dag.add_edge("step_db", "step_server", GoalEdge::depends_on())
+            .unwrap();
         dag.validate().unwrap();
 
         let compiler = ProceduralMacroCompiler::new().with_skills(vec![sample_skill()]);
@@ -378,7 +404,10 @@ mod tests {
         assert_eq!(report.failed_nodes, 0);
 
         // Verification node should be completed
-        let verify_node = completed_dag.all_nodes().into_iter().find(|n| n.id.contains("macro_verify"));
+        let verify_node = completed_dag
+            .all_nodes()
+            .into_iter()
+            .find(|n| n.id.contains("macro_verify"));
         assert!(verify_node.is_some());
         assert_eq!(verify_node.unwrap().status, GoalStatus::Completed);
     }
@@ -391,8 +420,8 @@ mod tests {
         failed_task.retry_count = failed_task.max_retries; // Transient retries exhausted
         dag.add_node(failed_task.clone());
 
-        let replanner = DynamicReplanner::new()
-            .with_procedural_skills(vec![sample_recovery_skill()]);
+        let replanner =
+            DynamicReplanner::new().with_procedural_skills(vec![sample_recovery_skill()]);
 
         let action = replanner.handle_failure(&dag, &failed_task).unwrap();
         match action {
@@ -406,11 +435,16 @@ mod tests {
                 assert_eq!(edges.len(), 2);
 
                 // Apply recovery patch
-                replanner.apply_recovery(&mut dag, &RecoveryAction::InjectMitigation {
-                    failed_node_id,
-                    mitigation_nodes,
-                    edges,
-                }).unwrap();
+                replanner
+                    .apply_recovery(
+                        &mut dag,
+                        &RecoveryAction::InjectMitigation {
+                            failed_node_id,
+                            mitigation_nodes,
+                            edges,
+                        },
+                    )
+                    .unwrap();
 
                 // DAG must remain valid and acyclic
                 dag.validate().unwrap();

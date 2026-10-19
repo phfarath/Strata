@@ -22,6 +22,7 @@ use strata_cli::{
         consolidate::{run_consolidate, ConsolidateOptions},
         daemon::{run_daemon, DaemonArgs},
         doctor::run_doctor,
+        episode::{run_episode, EpisodeArgs},
         export::{run_export, ExportArgs},
         feedback::{run_feedback, FeedbackArgs},
         hook::{handle_hook, HookCommand},
@@ -39,11 +40,10 @@ use strata_cli::{
         sync::{run_sync, SyncArgs},
         sync_hosts::{run_sync_hosts, SyncHostsArgs},
         task::{run_task, TaskArgs},
-        episode::{run_episode, EpisodeArgs},
-        worker::{run_worker, WorkerArgs},
         train::{run_train, TrainArgs},
         transfer::{run_transfer, TransferArgs},
         watch::{run_watch, WatchArgs},
+        worker::{run_worker, WorkerArgs},
         workspace::{run_workspace, WorkspaceArgs},
     },
     mcp::server::McpServer,
@@ -321,14 +321,20 @@ enum Commands {
         #[arg(long, help = "Output as raw JSON")]
         json: bool,
 
-        #[arg(long, help = "Deep heuristic index of AST symbols and call edges into SQLite")]
+        #[arg(
+            long,
+            help = "Deep heuristic index of AST symbols and call edges into SQLite"
+        )]
         index: bool,
     },
 
     /// Deep heuristic index of workspace AST symbols and call edges into SQLite
     #[command(name = "index", alias = "reindex")]
     Index {
-        #[arg(default_value = ".", help = "Path to workspace directory or file to index")]
+        #[arg(
+            default_value = ".",
+            help = "Path to workspace directory or file to index"
+        )]
         path: String,
 
         #[arg(long, help = "Output report as raw JSON")]
@@ -378,7 +384,12 @@ enum Commands {
     Task(TaskArgs),
 
     /// Episodic memory trace recording, replay, and hippocampal consolidation
-    #[command(name = "episode", alias = "episodes", alias = "trace", alias = "replay")]
+    #[command(
+        name = "episode",
+        alias = "episodes",
+        alias = "trace",
+        alias = "replay"
+    )]
     Episode(EpisodeArgs),
 
     /// Run autonomous blackboard task worker daemon (work-stealing, execution, heartbeats)
@@ -520,9 +531,17 @@ async fn main() -> Result<()> {
     } = &cli.command
     {
         if !*index {
-            return run_callgraph(path, symbol.as_deref(), direction, *json, *limit, false, None)
-                .await
-                .map_err(Into::into);
+            return run_callgraph(
+                path,
+                symbol.as_deref(),
+                direction,
+                *json,
+                *limit,
+                false,
+                None,
+            )
+            .await
+            .map_err(Into::into);
         }
     }
 
@@ -593,16 +612,7 @@ async fn main() -> Result<()> {
         }
 
         Commands::Index { path, json } => {
-            run_callgraph(
-                &path,
-                None,
-                "all",
-                json,
-                50,
-                true,
-                Some(engine.store_arc()),
-            )
-            .await?;
+            run_callgraph(&path, None, "all", json, 50, true, Some(engine.store_arc())).await?;
         }
 
         Commands::Mcp { action: None } => {
@@ -1001,7 +1011,10 @@ mod tests {
                 }),
             )
             .await;
-        assert!(call.is_error.unwrap_or(false), "MCP promote without approval_token must fail");
+        assert!(
+            call.is_error.unwrap_or(false),
+            "MCP promote without approval_token must fail"
+        );
 
         // 2. Calling with empty token MUST fail
         let empty_call = server
@@ -1013,7 +1026,10 @@ mod tests {
                 }),
             )
             .await;
-        assert!(empty_call.is_error.unwrap_or(false), "MCP promote with empty token must fail");
+        assert!(
+            empty_call.is_error.unwrap_or(false),
+            "MCP promote with empty token must fail"
+        );
     }
 
     #[tokio::test]
@@ -1031,7 +1047,14 @@ mod tests {
 
         let hash = blake3::hash(mem.content.as_bytes()).to_hex().to_string();
         let token = engine
-            .generate_approval_token(&handle.id, "memory", &hash, "security_team", 3600, Some("Approved via audit"))
+            .generate_approval_token(
+                &handle.id,
+                "memory",
+                &hash,
+                "security_team",
+                3600,
+                Some("Approved via audit"),
+            )
             .unwrap();
 
         // Promotion with valid token MUST succeed
@@ -1045,7 +1068,10 @@ mod tests {
                 }),
             )
             .await;
-        assert!(!call.is_error.unwrap_or(false), "MCP promote with valid token must succeed");
+        assert!(
+            !call.is_error.unwrap_or(false),
+            "MCP promote with valid token must succeed"
+        );
 
         // Verify stored state
         let fetched = engine.get(&handle.id).await.unwrap().unwrap();
@@ -1087,11 +1113,7 @@ mod tests {
         let engine = Arc::new(SqliteMemoryEngine::open_in_memory(None).unwrap());
         let server = McpServer::new_with_engine(Arc::clone(&engine));
 
-        let mem = MemoryRecord::new(
-            MemoryType::Semantic,
-            "Original safe content",
-            Scope::Global,
-        );
+        let mem = MemoryRecord::new(MemoryType::Semantic, "Original safe content", Scope::Global);
         let handle = engine.write(&mem).await.unwrap();
 
         let hash = blake3::hash(mem.content.as_bytes()).to_hex().to_string();
@@ -1114,7 +1136,10 @@ mod tests {
                 }),
             )
             .await;
-        assert!(fail_call.is_error.unwrap_or(false), "Tampered content must fail token verification");
+        assert!(
+            fail_call.is_error.unwrap_or(false),
+            "Tampered content must fail token verification"
+        );
     }
 
     #[tokio::test]

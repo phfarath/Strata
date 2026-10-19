@@ -35,7 +35,9 @@ pub async fn run_search(options: SearchOptions, engine: Arc<dyn MemoryEngine>) -
         .map(|s| {
             DateTime::parse_from_rfc3339(s)
                 .map(|dt| dt.with_timezone(&Utc))
-                .map_err(|e| anyhow::anyhow!("Invalid RFC3339 timestamp for --as-of-time '{s}': {e}"))
+                .map_err(|e| {
+                    anyhow::anyhow!("Invalid RFC3339 timestamp for --as-of-time '{s}': {e}")
+                })
         })
         .transpose()?;
 

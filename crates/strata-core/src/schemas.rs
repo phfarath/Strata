@@ -536,14 +536,22 @@ impl SemanticFact {
         self
     }
 
-    pub fn build_provenance(&self, selection_reason: Option<&str>) -> crate::state::ProvenanceBlock {
-        let branch = self.code_anchor.as_ref().and_then(|ca| ca.git_branch.clone());
+    pub fn build_provenance(
+        &self,
+        selection_reason: Option<&str>,
+    ) -> crate::state::ProvenanceBlock {
+        let branch = self
+            .code_anchor
+            .as_ref()
+            .and_then(|ca| ca.git_branch.clone());
         let evidence: Vec<String> = self
             .evidence
             .iter()
             .map(|e| format!("{}:{}", e.source_type, e.source_id))
             .collect();
-        let reason = selection_reason.unwrap_or("Retrieved semantic fact").to_string();
+        let reason = selection_reason
+            .unwrap_or("Retrieved semantic fact")
+            .to_string();
 
         crate::state::ProvenanceBlock {
             selection_reason: reason,
@@ -1936,4 +1944,3 @@ impl BranchMergeReport {
             + self.episodes_merged
     }
 }
-

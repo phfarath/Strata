@@ -230,8 +230,7 @@ impl PathScopedExt for strata_core::state::FailurePattern {
 impl PathScopedExt for strata_core::schemas::SemanticFact {
     fn with_path_glob(mut self, glob: impl Into<String>) -> Self {
         let g = glob.into();
-        self.tags
-            .retain(|t| !t.starts_with(PATH_GLOB_TAG_PREFIX));
+        self.tags.retain(|t| !t.starts_with(PATH_GLOB_TAG_PREFIX));
         if !g.trim().is_empty() {
             self.tags.push(format!("{PATH_GLOB_TAG_PREFIX}{g}"));
         }
@@ -1200,7 +1199,10 @@ mod tests {
         let roundtrip_mem = SemanticMemory::from_memory_record(&loaded_rec);
         assert_eq!(roundtrip_mem.path_glob.as_deref(), Some("web/src/**/*.tsx"));
         assert_eq!(roundtrip_mem.statement, sem_mem.statement);
-        assert_eq!(roundtrip_mem.tags, vec!["react".to_string(), "ui".to_string()]);
+        assert_eq!(
+            roundtrip_mem.tags,
+            vec!["react".to_string(), "ui".to_string()]
+        );
 
         // Roundtrip via SemanticFact in SqliteStore
         let fact = sem_mem.to_semantic_fact();
@@ -1212,10 +1214,7 @@ mod tests {
             .get_semantic_fact(&fact.id)
             .expect("get fact")
             .expect("exists");
-        assert_eq!(
-            loaded_fact.path_glob().as_deref(),
-            Some("web/src/**/*.tsx")
-        );
+        assert_eq!(loaded_fact.path_glob().as_deref(), Some("web/src/**/*.tsx"));
         let roundtrip_from_fact = SemanticMemory::from_semantic_fact(&loaded_fact);
         assert_eq!(
             roundtrip_from_fact.path_glob.as_deref(),
@@ -1332,11 +1331,7 @@ mod tests {
 
         // 1. Editing a Frontend file: web/src/components/App.tsx
         let frontend_ctx = compiler
-            .compile_context_for_file(
-                &config,
-                Some("web/src/components/App.tsx"),
-                &core_rules,
-            )
+            .compile_context_for_file(&config, Some("web/src/components/App.tsx"), &core_rules)
             .expect("compile for frontend");
         assert!(frontend_ctx.contains("Always run tests before committing"));
         assert!(frontend_ctx.contains("Use React functional components with hooks"));
@@ -1398,12 +1393,7 @@ mod tests {
         fs::create_dir_all(&temp_workspace).expect("create temp workspace");
 
         let report = compiler
-            .compile_scoped_rules(
-                &temp_workspace,
-                &["cursor", "claude"],
-                &core_rules,
-                2048,
-            )
+            .compile_scoped_rules(&temp_workspace, &["cursor", "claude"], &core_rules, 2048)
             .expect("compile scoped rules");
 
         assert_eq!(report.target_hosts.len(), 4);
@@ -1445,4 +1435,3 @@ mod tests {
         let _ = fs::remove_dir_all(&temp_workspace);
     }
 }
-

@@ -90,10 +90,10 @@ impl AgentCard {
 /// Authoritative mapping between a code domain/topic space and the specialist agent.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct DomainAuthority {
-    pub domain: String, // e.g. "crates/strata-memory", "src/auth"
+    pub domain: String,              // e.g. "crates/strata-memory", "src/auth"
     pub authoritative_agent: String, // e.g. "agent-claude-1"
-    pub confidence_score: f32, // Calibrated confidence [0.0, 1.0]
-    pub lease_held: bool, // Whether the agent currently holds an exclusive lease
+    pub confidence_score: f32,       // Calibrated confidence [0.0, 1.0]
+    pub lease_held: bool,            // Whether the agent currently holds an exclusive lease
     pub active_tasks_count: u32,
     pub last_active_at: i64,
 }
@@ -528,7 +528,10 @@ mod tests {
     #[test]
     fn test_transactive_directory_schemas_and_roundtrip() {
         let card = AgentCard::new("agent-gemini-pro", "gemini-cli")
-            .with_domain_scopes(vec!["crates/strata-memory".into(), "crates/strata-core".into()])
+            .with_domain_scopes(vec![
+                "crates/strata-memory".into(),
+                "crates/strata-core".into(),
+            ])
             .with_memory_capabilities(vec!["episodic".into(), "procedural".into()])
             .with_tenant_scopes(vec!["project:strata".into()])
             .with_confidence(0.95);
@@ -551,7 +554,8 @@ mod tests {
         assert_eq!(authority.authoritative_agent, "agent-gemini-pro");
 
         let auth_json = serde_json::to_string(&authority).expect("serialize DomainAuthority");
-        let auth_de: DomainAuthority = serde_json::from_str(&auth_json).expect("deserialize DomainAuthority");
+        let auth_de: DomainAuthority =
+            serde_json::from_str(&auth_json).expect("deserialize DomainAuthority");
         assert_eq!(authority, auth_de);
 
         let query = TransactiveQuery::new(
@@ -559,7 +563,8 @@ mod tests {
             "agent-cursor-1",
             "crates/strata-memory",
             "How does JTMS belief revision invalidate code anchors?",
-        ).with_timeout_ms(3000);
+        )
+        .with_timeout_ms(3000);
 
         assert_eq!(query.timeout_ms, 3000);
 
@@ -568,7 +573,8 @@ mod tests {
             "agent-gemini-pro",
             0.96,
             "JTMS traverses non-monotonic dependency edges and triggers Blake3 Merkle diff checks.",
-        ).with_references(vec!["crates/strata-memory/src/jtms.rs".into()]);
+        )
+        .with_references(vec!["crates/strata-memory/src/jtms.rs".into()]);
 
         assert_eq!(response.references.len(), 1);
 
@@ -590,4 +596,3 @@ mod tests {
         assert!(r_json.contains("\"type\":\"transactive_response_returned\""));
     }
 }
-

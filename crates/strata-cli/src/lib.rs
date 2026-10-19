@@ -211,7 +211,10 @@ export function login(username: string): boolean {
 
         // Verify knowledge graph edges persisted
         let kg_count = store.get_memory_edges_count().unwrap();
-        assert!(kg_count > 0, "Knowledge Graph memory edges must be persisted");
+        assert!(
+            kg_count > 0,
+            "Knowledge Graph memory edges must be persisted"
+        );
 
         // 2. Test MCP tool definition and execution
         let defs = McpServer::tool_definitions();
@@ -343,9 +346,18 @@ export function login(username: string): boolean {
         .with_tier(MemoryTier::Working);
         let mem_handle = engine.write(&approved_mem).await.expect("write mem");
 
-        let hash = blake3::hash(approved_mem.content.as_bytes()).to_hex().to_string();
+        let hash = blake3::hash(approved_mem.content.as_bytes())
+            .to_hex()
+            .to_string();
         let token = engine
-            .generate_approval_token(&mem_handle.id, "memory", &hash, "lead_dev", 3600, Some("Production reliability policy"))
+            .generate_approval_token(
+                &mem_handle.id,
+                "memory",
+                &hash,
+                "lead_dev",
+                3600,
+                Some("Production reliability policy"),
+            )
             .expect("generate token");
 
         let approved_call = mcp_server
@@ -1009,9 +1021,9 @@ export function login(username: string): boolean {
 
     #[tokio::test]
     async fn test_multi_agent_blackboard_cli_workflow() {
-        use crate::commands::task::{run_task, TaskAction, TaskArgs};
         use crate::commands::a2a::{run_a2a, A2aAction, A2aArgs};
         use crate::commands::plan::{run_plan, PlanArgs};
+        use crate::commands::task::{run_task, TaskAction, TaskArgs};
         use strata_memory::SqliteMemoryEngine;
 
         let engine = Arc::new(SqliteMemoryEngine::open_in_memory(None).unwrap());
@@ -1144,7 +1156,10 @@ export function login(username: string): boolean {
             ..Default::default()
         };
         let cursor_tasks = coordinator.list_tasks(&filter_cursor).unwrap();
-        assert!(!cursor_tasks.is_empty(), "Cursor must successfully claim next unblocked task");
+        assert!(
+            !cursor_tasks.is_empty(),
+            "Cursor must successfully claim next unblocked task"
+        );
 
         // 10. Cursor goes silent: reclaim returns its task to the pool
         let reclaim_args = TaskArgs {
@@ -1155,7 +1170,10 @@ export function login(username: string): boolean {
         };
         assert!(run_task(reclaim_args, coordinator.clone()).await.is_ok());
         let orphan = &coordinator.list_tasks(&filter_cursor).unwrap();
-        assert!(orphan.is_empty(), "Reclaimed task must be unassigned from the silent agent");
+        assert!(
+            orphan.is_empty(),
+            "Reclaimed task must be unassigned from the silent agent"
+        );
     }
 
     #[tokio::test]
@@ -1178,10 +1196,15 @@ export function login(username: string): boolean {
             "a2a_send",
             "a2a_inbox",
         ] {
-            assert!(defs.iter().any(|t| t.name == name), "missing MCP tool {name}");
+            assert!(
+                defs.iter().any(|t| t.name == name),
+                "missing MCP tool {name}"
+            );
         }
 
-        coordinator.create_task(&TaskRecord::new("t1", "First")).unwrap();
+        coordinator
+            .create_task(&TaskRecord::new("t1", "First"))
+            .unwrap();
         coordinator
             .create_task(
                 &TaskRecord::new("t2", "Second")
@@ -1190,17 +1213,35 @@ export function login(username: string): boolean {
             )
             .unwrap();
 
-        async fn call(server: &McpServer, tool: &str, args: serde_json::Value) -> serde_json::Value {
+        async fn call(
+            server: &McpServer,
+            tool: &str,
+            args: serde_json::Value,
+        ) -> serde_json::Value {
             let res = server.execute_tool(tool, args).await;
-            assert!(res.is_error != Some(true), "{tool} failed: {}", res.content[0].text);
+            assert!(
+                res.is_error != Some(true),
+                "{tool} failed: {}",
+                res.content[0].text
+            );
             serde_json::from_str(&res.content[0].text).expect("tool output must be JSON")
         }
 
         // Work-stealing: a1 gets t1, a2 finds nothing (t2 still blocked)
-        let c1 = call(&server, "task_claim", serde_json::json!({ "agent_id": "a1" })).await;
+        let c1 = call(
+            &server,
+            "task_claim",
+            serde_json::json!({ "agent_id": "a1" }),
+        )
+        .await;
         assert_eq!(c1["status"], "claimed");
         assert_eq!(c1["task"]["task_id"], "t1");
-        let c2 = call(&server, "task_claim", serde_json::json!({ "agent_id": "a2" })).await;
+        let c2 = call(
+            &server,
+            "task_claim",
+            serde_json::json!({ "agent_id": "a2" }),
+        )
+        .await;
         assert_eq!(c2["status"], "none_available");
 
         call(
@@ -1209,7 +1250,12 @@ export function login(username: string): boolean {
             serde_json::json!({ "task_id": "t1", "agent_id": "a1", "message": "halfway" }),
         )
         .await;
-        let running = call(&server, "task_list", serde_json::json!({ "status": "running" })).await;
+        let running = call(
+            &server,
+            "task_list",
+            serde_json::json!({ "status": "running" }),
+        )
+        .await;
         assert_eq!(running.as_array().unwrap().len(), 1);
 
         call(
@@ -1226,7 +1272,12 @@ export function login(username: string): boolean {
         assert_eq!(inspected["artifacts"].as_array().unwrap().len(), 1);
 
         // Downstream unblocked, upstream artifacts handed to the claimer
-        let c3 = call(&server, "task_claim", serde_json::json!({ "agent_id": "a2" })).await;
+        let c3 = call(
+            &server,
+            "task_claim",
+            serde_json::json!({ "agent_id": "a2" }),
+        )
+        .await;
         assert_eq!(c3["task"]["task_id"], "t2");
         assert_eq!(c3["upstream_artifacts"][0]["payload"], "schema.sql");
 
@@ -1236,24 +1287,64 @@ export function login(username: string): boolean {
             serde_json::json!({ "task_id": "t2", "agent_id": "a2", "error": "boom" }),
         )
         .await;
-        assert_eq!(coordinator.get_task("t2").unwrap().unwrap().status, TaskStatus::Failed);
+        assert_eq!(
+            coordinator.get_task("t2").unwrap().unwrap().status,
+            TaskStatus::Failed
+        );
 
         // Orphan recovery
-        coordinator.create_task(&TaskRecord::new("t3", "Orphan")).unwrap();
-        call(&server, "task_claim", serde_json::json!({ "task_id": "t3", "agent_id": "a3" })).await;
-        let rec = call(&server, "task_reclaim", serde_json::json!({ "stale_secs": 0 })).await;
+        coordinator
+            .create_task(&TaskRecord::new("t3", "Orphan"))
+            .unwrap();
+        call(
+            &server,
+            "task_claim",
+            serde_json::json!({ "task_id": "t3", "agent_id": "a3" }),
+        )
+        .await;
+        let rec = call(
+            &server,
+            "task_reclaim",
+            serde_json::json!({ "stale_secs": 0 }),
+        )
+        .await;
         assert_eq!(rec["reclaimed"], serde_json::json!(["t3"]));
 
         // A2A mailbox: direct + broadcast reach a2
-        call(&server, "a2a_send", serde_json::json!({ "agent_id": "a1", "to": "a2", "content": "review?" })).await;
-        call(&server, "a2a_send", serde_json::json!({ "agent_id": "a1", "content": "all green" })).await;
-        let inbox = call(&server, "a2a_inbox", serde_json::json!({ "agent_id": "a2", "unread": true })).await;
+        call(
+            &server,
+            "a2a_send",
+            serde_json::json!({ "agent_id": "a1", "to": "a2", "content": "review?" }),
+        )
+        .await;
+        call(
+            &server,
+            "a2a_send",
+            serde_json::json!({ "agent_id": "a1", "content": "all green" }),
+        )
+        .await;
+        let inbox = call(
+            &server,
+            "a2a_inbox",
+            serde_json::json!({ "agent_id": "a2", "unread": true }),
+        )
+        .await;
         assert_eq!(inbox.as_array().unwrap().len(), 2);
-        let after = call(&server, "a2a_inbox", serde_json::json!({ "agent_id": "a2", "unread": true })).await;
-        assert!(after.as_array().unwrap().is_empty(), "inbox read must mark messages as read");
+        let after = call(
+            &server,
+            "a2a_inbox",
+            serde_json::json!({ "agent_id": "a2", "unread": true }),
+        )
+        .await;
+        assert!(
+            after.as_array().unwrap().is_empty(),
+            "inbox read must mark messages as read"
+        );
 
         // Validation
-        let bad = server.execute_tool("task_complete", serde_json::json!({ "agent_id": "a1" })).await;
+        let bad = server
+            .execute_tool("task_complete", serde_json::json!({ "agent_id": "a1" }))
+            .await;
         assert_eq!(bad.is_error, Some(true));
     }
 
@@ -1294,12 +1385,17 @@ export function login(username: string): boolean {
             )
             .await;
 
-        assert!(record_res.is_error != Some(true), "episode_record must succeed");
+        assert!(
+            record_res.is_error != Some(true),
+            "episode_record must succeed"
+        );
         let content_text = &record_res.content[0].text;
         assert!(content_text.contains("Recorded episode trace"));
 
         // List episodes from store
-        let episodes = store.list_episodes(Some("session-redis"), None, 10).unwrap();
+        let episodes = store
+            .list_episodes(Some("session-redis"), None, 10)
+            .unwrap();
         assert_eq!(episodes.len(), 1);
         let ep = &episodes[0];
         assert_eq!(ep.salience_score, 0.85);
@@ -1313,7 +1409,10 @@ export function login(username: string): boolean {
                 serde_json::json!({ "id": ep.id.to_string() }),
             )
             .await;
-        assert!(replay_res.is_error != Some(true), "episode_replay must succeed");
+        assert!(
+            replay_res.is_error != Some(true),
+            "episode_replay must succeed"
+        );
         let replay_text = &replay_res.content[0].text;
         assert!(replay_text.contains("total steps"));
 
@@ -1324,21 +1423,32 @@ export function login(username: string): boolean {
                 serde_json::json!({ "session_id": "session-redis" }),
             )
             .await;
-        assert!(consolidate_res.is_error != Some(true), "episode_consolidate must succeed");
+        assert!(
+            consolidate_res.is_error != Some(true),
+            "episode_consolidate must succeed"
+        );
         let cons_text = &consolidate_res.content[0].text;
         assert!(cons_text.contains("Hippocampal consolidation completed"));
         assert!(cons_text.contains("1 episodes processed"));
 
         // Verify that facts and anti-patterns are persisted and marked consolidated
-        let updated_episodes = store.list_episodes(Some("session-redis"), None, 10).unwrap();
+        let updated_episodes = store
+            .list_episodes(Some("session-redis"), None, 10)
+            .unwrap();
         assert!(updated_episodes[0].consolidated);
 
         let facts = store.get_all_semantic_facts(None, None, 10).unwrap();
-        assert!(!facts.is_empty(), "Must synthesize semantic fact from high-salience episode");
+        assert!(
+            !facts.is_empty(),
+            "Must synthesize semantic fact from high-salience episode"
+        );
         assert_eq!(facts[0].tier, strata_core::state::MemoryTier::Core);
 
         let failures = store.search_failures(None, None, 10).unwrap();
-        assert!(!failures.is_empty(), "Must learn anti-pattern from failed step");
+        assert!(
+            !failures.is_empty(),
+            "Must learn anti-pattern from failed step"
+        );
 
         // 4. Test CLI EpisodeCommand execution
         let cli_record_args = EpisodeArgs {
@@ -1354,7 +1464,9 @@ export function login(username: string): boolean {
                 json: true,
             },
         };
-        assert!(run_episode(cli_record_args, Arc::clone(&store)).await.is_ok());
+        assert!(run_episode(cli_record_args, Arc::clone(&store))
+            .await
+            .is_ok());
 
         let cli_list_args = EpisodeArgs {
             command: EpisodeCommand::List {
@@ -1390,16 +1502,15 @@ export function login(username: string): boolean {
             .with_task_id("task-cluster-1")
             .with_salience(0.8)
             .with_outcomes(vec!["Migration tables ready".to_string()])
-            .with_steps(vec![
-                EpisodeStep::new(0, "Create table auth_users").with_output(serde_json::json!({ "observation": "Table created" })),
-            ]);
+            .with_steps(vec![EpisodeStep::new(0, "Create table auth_users")
+                .with_output(serde_json::json!({ "observation": "Table created" }))]);
         let ep2 = EpisodeRecord::new("sess-pyr", "agent-2", "Step 2: Migrate JWT keys")
             .with_task_id("task-cluster-1")
             .with_salience(0.9)
             .with_outcomes(vec!["JWT keys migrated".to_string()])
-            .with_steps(vec![
-                EpisodeStep::new(0, "Rotate HMAC secret").with_output(serde_json::json!({ "observation": "Secret updated" })),
-            ]);
+            .with_steps(vec![EpisodeStep::new(0, "Rotate HMAC secret").with_output(
+                serde_json::json!({ "observation": "Secret updated" }),
+            )]);
 
         store.write_episode(&ep1).unwrap();
         store.write_episode(&ep2).unwrap();
@@ -1416,9 +1527,13 @@ export function login(username: string): boolean {
                 json: true,
             },
         };
-        assert!(run_episode(cli_rollup_args, Arc::clone(&store)).await.is_ok());
+        assert!(run_episode(cli_rollup_args, Arc::clone(&store))
+            .await
+            .is_ok());
 
-        let rollups = store.list_episodes_by_tier(2, Some("sess-pyr"), 10).unwrap();
+        let rollups = store
+            .list_episodes_by_tier(2, Some("sess-pyr"), 10)
+            .unwrap();
         assert_eq!(rollups.len(), 1);
         let rollup_id = rollups[0].id;
 
@@ -1434,8 +1549,12 @@ export function login(username: string): boolean {
                 json: true,
             },
         };
-        assert!(run_episode(cli_rollup_slm_args, Arc::clone(&store)).await.is_ok());
-        let tier3_list = store.list_episodes_by_tier(3, Some("sess-pyr"), 10).unwrap();
+        assert!(run_episode(cli_rollup_slm_args, Arc::clone(&store))
+            .await
+            .is_ok());
+        let tier3_list = store
+            .list_episodes_by_tier(3, Some("sess-pyr"), 10)
+            .unwrap();
         assert_eq!(tier3_list.len(), 1);
         assert_eq!(tier3_list[0].tier, 3);
         assert!(tier3_list[0].summary.starts_with("Narrativa:"));
@@ -1448,7 +1567,9 @@ export function login(username: string): boolean {
                 ascii: false,
             },
         };
-        assert!(run_episode(cli_drill_json, Arc::clone(&store)).await.is_ok());
+        assert!(run_episode(cli_drill_json, Arc::clone(&store))
+            .await
+            .is_ok());
 
         let cli_drill_ascii = EpisodeArgs {
             command: EpisodeCommand::DrillDown {
@@ -1457,7 +1578,9 @@ export function login(username: string): boolean {
                 ascii: true,
             },
         };
-        assert!(run_episode(cli_drill_ascii, Arc::clone(&store)).await.is_ok());
+        assert!(run_episode(cli_drill_ascii, Arc::clone(&store))
+            .await
+            .is_ok());
 
         // 4. Test CLI Tree
         let cli_tree = EpisodeArgs {
@@ -1481,7 +1604,9 @@ export function login(username: string): boolean {
             )
             .await;
         assert!(mcp_zoom.is_error != Some(true));
-        assert!(mcp_zoom.content[0].text.contains("1 Tier 2 milestone rollups"));
+        assert!(mcp_zoom.content[0]
+            .text
+            .contains("1 Tier 2 milestone rollups"));
 
         // 6. Test MCP memory_episode_pyramid drill_down
         let mcp_drill = server
@@ -1532,8 +1657,11 @@ export function login(username: string): boolean {
             )
             .await;
         assert!(mcp_p_compact.is_error != Some(true));
-        assert!(mcp_p_compact.content[0].text.contains("Hierarchical Pyramid Rollups (Compact Tier 2)"));
-        let val_compact: serde_json::Value = serde_json::from_str(&mcp_p_compact.structured_content.unwrap().to_string()).unwrap();
+        assert!(mcp_p_compact.content[0]
+            .text
+            .contains("Hierarchical Pyramid Rollups (Compact Tier 2)"));
+        let val_compact: serde_json::Value =
+            serde_json::from_str(&mcp_p_compact.structured_content.unwrap().to_string()).unwrap();
         assert_eq!(val_compact["expanded"], false);
         assert_eq!(val_compact["rollups_count"], 1);
         assert_eq!(val_compact["total_steps"], 0);
@@ -1550,13 +1678,22 @@ export function login(username: string): boolean {
             )
             .await;
         assert!(mcp_p_expanded.is_error != Some(true));
-        assert!(mcp_p_expanded.content[0].text.contains("Hierarchical Pyramid Drill-Down (Expanded)"));
-        let val_expanded: serde_json::Value = serde_json::from_str(&mcp_p_expanded.structured_content.unwrap().to_string()).unwrap();
+        assert!(mcp_p_expanded.content[0]
+            .text
+            .contains("Hierarchical Pyramid Drill-Down (Expanded)"));
+        let val_expanded: serde_json::Value =
+            serde_json::from_str(&mcp_p_expanded.structured_content.unwrap().to_string()).unwrap();
         assert_eq!(val_expanded["expanded"], true);
         assert_eq!(val_expanded["rollups_count"], 1);
         assert_eq!(val_expanded["total_steps"], 2);
-        assert_eq!(val_expanded["trees"][0]["root"]["id"], rollup_id.to_string());
-        assert_eq!(val_expanded["trees"][0]["leaves"].as_array().unwrap().len(), 2);
+        assert_eq!(
+            val_expanded["trees"][0]["root"]["id"],
+            rollup_id.to_string()
+        );
+        assert_eq!(
+            val_expanded["trees"][0]["leaves"].as_array().unwrap().len(),
+            2
+        );
 
         // 11. Test MCP memory_pyramid_drilldown by rollup_id
         let mcp_p_id = server
@@ -1569,7 +1706,8 @@ export function login(username: string): boolean {
             )
             .await;
         assert!(mcp_p_id.is_error != Some(true));
-        let val_id: serde_json::Value = serde_json::from_str(&mcp_p_id.structured_content.unwrap().to_string()).unwrap();
+        let val_id: serde_json::Value =
+            serde_json::from_str(&mcp_p_id.structured_content.unwrap().to_string()).unwrap();
         assert_eq!(val_id["rollups_count"], 1);
         assert_eq!(val_id["trees"][0]["root"]["id"], rollup_id.to_string());
     }
@@ -1590,17 +1728,26 @@ export function login(username: string): boolean {
             .with_description("cmd: echo \"Package built\"")
             .with_status(TaskStatus::Blocked)
             .with_dependencies(vec!["w-task-1".to_string()]);
-        let task_failing = TaskRecord::new("w-task-fail", "Run broken oracle")
-            .with_description("cmd: exit 42");
+        let task_failing =
+            TaskRecord::new("w-task-fail", "Run broken oracle").with_description("cmd: exit 42");
 
         coordinator.create_task(&task1).unwrap();
         coordinator.create_task(&task2).unwrap();
         coordinator.create_task(&task_failing).unwrap();
 
         // Check initial statuses
-        assert_eq!(coordinator.get_task("w-task-1").unwrap().unwrap().status, TaskStatus::Pending);
-        assert_eq!(coordinator.get_task("w-task-2").unwrap().unwrap().status, TaskStatus::Blocked);
-        assert_eq!(coordinator.get_task("w-task-fail").unwrap().unwrap().status, TaskStatus::Pending);
+        assert_eq!(
+            coordinator.get_task("w-task-1").unwrap().unwrap().status,
+            TaskStatus::Pending
+        );
+        assert_eq!(
+            coordinator.get_task("w-task-2").unwrap().unwrap().status,
+            TaskStatus::Blocked
+        );
+        assert_eq!(
+            coordinator.get_task("w-task-fail").unwrap().unwrap().status,
+            TaskStatus::Pending
+        );
 
         // 2. Run worker to claim and execute ready tasks
         let args = WorkerArgs {
@@ -1623,22 +1770,34 @@ export function login(username: string): boolean {
         let stats1 = run_worker(args.clone(), coordinator.clone()).await.unwrap();
         assert_eq!(stats1.tasks_executed, 1);
         assert_eq!(stats1.tasks_succeeded, 1);
-        assert_eq!(coordinator.get_task("w-task-1").unwrap().unwrap().status, TaskStatus::Completed);
+        assert_eq!(
+            coordinator.get_task("w-task-1").unwrap().unwrap().status,
+            TaskStatus::Completed
+        );
 
         // Verify task2 is now unblocked
-        assert_eq!(coordinator.get_task("w-task-2").unwrap().unwrap().status, TaskStatus::Pending);
+        assert_eq!(
+            coordinator.get_task("w-task-2").unwrap().unwrap().status,
+            TaskStatus::Pending
+        );
 
         // Worker executes w-task-2
         let stats2 = run_worker(args.clone(), coordinator.clone()).await.unwrap();
         assert_eq!(stats2.tasks_executed, 1);
         assert_eq!(stats2.tasks_succeeded, 1);
-        assert_eq!(coordinator.get_task("w-task-2").unwrap().unwrap().status, TaskStatus::Completed);
+        assert_eq!(
+            coordinator.get_task("w-task-2").unwrap().unwrap().status,
+            TaskStatus::Completed
+        );
 
         // Worker executes failing task
         let stats3 = run_worker(args.clone(), coordinator.clone()).await.unwrap();
         assert_eq!(stats3.tasks_executed, 1);
         assert_eq!(stats3.tasks_failed, 1);
-        assert_eq!(coordinator.get_task("w-task-fail").unwrap().unwrap().status, TaskStatus::Failed);
+        assert_eq!(
+            coordinator.get_task("w-task-fail").unwrap().unwrap().status,
+            TaskStatus::Failed
+        );
 
         // 3. Test orphan reclamation by worker
         let mut orphan_task = TaskRecord::new("w-orphan", "Orphaned background task")
@@ -1664,10 +1823,15 @@ export function login(username: string): boolean {
             json: true,
         };
 
-        let stats_reclaim = run_worker(reclaim_worker_args, coordinator.clone()).await.unwrap();
+        let stats_reclaim = run_worker(reclaim_worker_args, coordinator.clone())
+            .await
+            .unwrap();
         assert!(stats_reclaim.orphans_reclaimed >= 1);
         assert_eq!(stats_reclaim.tasks_succeeded, 1);
-        assert_eq!(coordinator.get_task("w-orphan").unwrap().unwrap().status, TaskStatus::Completed);
+        assert_eq!(
+            coordinator.get_task("w-orphan").unwrap().unwrap().status,
+            TaskStatus::Completed
+        );
     }
 
     #[tokio::test]
@@ -1707,9 +1871,15 @@ export function login(username: string): boolean {
 
         let stats = run_worker(args.clone(), coordinator.clone()).await.unwrap();
         assert_eq!(stats.tasks_succeeded, 1);
-        assert_eq!(coordinator.get_task("w-hb-task-1").unwrap().unwrap().status, TaskStatus::Completed);
+        assert_eq!(
+            coordinator.get_task("w-hb-task-1").unwrap().unwrap().status,
+            TaskStatus::Completed
+        );
         // Resource lease should be released upon completion
-        assert!(coordinator.get_lease("src/critical_module.rs").unwrap().is_none());
+        assert!(coordinator
+            .get_lease("src/critical_module.rs")
+            .unwrap()
+            .is_none());
 
         // Test abort on concurrent lease revocation
         #[cfg(target_os = "windows")]
@@ -1727,7 +1897,12 @@ export function login(username: string): boolean {
             tokio::time::sleep(tokio::time::Duration::from_millis(400)).await;
             // Revoke the lease from hb-worker and transfer to rival-agent
             let _ = coord_clone.release_lease("src/stolen_module.rs", "hb-worker");
-            let _ = coord_clone.acquire_lease("src/stolen_module.rs", "rival-agent", 60, Some("stolen"));
+            let _ = coord_clone.acquire_lease(
+                "src/stolen_module.rs",
+                "rival-agent",
+                60,
+                Some("stolen"),
+            );
         });
 
         let stats_revoked = run_worker(args, coordinator.clone()).await.unwrap();
@@ -1744,7 +1919,8 @@ export function login(username: string): boolean {
         use strata_memory::{AstParser, CodeAnchorEngine, SqliteStore};
 
         // Create temporary workspace directory with src/auth.rs
-        let temp_dir = std::env::temp_dir().join(format!("strata_watch_test_{}", uuid::Uuid::new_v4()));
+        let temp_dir =
+            std::env::temp_dir().join(format!("strata_watch_test_{}", uuid::Uuid::new_v4()));
         let src_dir = temp_dir.join("src");
         std::fs::create_dir_all(&src_dir).expect("create src dir");
         let auth_file = src_dir.join("auth.rs");
@@ -1762,7 +1938,9 @@ pub fn verify_token(token: &str) -> bool {
 
         // Parse symbol and create code anchor for verify_token
         let rel_path = "src/auth.rs";
-        let symbols = parser.parse_file(rel_path, initial_code).expect("parse auth.rs");
+        let symbols = parser
+            .parse_file(rel_path, initial_code)
+            .expect("parse auth.rs");
         assert_eq!(symbols.len(), 1);
         assert_eq!(symbols[0].symbol_path, "verify_token");
 
@@ -1777,7 +1955,9 @@ pub fn verify_token(token: &str) -> bool {
             Scope::Global,
         )
         .with_code_anchor(anchor);
-        store.insert_or_update_semantic_fact(&fact1).expect("insert fact1");
+        store
+            .insert_or_update_semantic_fact(&fact1)
+            .expect("insert fact1");
 
         // 2. Grave um segundo SemanticFact dependente (depends_on: [fact_1])
         let mut fact2 = SemanticFact::new(
@@ -1786,11 +1966,19 @@ pub fn verify_token(token: &str) -> bool {
             Scope::Global,
         );
         fact2.depends_on = vec![fact1.id];
-        store.insert_or_update_semantic_fact(&fact2).expect("insert fact2");
+        store
+            .insert_or_update_semantic_fact(&fact2)
+            .expect("insert fact2");
 
         // Verifique que ambos estão inicialmente ativos
-        let loaded_fact1 = store.get_semantic_fact(&fact1.id).expect("get fact1").expect("found");
-        let loaded_fact2 = store.get_semantic_fact(&fact2.id).expect("get fact2").expect("found");
+        let loaded_fact1 = store
+            .get_semantic_fact(&fact1.id)
+            .expect("get fact1")
+            .expect("found");
+        let loaded_fact2 = store
+            .get_semantic_fact(&fact2.id)
+            .expect("get fact2")
+            .expect("found");
         assert_eq!(loaded_fact1.status, FactStatus::Active);
         assert_eq!(loaded_fact2.status, FactStatus::Active);
 
@@ -1811,11 +1999,16 @@ pub fn verify_token(token: &str) -> bool {
             json: false,
         };
 
-        run_watch(watch_args, store.clone()).await.expect("run_watch failed");
+        run_watch(watch_args, store.clone())
+            .await
+            .expect("run_watch failed");
 
         // Verifique:
         // 1. O fato original foi marcado como FactStatus::Stale
-        let updated_fact1 = store.get_semantic_fact(&fact1.id).expect("get fact1").expect("found");
+        let updated_fact1 = store
+            .get_semantic_fact(&fact1.id)
+            .expect("get fact1")
+            .expect("found");
         assert_eq!(
             updated_fact1.status,
             FactStatus::Stale,
@@ -1823,7 +2016,10 @@ pub fn verify_token(token: &str) -> bool {
         );
 
         // 2. O fato dependente downstream foi invalidado em cascata para FactStatus::Stale no JTMS
-        let updated_fact2 = store.get_semantic_fact(&fact2.id).expect("get fact2").expect("found");
+        let updated_fact2 = store
+            .get_semantic_fact(&fact2.id)
+            .expect("get fact2")
+            .expect("found");
         assert_eq!(
             updated_fact2.status,
             FactStatus::Stale,
@@ -1833,12 +2029,16 @@ pub fn verify_token(token: &str) -> bool {
         // Verify JTMS audit trail was recorded
         let audits = store.get_all_jtms_audits(10).expect("get jtms audits");
         assert!(
-            audits.iter().any(|a| a.winning_fact_id == fact1.id && a.losing_fact_id == fact2.id),
+            audits
+                .iter()
+                .any(|a| a.winning_fact_id == fact1.id && a.losing_fact_id == fact2.id),
             "JTMS audit row must record invalidation of fact2 due to prerequisite fact1"
         );
 
         // 3. O Merkle root foi recalculado
-        let modified_symbols = parser.parse_file(rel_path, modified_code).expect("parse modified code");
+        let modified_symbols = parser
+            .parse_file(rel_path, modified_code)
+            .expect("parse modified code");
         let new_merkle_root = CodeAnchorEngine::compute_merkle_tree_hash(&modified_symbols);
         assert_ne!(
             initial_merkle_root, new_merkle_root,
@@ -1885,7 +2085,8 @@ pub fn verify_token(token: &str) -> bool {
         use crate::commands::watch::{run_watch, WatchArgs};
         use strata_memory::SqliteStore;
 
-        let temp_dir = std::env::temp_dir().join(format!("strata_watch_json_test_{}", uuid::Uuid::new_v4()));
+        let temp_dir =
+            std::env::temp_dir().join(format!("strata_watch_json_test_{}", uuid::Uuid::new_v4()));
         std::fs::create_dir_all(&temp_dir).expect("create temp dir");
 
         let store = Arc::new(SqliteStore::open_in_memory().expect("open store"));
@@ -1905,12 +2106,13 @@ pub fn verify_token(token: &str) -> bool {
     #[tokio::test]
     async fn test_realtime_drift_watcher_live_fs_event_debounce() {
         use crate::commands::watch::{run_watch, WatchArgs};
+        use std::time::Duration;
         use strata_core::schemas::{FactStatus, SemanticFact};
         use strata_core::state::Scope;
         use strata_memory::{AstParser, CodeAnchorEngine, SqliteStore};
-        use std::time::Duration;
 
-        let temp_dir = std::env::temp_dir().join(format!("strata_watch_live_{}", uuid::Uuid::new_v4()));
+        let temp_dir =
+            std::env::temp_dir().join(format!("strata_watch_live_{}", uuid::Uuid::new_v4()));
         let src_dir = temp_dir.join("src");
         std::fs::create_dir_all(&src_dir).expect("create src dir");
         let calc_file = src_dir.join("calc.rs");
@@ -1923,11 +2125,16 @@ pub fn verify_token(token: &str) -> bool {
         let parser = AstParser::new();
 
         let rel_path = "src/calc.rs";
-        let symbols = parser.parse_file(rel_path, initial_code).expect("parse calc.rs");
+        let symbols = parser
+            .parse_file(rel_path, initial_code)
+            .expect("parse calc.rs");
         let anchor = engine.create_anchor(rel_path, &symbols[0], None);
 
-        let fact = SemanticFact::new("Addition logic", "math", Scope::Global).with_code_anchor(anchor);
-        store.insert_or_update_semantic_fact(&fact).expect("insert fact");
+        let fact =
+            SemanticFact::new("Addition logic", "math", Scope::Global).with_code_anchor(anchor);
+        store
+            .insert_or_update_semantic_fact(&fact)
+            .expect("insert fact");
 
         // Spawn watcher in background with short debounce
         let watch_dir = temp_dir.clone();
@@ -1964,7 +2171,10 @@ pub fn verify_token(token: &str) -> bool {
         handle.abort();
         let _ = std::fs::remove_dir_all(&temp_dir);
 
-        assert!(transitioned, "Fact should transition to Stale upon live fs modification event");
+        assert!(
+            transitioned,
+            "Fact should transition to Stale upon live fs modification event"
+        );
     }
 
     #[tokio::test]
@@ -1983,11 +2193,22 @@ pub fn verify_token(token: &str) -> bool {
         store.insert_or_update_memory(&rec).expect("insert memory");
 
         // Pre-merge: query on main should find 0 memories
-        let main_before = store.search_fts_as_of("contract", None, None, None, Some("main"), 10).expect("search main before");
+        let main_before = store
+            .search_fts_as_of("contract", None, None, None, Some("main"), 10)
+            .expect("search main before");
         assert_eq!(main_before.len(), 0);
 
         // Pre-merge: query on feat branch should find 1 memory
-        let feat_before = store.search_fts_as_of("contract", None, None, None, Some("feat/payment-gateway"), 10).expect("search feat before");
+        let feat_before = store
+            .search_fts_as_of(
+                "contract",
+                None,
+                None,
+                None,
+                Some("feat/payment-gateway"),
+                10,
+            )
+            .expect("search feat before");
         assert_eq!(feat_before.len(), 1);
 
         // Run sync command with --merge-branch
@@ -2005,7 +2226,9 @@ pub fn verify_token(token: &str) -> bool {
         assert!(res.is_ok(), "run_sync with --merge-branch must succeed");
 
         // Post-merge: query on main should now find 1 memory!
-        let main_after = store.search_fts_as_of("contract", None, None, None, Some("main"), 10).expect("search main after");
+        let main_after = store
+            .search_fts_as_of("contract", None, None, None, Some("main"), 10)
+            .expect("search main after");
         assert_eq!(main_after.len(), 1);
         assert_eq!(main_after[0].0.id, rec.id);
     }
@@ -2016,7 +2239,8 @@ pub fn verify_token(token: &str) -> bool {
         use strata_core::blackboard::{TaskFilter, TaskRecord, TaskStatus};
         use strata_memory::SqliteMemoryEngine;
 
-        let temp_dir = std::env::temp_dir().join(format!("strata_swarm_cli_{}", uuid::Uuid::new_v4()));
+        let temp_dir =
+            std::env::temp_dir().join(format!("strata_swarm_cli_{}", uuid::Uuid::new_v4()));
         let _ = std::fs::create_dir_all(&temp_dir);
         let db_path = temp_dir.join("swarm_blackboard.db");
 
@@ -2083,9 +2307,9 @@ pub fn verify_token(token: &str) -> bool {
                 json: true,
             };
 
-            worker_tasks.push(tokio::spawn(async move {
-                run_worker(worker_args, coord).await
-            }));
+            worker_tasks.push(tokio::spawn(
+                async move { run_worker(worker_args, coord).await },
+            ));
         }
 
         // 4. Await all workers
@@ -2101,8 +2325,14 @@ pub fn verify_token(token: &str) -> bool {
         }
 
         // 5. Assertions
-        assert_eq!(total_succeeded, 6, "All 6 tasks must be executed successfully");
-        assert!(worker_contributions.len() >= 2, "Tasks must be distributed across multiple workers");
+        assert_eq!(
+            total_succeeded, 6,
+            "All 6 tasks must be executed successfully"
+        );
+        assert!(
+            worker_contributions.len() >= 2,
+            "Tasks must be distributed across multiple workers"
+        );
 
         let filter = TaskFilter {
             plan_id: Some("plan-swarm".to_string()),
@@ -2111,17 +2341,38 @@ pub fn verify_token(token: &str) -> bool {
         let final_tasks = coordinator.list_tasks(&filter).unwrap();
         assert_eq!(final_tasks.len(), 6);
         for task in &final_tasks {
-            assert_eq!(task.status, TaskStatus::Completed, "Task {} should be Completed", task.task_id);
-            assert!(task.claim_generation >= 1, "Task {} should have valid fencing generation", task.task_id);
-            assert!(task.assigned_agent.is_some(), "Task {} should record executing agent", task.task_id);
+            assert_eq!(
+                task.status,
+                TaskStatus::Completed,
+                "Task {} should be Completed",
+                task.task_id
+            );
+            assert!(
+                task.claim_generation >= 1,
+                "Task {} should have valid fencing generation",
+                task.task_id
+            );
+            assert!(
+                task.assigned_agent.is_some(),
+                "Task {} should record executing agent",
+                task.task_id
+            );
 
             let artifacts = coordinator.get_task_artifacts(&task.task_id).unwrap();
-            assert_eq!(artifacts.len(), 1, "Task {} must have an artifact", task.task_id);
+            assert_eq!(
+                artifacts.len(),
+                1,
+                "Task {} must have an artifact",
+                task.task_id
+            );
         }
 
         // All resource leases released cleanly
         let active = coordinator.active_leases().unwrap();
-        assert!(active.is_empty(), "All resource leases must be released at the end");
+        assert!(
+            active.is_empty(),
+            "All resource leases must be released at the end"
+        );
 
         let _ = std::fs::remove_dir_all(&temp_dir);
     }
@@ -2132,7 +2383,8 @@ pub fn verify_token(token: &str) -> bool {
         use strata_core::state::{MemoryRecord, MemoryTier, MemoryType, Scope};
         use strata_memory::SqliteStore;
 
-        let temp_dir = std::env::temp_dir().join(format!("strata_cli_mem_test_{}", uuid::Uuid::new_v4()));
+        let temp_dir =
+            std::env::temp_dir().join(format!("strata_cli_mem_test_{}", uuid::Uuid::new_v4()));
         let _ = std::fs::create_dir_all(&temp_dir);
         let db_path = temp_dir.join("strata.db");
 
@@ -2168,7 +2420,9 @@ pub fn verify_token(token: &str) -> bool {
         let status_args = MemoryArgs {
             action: MemoryAction::Status { json: true },
         };
-        run_memory(status_args, Arc::clone(&store)).await.expect("status action");
+        run_memory(status_args, Arc::clone(&store))
+            .await
+            .expect("status action");
 
         // 4. Run reindex with dry_run = true
         let dry_run_args = MemoryArgs {
@@ -2179,7 +2433,9 @@ pub fn verify_token(token: &str) -> bool {
                 json: true,
             },
         };
-        run_memory(dry_run_args, Arc::clone(&store)).await.expect("dry run action");
+        run_memory(dry_run_args, Arc::clone(&store))
+            .await
+            .expect("dry run action");
 
         // 5. Run reindex with dry_run = false
         let reindex_args = MemoryArgs {
@@ -2190,18 +2446,21 @@ pub fn verify_token(token: &str) -> bool {
                 json: true,
             },
         };
-        run_memory(reindex_args, Arc::clone(&store)).await.expect("reindex action");
+        run_memory(reindex_args, Arc::clone(&store))
+            .await
+            .expect("reindex action");
 
         // 6. Verify consistency stats against active model
         let config = strata_core::config::StrataConfig::load();
-        let resolved = strata_memory::EmbeddingProviderFactory::create_from_config(&config).unwrap();
+        let resolved =
+            strata_memory::EmbeddingProviderFactory::create_from_config(&config).unwrap();
         let active_model = resolved.provider.model_name();
-        let stats = store.get_vector_consistency_stats(Some(active_model)).unwrap();
+        let stats = store
+            .get_vector_consistency_stats(Some(active_model))
+            .unwrap();
         assert!(stats.is_consistent);
         assert_eq!(stats.distinct_models_count, 1);
 
         let _ = std::fs::remove_dir_all(&temp_dir);
     }
 }
-
-

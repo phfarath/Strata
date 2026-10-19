@@ -216,7 +216,13 @@ impl KnowledgeGraph {
 
     /// Sets or adjusts synaptic conductance/weight for an existing directed edge.
     /// Clamps weight strictly within [0.05, 1.00].
-    pub fn set_edge_weight(&mut self, from: &GraphNode, to: &GraphNode, kind: EdgeKind, weight: f32) -> bool {
+    pub fn set_edge_weight(
+        &mut self,
+        from: &GraphNode,
+        to: &GraphNode,
+        kind: EdgeKind,
+        weight: f32,
+    ) -> bool {
         if let Some(edges) = self.adj.get_mut(from) {
             if let Some(edge) = edges.iter_mut().find(|e| &e.target == to && e.kind == kind) {
                 edge.weight = weight.clamp(0.05, 1.0);
@@ -229,7 +235,10 @@ impl KnowledgeGraph {
     /// Retrieves current synaptic conductance/weight for a directed edge.
     pub fn get_edge_weight(&self, from: &GraphNode, to: &GraphNode, kind: EdgeKind) -> Option<f32> {
         self.adj.get(from).and_then(|edges| {
-            edges.iter().find(|e| &e.target == to && e.kind == kind).map(|e| e.weight)
+            edges
+                .iter()
+                .find(|e| &e.target == to && e.kind == kind)
+                .map(|e| e.weight)
         })
     }
 

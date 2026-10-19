@@ -306,10 +306,15 @@ mod tests {
 
         // Daemon background tick processes idle episodes
         let count = run_daemon_pyramid_rollup(&pyramid_store, Some("sess-daemon")).unwrap();
-        assert_eq!(count, 1, "Should generate 1 milestone rollup during daemon cycle");
+        assert_eq!(
+            count, 1,
+            "Should generate 1 milestone rollup during daemon cycle"
+        );
 
         // Verify tier 2 rollup exists and children were linked
-        let rollups = store.list_episodes_by_tier(2, Some("sess-daemon"), 10).unwrap();
+        let rollups = store
+            .list_episodes_by_tier(2, Some("sess-daemon"), 10)
+            .unwrap();
         assert_eq!(rollups.len(), 1);
         assert_eq!(rollups[0].child_ids.len(), 2);
 
@@ -421,4 +426,3 @@ mod tests {
         );
     }
 }
-

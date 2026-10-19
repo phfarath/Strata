@@ -306,7 +306,6 @@ impl MemoryRecord {
         }
     }
 
-
     pub fn with_embedding_and_model(
         mut self,
         embedding: Vec<f32>,
@@ -490,7 +489,9 @@ impl MemoryRecord {
     pub fn build_provenance(&self, selection_reason: Option<&str>) -> ProvenanceBlock {
         let branch = self.git_branch().map(String::from);
         let evidence: Vec<String> = self.evidence_ids.iter().map(|u| u.to_string()).collect();
-        let reason = selection_reason.unwrap_or("Retrieved from active memory store").to_string();
+        let reason = selection_reason
+            .unwrap_or("Retrieved from active memory store")
+            .to_string();
 
         ProvenanceBlock {
             selection_reason: reason,
@@ -693,7 +694,10 @@ impl FailurePattern {
             map.insert("symbol".to_string(), serde_json::Value::String(s.into()));
         }
         if let Some(ec) = error_class {
-            map.insert("error_class".to_string(), serde_json::Value::String(ec.into()));
+            map.insert(
+                "error_class".to_string(),
+                serde_json::Value::String(ec.into()),
+            );
         }
         self.metadata = serde_json::Value::Object(map);
         self
@@ -725,7 +729,9 @@ impl FailurePattern {
     }
 
     pub fn verified_correction(&self) -> Option<&str> {
-        self.metadata.get("verified_correction").and_then(|v| v.as_str())
+        self.metadata
+            .get("verified_correction")
+            .and_then(|v| v.as_str())
     }
 }
 

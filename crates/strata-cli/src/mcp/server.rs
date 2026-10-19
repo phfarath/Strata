@@ -958,7 +958,14 @@ impl McpServer {
 
                 match self
                     .memory_engine
-                    .search_as_of(query, scope.as_ref(), as_of_time, as_of_commit, as_of_branch, limit)
+                    .search_as_of(
+                        query,
+                        scope.as_ref(),
+                        as_of_time,
+                        as_of_commit,
+                        as_of_branch,
+                        limit,
+                    )
                     .await
                 {
                     Ok(records) => {
@@ -1007,7 +1014,8 @@ impl McpServer {
                                 .map(|r| {
                                     let mut handle = r.to_handle(None);
                                     let prov_reason = format!("Matched search query: \"{query}\"");
-                                    handle.provenance = Some(r.build_provenance(Some(&prov_reason)));
+                                    handle.provenance =
+                                        Some(r.build_provenance(Some(&prov_reason)));
                                     let mut val = serde_json::to_value(&handle)
                                         .unwrap_or(serde_json::json!({}));
                                     if let Some(obj) = val.as_object_mut() {
@@ -1119,12 +1127,20 @@ impl McpServer {
                 let as_of_commit = args.get("as_of_commit").and_then(|v| v.as_str());
                 let as_of_branch = args.get("as_of_branch").and_then(|v| v.as_str());
 
-                match self.memory_engine.get_as_of(&uuid, as_of_time, as_of_commit, as_of_branch).await {
+                match self
+                    .memory_engine
+                    .get_as_of(&uuid, as_of_time, as_of_commit, as_of_branch)
+                    .await
+                {
                     Ok(Some(record)) => {
-                        let mut val = serde_json::to_value(&record).unwrap_or(serde_json::json!({}));
+                        let mut val =
+                            serde_json::to_value(&record).unwrap_or(serde_json::json!({}));
                         if let Some(obj) = val.as_object_mut() {
                             let prov = record.build_provenance(Some("Retrieved by unique ID"));
-                            obj.insert("provenance".to_string(), serde_json::to_value(prov).unwrap_or_default());
+                            obj.insert(
+                                "provenance".to_string(),
+                                serde_json::to_value(prov).unwrap_or_default(),
+                            );
                         }
                         match serde_json::to_string_pretty(&val) {
                             Ok(json) => CallToolResult::text(json),
@@ -1194,18 +1210,36 @@ impl McpServer {
                             let (status, id, title) = match &decision.operation {
                                 strata_memory::pipeline::AudnOperation::Add => {
                                     let rec = decision.record.as_ref().unwrap_or(&record);
-                                    ("stored", rec.id.to_string(), rec.summary.clone().unwrap_or_else(|| rec.content.clone()))
+                                    (
+                                        "stored",
+                                        rec.id.to_string(),
+                                        rec.summary.clone().unwrap_or_else(|| rec.content.clone()),
+                                    )
                                 }
                                 strata_memory::pipeline::AudnOperation::Update { target_id } => {
                                     let rec = decision.record.as_ref().unwrap_or(&record);
-                                    ("updated", target_id.to_string(), rec.summary.clone().unwrap_or_else(|| rec.content.clone()))
+                                    (
+                                        "updated",
+                                        target_id.to_string(),
+                                        rec.summary.clone().unwrap_or_else(|| rec.content.clone()),
+                                    )
                                 }
-                                strata_memory::pipeline::AudnOperation::Noop { existing_id } => {
-                                    ("noop", existing_id.to_string(), record.summary.clone().unwrap_or_else(|| record.content.clone()))
-                                }
-                                strata_memory::pipeline::AudnOperation::Delete { target_id } => {
-                                    ("deleted", target_id.to_string(), record.summary.clone().unwrap_or_else(|| record.content.clone()))
-                                }
+                                strata_memory::pipeline::AudnOperation::Noop { existing_id } => (
+                                    "noop",
+                                    existing_id.to_string(),
+                                    record
+                                        .summary
+                                        .clone()
+                                        .unwrap_or_else(|| record.content.clone()),
+                                ),
+                                strata_memory::pipeline::AudnOperation::Delete { target_id } => (
+                                    "deleted",
+                                    target_id.to_string(),
+                                    record
+                                        .summary
+                                        .clone()
+                                        .unwrap_or_else(|| record.content.clone()),
+                                ),
                             };
                             match serde_json::to_string_pretty(&serde_json::json!({
                                 "status": status,
@@ -1218,7 +1252,9 @@ impl McpServer {
                                 "minhash_similarity": decision.minhash_similarity,
                             })) {
                                 Ok(json) => CallToolResult::text(json),
-                                Err(e) => CallToolResult::error(format!("Serialization error: {e}")),
+                                Err(e) => {
+                                    CallToolResult::error(format!("Serialization error: {e}"))
+                                }
                             }
                         }
                         Err(e) => CallToolResult::error(format!("Memory write error: {e}")),
@@ -1328,7 +1364,11 @@ impl McpServer {
                                 strata_memory::InjectionOutcome::Success
                             };
 
-                            let mut inj = strata_memory::MemoryInjectionRecord::new(uuid, &session_id, outcome);
+                            let mut inj = strata_memory::MemoryInjectionRecord::new(
+                                uuid,
+                                &session_id,
+                                outcome,
+                            );
                             if let Some(ref tid) = task_id {
                                 inj = inj.with_task_id(tid.clone());
                             }
@@ -1337,8 +1377,12 @@ impl McpServer {
                             }
                             let _ = engine.store().record_injection_outcome(&inj);
 
-                            let detector = strata_memory::context_rot::ContextRotDetector::with_default_config();
-                            if let Ok(efficacy) = detector.evaluate_memory_efficacy(engine.store(), &uuid) {
+                            let detector =
+                                strata_memory::context_rot::ContextRotDetector::with_default_config(
+                                );
+                            if let Ok(efficacy) =
+                                detector.evaluate_memory_efficacy(engine.store(), &uuid)
+                            {
                                 if efficacy.is_poisoned {
                                     let _ = detector.apply_penalty_decay(engine.store());
                                     let reason = format!(
@@ -1365,7 +1409,10 @@ impl McpServer {
                                 });
                                 if is_quarantined {
                                     if let Some(obj) = structured.as_object_mut() {
-                                        obj.insert("quarantined".to_string(), serde_json::Value::Bool(true));
+                                        obj.insert(
+                                            "quarantined".to_string(),
+                                            serde_json::Value::Bool(true),
+                                        );
                                     }
                                 }
                                 let msg = if is_quarantined {
@@ -1626,22 +1673,38 @@ impl McpServer {
                 if entity_type == "fact" || entity_type == "semantic" {
                     let fact = match sqlite.store().get_semantic_fact(&id) {
                         Ok(Some(f)) => f,
-                        Ok(None) => return CallToolResult::error(format!("Semantic fact with ID '{id}' not found")),
-                        Err(e) => return CallToolResult::error(format!("Failed to fetch semantic fact: {e}")),
+                        Ok(None) => {
+                            return CallToolResult::error(format!(
+                                "Semantic fact with ID '{id}' not found"
+                            ))
+                        }
+                        Err(e) => {
+                            return CallToolResult::error(format!(
+                                "Failed to fetch semantic fact: {e}"
+                            ))
+                        }
                     };
 
                     let content_hash = blake3::hash(fact.statement.as_bytes()).to_hex().to_string();
-                    let mut approval_rec = match sqlite.verify_and_consume_approval_token(token, &id, &content_hash) {
-                        Ok(rec) => rec,
-                        Err(e) => return CallToolResult::error(format!("Approval token verification failed: {e}")),
-                    };
+                    let mut approval_rec =
+                        match sqlite.verify_and_consume_approval_token(token, &id, &content_hash) {
+                            Ok(rec) => rec,
+                            Err(e) => {
+                                return CallToolResult::error(format!(
+                                    "Approval token verification failed: {e}"
+                                ))
+                            }
+                        };
                     if let Some(r) = reason {
                         if approval_rec.rationale.is_none() {
                             approval_rec.rationale = Some(r.to_string());
                         }
                     }
 
-                    match sqlite.promote_fact_to_core_with_approval(&id, approval_rec.clone()).await {
+                    match sqlite
+                        .promote_fact_to_core_with_approval(&id, approval_rec.clone())
+                        .await
+                    {
                         Ok(promoted) => {
                             let structured = serde_json::json!({
                                 "status": "success",
@@ -1658,27 +1721,43 @@ impl McpServer {
                                 structured,
                             )
                         }
-                        Err(e) => CallToolResult::error(format!("Failed to promote semantic fact: {e}")),
+                        Err(e) => {
+                            CallToolResult::error(format!("Failed to promote semantic fact: {e}"))
+                        }
                     }
                 } else {
                     let mem = match sqlite.store().get_memory(&id) {
                         Ok(Some(m)) => m,
-                        Ok(None) => return CallToolResult::error(format!("Memory record with ID '{id}' not found")),
-                        Err(e) => return CallToolResult::error(format!("Failed to fetch memory: {e}")),
+                        Ok(None) => {
+                            return CallToolResult::error(format!(
+                                "Memory record with ID '{id}' not found"
+                            ))
+                        }
+                        Err(e) => {
+                            return CallToolResult::error(format!("Failed to fetch memory: {e}"))
+                        }
                     };
 
                     let content_hash = blake3::hash(mem.content.as_bytes()).to_hex().to_string();
-                    let mut approval_rec = match sqlite.verify_and_consume_approval_token(token, &id, &content_hash) {
-                        Ok(rec) => rec,
-                        Err(e) => return CallToolResult::error(format!("Approval token verification failed: {e}")),
-                    };
+                    let mut approval_rec =
+                        match sqlite.verify_and_consume_approval_token(token, &id, &content_hash) {
+                            Ok(rec) => rec,
+                            Err(e) => {
+                                return CallToolResult::error(format!(
+                                    "Approval token verification failed: {e}"
+                                ))
+                            }
+                        };
                     if let Some(r) = reason {
                         if approval_rec.rationale.is_none() {
                             approval_rec.rationale = Some(r.to_string());
                         }
                     }
 
-                    match sqlite.promote_to_core_with_approval(&id, approval_rec.clone()).await {
+                    match sqlite
+                        .promote_to_core_with_approval(&id, approval_rec.clone())
+                        .await
+                    {
                         Ok(promoted) => {
                             let structured = serde_json::json!({
                                 "status": "success",
@@ -1724,27 +1803,43 @@ impl McpServer {
 
                 let sqlite = match &self.sqlite_engine {
                     Some(e) => e,
-                    None => return CallToolResult::error("Global promotion requires SQLite storage engine"),
+                    None => {
+                        return CallToolResult::error(
+                            "Global promotion requires SQLite storage engine",
+                        )
+                    }
                 };
 
                 let mem = match sqlite.store().get_memory(&id) {
                     Ok(Some(m)) => m,
-                    Ok(None) => return CallToolResult::error(format!("Memory record with ID '{id}' not found in local workspace store")),
+                    Ok(None) => {
+                        return CallToolResult::error(format!(
+                            "Memory record with ID '{id}' not found in local workspace store"
+                        ))
+                    }
                     Err(e) => return CallToolResult::error(format!("Failed to fetch memory: {e}")),
                 };
 
                 let content_hash = blake3::hash(mem.content.as_bytes()).to_hex().to_string();
-                let mut approval_rec = match sqlite.verify_and_consume_approval_token(token, &id, &content_hash) {
-                    Ok(rec) => rec,
-                    Err(e) => return CallToolResult::error(format!("Approval token verification failed: {e}")),
-                };
+                let mut approval_rec =
+                    match sqlite.verify_and_consume_approval_token(token, &id, &content_hash) {
+                        Ok(rec) => rec,
+                        Err(e) => {
+                            return CallToolResult::error(format!(
+                                "Approval token verification failed: {e}"
+                            ))
+                        }
+                    };
                 if let Some(r) = reason {
                     if approval_rec.rationale.is_none() {
                         approval_rec.rationale = Some(r.to_string());
                     }
                 }
 
-                match sqlite.promote_to_global_with_approval(&id, approval_rec.clone()).await {
+                match sqlite
+                    .promote_to_global_with_approval(&id, approval_rec.clone())
+                    .await
+                {
                     Ok(promoted) => {
                         let structured = serde_json::json!({
                             "status": "success",
@@ -2318,7 +2413,9 @@ impl McpServer {
                 if let Some(r_str) = args.get("rollup_id").and_then(|v| v.as_str()) {
                     match Uuid::parse_str(r_str) {
                         Ok(u) => filter = filter.with_rollup_id(u),
-                        Err(e) => return CallToolResult::error(format!("Invalid rollup_id UUID: {e}")),
+                        Err(e) => {
+                            return CallToolResult::error(format!("Invalid rollup_id UUID: {e}"))
+                        }
                     }
                 }
 
@@ -2332,7 +2429,8 @@ impl McpServer {
 
                 if let Some(st) = args.get("start_time").and_then(|v| v.as_i64()) {
                     filter = filter.with_start_time(st);
-                } else if let Some(since_secs) = args.get("since_seconds").and_then(|v| v.as_i64()) {
+                } else if let Some(since_secs) = args.get("since_seconds").and_then(|v| v.as_i64())
+                {
                     let now = chrono::Utc::now().timestamp();
                     filter = filter.with_start_time(now - since_secs);
                 }
@@ -2356,7 +2454,10 @@ impl McpServer {
                 match pyramid_store.drill_down_progressive(&filter, expand) {
                     Ok(report) => {
                         let text = report.render_summary();
-                        CallToolResult::structured(text, serde_json::to_value(&report).unwrap_or_default())
+                        CallToolResult::structured(
+                            text,
+                            serde_json::to_value(&report).unwrap_or_default(),
+                        )
                     }
                     Err(e) => CallToolResult::error(format!("Pyramid drill-down error: {e}")),
                 }

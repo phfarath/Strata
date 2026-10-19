@@ -466,7 +466,9 @@ fn is_pure_mechanical_command(lower: &str) -> bool {
         "show directory tree",
     ];
 
-    MECHANICAL_ACTIONS.iter().any(|&act| lower == act || lower.starts_with(act))
+    MECHANICAL_ACTIONS
+        .iter()
+        .any(|&act| lower == act || lower.starts_with(act))
 }
 
 fn is_pure_local_code_edit(lower: &str) -> bool {
@@ -496,13 +498,34 @@ mod tests {
 
     #[test]
     fn test_task_type_parsing_and_display() {
-        assert_eq!("mechanical".parse::<TaskType>().unwrap(), TaskType::Mechanical);
-        assert_eq!("terminal".parse::<TaskType>().unwrap(), TaskType::Mechanical);
-        assert_eq!("code_local".parse::<TaskType>().unwrap(), TaskType::CodeLocal);
-        assert_eq!("architecture".parse::<TaskType>().unwrap(), TaskType::Architecture);
-        assert_eq!("historical".parse::<TaskType>().unwrap(), TaskType::Historical);
-        assert_eq!("debugging".parse::<TaskType>().unwrap(), TaskType::Debugging);
-        assert_eq!("anything_else".parse::<TaskType>().unwrap(), TaskType::General);
+        assert_eq!(
+            "mechanical".parse::<TaskType>().unwrap(),
+            TaskType::Mechanical
+        );
+        assert_eq!(
+            "terminal".parse::<TaskType>().unwrap(),
+            TaskType::Mechanical
+        );
+        assert_eq!(
+            "code_local".parse::<TaskType>().unwrap(),
+            TaskType::CodeLocal
+        );
+        assert_eq!(
+            "architecture".parse::<TaskType>().unwrap(),
+            TaskType::Architecture
+        );
+        assert_eq!(
+            "historical".parse::<TaskType>().unwrap(),
+            TaskType::Historical
+        );
+        assert_eq!(
+            "debugging".parse::<TaskType>().unwrap(),
+            TaskType::Debugging
+        );
+        assert_eq!(
+            "anything_else".parse::<TaskType>().unwrap(),
+            TaskType::General
+        );
 
         assert_eq!(TaskType::Mechanical.to_string(), "mechanical");
         assert_eq!(TaskType::Architecture.to_string(), "architecture");
@@ -571,7 +594,9 @@ mod tests {
 
     #[test]
     fn test_trivial_conversational_prompts_bypass() {
-        let trivial = ["ok", "sim", "yes", "done", "thanks", "valeu", "show", "pode ser", "", "   "];
+        let trivial = [
+            "ok", "sim", "yes", "done", "thanks", "valeu", "show", "pode ser", "", "   ",
+        ];
 
         for prompt in trivial {
             assert!(
@@ -748,7 +773,10 @@ mod tests {
         assert!(!should_recall("ls -la", TaskType::General));
 
         // Words starting with "dir" that are not commands should not be falsely bypassed
-        let dec = RecallGatingClassifier::classify("directory structure recommendations", TaskType::General);
+        let dec = RecallGatingClassifier::classify(
+            "directory structure recommendations",
+            TaskType::General,
+        );
         assert_eq!(dec.intent, IntentKind::GeneralRecall);
         assert!(dec.should_recall);
     }

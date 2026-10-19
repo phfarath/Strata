@@ -1,8 +1,8 @@
+use serde::{Deserialize, Serialize};
 use std::io::Write;
 use std::path::PathBuf;
 use std::process::{Command, Stdio};
 use std::sync::Arc;
-use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
 use strata_core::errors::StrataError;
@@ -123,7 +123,11 @@ impl DrillDownTree {
         let n = self.leaves.len();
         for (i, leaf) in self.leaves.iter().enumerate() {
             let is_last = i == n - 1;
-            let branch = if is_last { "    └── " } else { "    ├── " };
+            let branch = if is_last {
+                "    └── "
+            } else {
+                "    ├── "
+            };
             out.push_str(&format!(
                 "{}[Tier {}] Leaf: {} (ID: {}, Steps: {}, Salience: {:.2})\n",
                 branch,
@@ -225,7 +229,8 @@ impl EpisodicPyramidEngine {
     ) -> (String, Vec<String>, f32, Option<String>) {
         if episodes.is_empty() {
             return (
-                "[Milestone Rollup] Empty Cluster | Invariants: 0 outcomes, 0 files touched".to_string(),
+                "[Milestone Rollup] Empty Cluster | Invariants: 0 outcomes, 0 files touched"
+                    .to_string(),
                 Vec::new(),
                 0.0,
                 None,
@@ -314,7 +319,10 @@ impl EpisodicPyramidEngine {
             if let Some(ref tid) = ep.task_id {
                 let trimmed = tid.trim();
                 if !trimmed.is_empty() {
-                    task_groups.entry(trimmed.to_string()).or_default().push(idx);
+                    task_groups
+                        .entry(trimmed.to_string())
+                        .or_default()
+                        .push(idx);
                 }
             }
         }
@@ -472,10 +480,7 @@ impl EpisodicPyramidEngine {
                 .join(",");
             let hash_name = format!(
                 "strata:rollup:v1:{}:{}:{}:{}",
-                medoid.session_id,
-                medoid.id,
-                child_ids_str,
-                summary
+                medoid.session_id, medoid.id, child_ids_str, summary
             );
             let hash = blake3::hash(hash_name.as_bytes());
             let mut uuid_bytes = [0u8; 16];
@@ -485,11 +490,7 @@ impl EpisodicPyramidEngine {
             let rollup_id = Uuid::from_bytes(uuid_bytes);
 
             // Deterministic timestamp: latest timestamp among children
-            let created_at = cluster_eps
-                .iter()
-                .map(|e| e.created_at)
-                .max()
-                .unwrap_or(0);
+            let created_at = cluster_eps.iter().map(|e| e.created_at).max().unwrap_or(0);
 
             let mut rollup = EpisodeRecord::new(&medoid.session_id, &medoid.agent_id, summary)
                 .with_tier(config.target_tier)
@@ -1036,7 +1037,12 @@ impl SlmPyramidBridge {
             .map(|m| {
                 let s = m.summary.trim();
                 if let Some(stripped) = s.strip_prefix("[Milestone Rollup]") {
-                    stripped.split('|').next().unwrap_or(stripped).trim().to_string()
+                    stripped
+                        .split('|')
+                        .next()
+                        .unwrap_or(stripped)
+                        .trim()
+                        .to_string()
                 } else {
                     s.split('|').next().unwrap_or(s).trim().to_string()
                 }
@@ -1054,7 +1060,10 @@ impl SlmPyramidBridge {
 
     /// Generates a Tier 3 session narrative using the local SmolLM2 adapter,
     /// with transparent fallback to deterministic heuristic synthesis if Python or GPU is unavailable.
-    pub fn generate_narrative(&self, milestones: &[EpisodeRecord]) -> Result<SlmInferenceResult, StrataError> {
+    pub fn generate_narrative(
+        &self,
+        milestones: &[EpisodeRecord],
+    ) -> Result<SlmInferenceResult, StrataError> {
         if milestones.is_empty() {
             let heur = Self::heuristic_narrative(milestones);
             return Ok(SlmInferenceResult {
@@ -1117,7 +1126,9 @@ impl SlmPyramidBridge {
                         if let Some(json_start) = stdout_str.find('{') {
                             if let Some(json_end) = stdout_str.rfind('}') {
                                 let json_substr = &stdout_str[json_start..=json_end];
-                                if let Ok(parsed) = serde_json::from_str::<SlmInferenceResult>(json_substr) {
+                                if let Ok(parsed) =
+                                    serde_json::from_str::<SlmInferenceResult>(json_substr)
+                                {
                                     return Ok(parsed);
                                 }
                             }
@@ -1145,7 +1156,10 @@ impl SlmPyramidBridge {
             model: "heuristic_fallback".to_string(),
             offline: true,
             fallback: true,
-            warning: Some("Python SLM bridge unavailable or timed out; used deterministic heuristic".to_string()),
+            warning: Some(
+                "Python SLM bridge unavailable or timed out; used deterministic heuristic"
+                    .to_string(),
+            ),
         })
     }
 }
@@ -1300,14 +1314,13 @@ mod tests {
 
         let episodes = vec![ep1, ep2, ep3];
         // ep2 is in the geometric middle of ep1 and ep3
-        let embeddings = vec![
-            vec![1.0, 0.0],
-            vec![0.707, 0.707],
-            vec![0.0, 1.0],
-        ];
+        let embeddings = vec![vec![1.0, 0.0], vec![0.707, 0.707], vec![0.0, 1.0]];
 
         let medoid_idx = EpisodicPyramidEngine::elect_medoid(&episodes, &embeddings);
-        assert_eq!(medoid_idx, 1, "Episode 2 should be elected medoid as the geometric center");
+        assert_eq!(
+            medoid_idx, 1,
+            "Episode 2 should be elected medoid as the geometric center"
+        );
 
         // 2. Deterministic Tie-Breaker: Exact numerical tie
         let mut ep_a = EpisodeRecord::new("sess-1", "agent-1", "Episode A");
@@ -1335,10 +1348,9 @@ mod tests {
             .with_outcome("Created episodes table")
             .with_outcome("Added composite indexes");
 
-        let step1 = EpisodeStep::new(1, "create table")
-            .with_input(serde_json::json!({
-                "file_path": "crates/strata-memory/src/store.rs"
-            }));
+        let step1 = EpisodeStep::new(1, "create table").with_input(serde_json::json!({
+            "file_path": "crates/strata-memory/src/store.rs"
+        }));
         let step2 = EpisodeStep::new(2, "export module crates/strata-memory/src/lib.rs");
         ep1.event_trace = vec![step1, step2];
 
@@ -1348,13 +1360,12 @@ mod tests {
             .with_outcome("Added composite indexes") // duplicate outcome
             .with_outcome("Implemented get_drill_down_tree");
 
-        let step3 = EpisodeStep::new(1, "write query")
-            .with_output(serde_json::json!({
-                "files": [
-                    "crates/strata-memory/src/store.rs",
-                    "crates/strata-memory/src/pyramid.rs"
-                ]
-            }));
+        let step3 = EpisodeStep::new(1, "write query").with_output(serde_json::json!({
+            "files": [
+                "crates/strata-memory/src/store.rs",
+                "crates/strata-memory/src/pyramid.rs"
+            ]
+        }));
         ep2.event_trace = vec![step3];
 
         let episodes = vec![ep1, ep2];
@@ -1380,7 +1391,9 @@ mod tests {
         // 5. Causal provenance
         assert_eq!(
             provenance,
-            Some("User prompt -> Schema design -> Schema design -> Query implementation".to_string())
+            Some(
+                "User prompt -> Schema design -> Schema design -> Query implementation".to_string()
+            )
         );
     }
 
@@ -1420,7 +1433,11 @@ mod tests {
 
         let clusters = EpisodicPyramidEngine::cluster_episodes(&episodes, &embeddings, &config);
 
-        assert_eq!(clusters.len(), 2, "Expected exactly 2 clusters meeting min_cluster_size");
+        assert_eq!(
+            clusters.len(),
+            2,
+            "Expected exactly 2 clusters meeting min_cluster_size"
+        );
         // Cluster 1: auth-task
         assert_eq!(clusters[0], vec![0, 1]);
         // Cluster 2: vector similarity
@@ -1436,7 +1453,8 @@ mod tests {
             .with_outcome("Schema initialized");
         ep1.task_id = Some("task-database".to_string());
         ep1.event_trace = vec![
-            EpisodeStep::new(1, "create table episodes").with_input(serde_json::json!({ "file": "crates/strata-memory/src/store.rs" })),
+            EpisodeStep::new(1, "create table episodes")
+                .with_input(serde_json::json!({ "file": "crates/strata-memory/src/store.rs" })),
             EpisodeStep::new(2, "verify migration"),
         ];
 
@@ -1444,9 +1462,7 @@ mod tests {
             .with_salience(0.75)
             .with_outcome("Indexes verified");
         ep2.task_id = Some("task-database".to_string());
-        ep2.event_trace = vec![
-            EpisodeStep::new(1, "create index idx_episodes_tier"),
-        ];
+        ep2.event_trace = vec![EpisodeStep::new(1, "create index idx_episodes_tier")];
 
         store.save_episode(&ep1).expect("save ep1");
         store.save_episode(&ep2).expect("save ep2");
@@ -1460,7 +1476,11 @@ mod tests {
         )
         .expect("aggregate session rollups");
 
-        assert_eq!(rollups.len(), 1, "Should generate exactly 1 milestone rollup");
+        assert_eq!(
+            rollups.len(),
+            1,
+            "Should generate exactly 1 milestone rollup"
+        );
         let rollup = &rollups[0];
         assert_eq!(rollup.tier, 2);
         assert_eq!(rollup.child_ids.len(), 2);
@@ -1468,20 +1488,25 @@ mod tests {
         assert!(rollup.child_ids.contains(&ep2.id));
 
         // Verify child episodes now have parent_id pointing to rollup
-        let fetched_ep1 = store.get_episode(&ep1.id).expect("get ep1").expect("ep1 found");
+        let fetched_ep1 = store
+            .get_episode(&ep1.id)
+            .expect("get ep1")
+            .expect("ep1 found");
         assert_eq!(fetched_ep1.parent_id, Some(rollup.id));
-        let fetched_ep2 = store.get_episode(&ep2.id).expect("get ep2").expect("ep2 found");
+        let fetched_ep2 = store
+            .get_episode(&ep2.id)
+            .expect("get ep2")
+            .expect("ep2 found");
         assert_eq!(fetched_ep2.parent_id, Some(rollup.id));
 
         // Test zoom_out
-        let zoomed = EpisodicPyramidEngine::zoom_out(&store, Some("sess-e2e"), 10)
-            .expect("zoom out");
+        let zoomed =
+            EpisodicPyramidEngine::zoom_out(&store, Some("sess-e2e"), 10).expect("zoom out");
         assert_eq!(zoomed.len(), 1);
         assert_eq!(zoomed[0].id, rollup.id);
 
         // Test drill_down
-        let tree_opt = EpisodicPyramidEngine::drill_down(&store, &rollup.id)
-            .expect("drill down");
+        let tree_opt = EpisodicPyramidEngine::drill_down(&store, &rollup.id).expect("drill down");
         assert!(tree_opt.is_some());
         let tree = tree_opt.unwrap();
         assert_eq!(tree.root.id, rollup.id);
@@ -1568,7 +1593,10 @@ mod tests {
         // JSON serialization matches bit-for-bit
         let json1 = serde_json::to_string(&rollups1[0]).unwrap();
         let json2 = serde_json::to_string(&rollups2[0]).unwrap();
-        assert_eq!(json1, json2, "Replay generation must be bit-for-bit identical");
+        assert_eq!(
+            json1, json2,
+            "Replay generation must be bit-for-bit identical"
+        );
     }
 
     #[test]
@@ -1599,9 +1627,7 @@ mod tests {
                 .with_task_id("task-db")
                 .with_salience(0.9)
                 .with_outcome(format!("Table partition {i} created"))
-                .with_steps(vec![
-                    EpisodeStep::new(0, format!("Run migration {i}")),
-                ]);
+                .with_steps(vec![EpisodeStep::new(0, format!("Run migration {i}"))]);
             ep.created_at = 2000 + (i as i64 * 20);
             sqlite.save_episode(&ep).expect("save ep");
         }
@@ -1612,8 +1638,14 @@ mod tests {
             .expect("auto rollup");
         assert_eq!(rollups.len(), 2, "Expected 2 milestone rollups generated");
 
-        let auth_rollup = rollups.iter().find(|r| r.task_id.as_deref() == Some("task-auth")).unwrap();
-        let db_rollup = rollups.iter().find(|r| r.task_id.as_deref() == Some("task-db")).unwrap();
+        let auth_rollup = rollups
+            .iter()
+            .find(|r| r.task_id.as_deref() == Some("task-auth"))
+            .unwrap();
+        let db_rollup = rollups
+            .iter()
+            .find(|r| r.task_id.as_deref() == Some("task-db"))
+            .unwrap();
 
         // 2. Progressive drill-down with expand_episodes = false (compact Tier 2 summaries)
         let filter_all = PyramidFilter::new().with_session_id("sess-drill");
@@ -1624,8 +1656,15 @@ mod tests {
         assert!(!compact_report.expanded);
         assert_eq!(compact_report.rollups_count, 2);
         assert_eq!(compact_report.summaries.len(), 2);
-        assert_eq!(compact_report.trees.len(), 0, "No raw trees should be expanded");
-        assert_eq!(compact_report.total_steps, 0, "Zero steps token overhead when compact");
+        assert_eq!(
+            compact_report.trees.len(),
+            0,
+            "No raw trees should be expanded"
+        );
+        assert_eq!(
+            compact_report.total_steps, 0,
+            "Zero steps token overhead when compact"
+        );
         assert_eq!(compact_report.total_leaves, 6);
         let summary_text = compact_report.render_summary();
         assert!(summary_text.contains("Hierarchical Pyramid Rollups (Compact Tier 2)"));
@@ -1639,7 +1678,11 @@ mod tests {
 
         assert!(expanded_report.expanded);
         assert_eq!(expanded_report.rollups_count, 2);
-        assert_eq!(expanded_report.trees.len(), 2, "Both trees should be reconstructed");
+        assert_eq!(
+            expanded_report.trees.len(),
+            2,
+            "Both trees should be reconstructed"
+        );
         assert_eq!(expanded_report.total_leaves, 6);
         assert_eq!(expanded_report.total_steps, 9); // (3 * 2) + (3 * 1) = 9
         let expanded_text = expanded_report.render_summary();
@@ -1653,7 +1696,10 @@ mod tests {
             .drill_down_progressive(&filter_auth, true)
             .expect("filter auth");
         assert_eq!(auth_report.rollups_count, 1);
-        assert_eq!(auth_report.summaries[0].task_id.as_deref(), Some("task-auth"));
+        assert_eq!(
+            auth_report.summaries[0].task_id.as_deref(),
+            Some("task-auth")
+        );
         assert_eq!(auth_report.total_leaves, 3);
         assert_eq!(auth_report.total_steps, 6);
 
@@ -1692,7 +1738,10 @@ mod tests {
     fn test_slm_bridge_tier2_prompt_formatting() {
         let ep1 = EpisodeRecord::new("sess-1", "agent-1", "Auth JWT RS256+JWKS")
             .with_tier(2)
-            .with_outcomes(vec!["Keypair generated".to_string(), "JWKS exposed".to_string()]);
+            .with_outcomes(vec![
+                "Keypair generated".to_string(),
+                "JWKS exposed".to_string(),
+            ]);
         let ep2 = EpisodeRecord::new("sess-1", "agent-1", "SQLite pool with DeadlockTimeout")
             .with_tier(2)
             .with_outcomes(vec!["Pool exhaustion mitigated".to_string()]);
@@ -1706,10 +1755,18 @@ mod tests {
 
     #[test]
     fn test_slm_heuristic_narrative() {
-        let ep1 = EpisodeRecord::new("sess-1", "agent-1", "[Milestone Rollup] Auth JWT RS256 | Invariants: 2 outcomes, 2 files touched")
-            .with_tier(2);
-        let ep2 = EpisodeRecord::new("sess-1", "agent-1", "[Milestone Rollup] SQLite pool | Invariants: 1 outcomes, 1 files touched")
-            .with_tier(2);
+        let ep1 = EpisodeRecord::new(
+            "sess-1",
+            "agent-1",
+            "[Milestone Rollup] Auth JWT RS256 | Invariants: 2 outcomes, 2 files touched",
+        )
+        .with_tier(2);
+        let ep2 = EpisodeRecord::new(
+            "sess-1",
+            "agent-1",
+            "[Milestone Rollup] SQLite pool | Invariants: 1 outcomes, 1 files touched",
+        )
+        .with_tier(2);
 
         let narrative = SlmPyramidBridge::heuristic_narrative(&[ep1, ep2]);
         assert!(narrative.starts_with("Narrativa: Sessao agregou 2 marcos principais."));
@@ -1742,8 +1799,9 @@ mod tests {
 
         // 1. Create 4 Tier 1 episodes (2 for task-auth, 2 for task-db)
         for i in 1..=2 {
-            let mut ep = EpisodeRecord::new("sess-full-pyramid", "agent-auth", format!("Auth step {i}"))
-                .with_salience(0.8);
+            let mut ep =
+                EpisodeRecord::new("sess-full-pyramid", "agent-auth", format!("Auth step {i}"))
+                    .with_salience(0.8);
             ep.task_id = Some("task-auth".to_string());
             ep.created_at = now + i;
             ep.event_trace = vec![EpisodeStep::new(0, format!("action auth {i}"))
@@ -1753,8 +1811,9 @@ mod tests {
         }
 
         for i in 1..=2 {
-            let mut ep = EpisodeRecord::new("sess-full-pyramid", "agent-db", format!("DB step {i}"))
-                .with_salience(0.7);
+            let mut ep =
+                EpisodeRecord::new("sess-full-pyramid", "agent-db", format!("DB step {i}"))
+                    .with_salience(0.7);
             ep.task_id = Some("task-db".to_string());
             ep.created_at = now + 10 + i;
             ep.event_trace = vec![EpisodeStep::new(0, format!("action db {i}"))
@@ -1767,7 +1826,11 @@ mod tests {
         let tier2_rollups = pyramid_store
             .auto_rollup_idle_episodes(Some("sess-full-pyramid"), None)
             .expect("rollup tier 2");
-        assert_eq!(tier2_rollups.len(), 2, "Expected 2 Tier 2 milestone rollups");
+        assert_eq!(
+            tier2_rollups.len(),
+            2,
+            "Expected 2 Tier 2 milestone rollups"
+        );
         assert!(tier2_rollups.iter().all(|r| r.tier == 2));
         assert!(tier2_rollups.iter().all(|r| r.parent_id.is_none()));
 
@@ -1777,25 +1840,43 @@ mod tests {
             .generate_session_narrative(Some("sess-full-pyramid"), Some(&bridge))
             .expect("generate tier 3");
 
-        assert!(tier3_opt.is_some(), "Expected Tier 3 session narrative to be generated");
+        assert!(
+            tier3_opt.is_some(),
+            "Expected Tier 3 session narrative to be generated"
+        );
         let tier3 = tier3_opt.unwrap();
         assert_eq!(tier3.tier, 3);
         assert_eq!(tier3.session_id, "sess-full-pyramid");
-        assert_eq!(tier3.child_ids.len(), 2, "Tier 3 must reference the 2 Tier 2 milestones");
+        assert_eq!(
+            tier3.child_ids.len(),
+            2,
+            "Tier 3 must reference the 2 Tier 2 milestones"
+        );
         assert!(tier3.summary.starts_with("Narrativa:"));
-        assert_eq!(tier3.outcomes.len(), 4, "Must aggregate unique outcomes from both milestones");
+        assert_eq!(
+            tier3.outcomes.len(),
+            4,
+            "Must aggregate unique outcomes from both milestones"
+        );
 
         // 4. Verify that Tier 2 milestones now have parent_id == Some(tier3.id)
         for t2 in &tier2_rollups {
             let fetched = store.get_episode(&t2.id).expect("get ep").expect("exists");
-            assert_eq!(fetched.parent_id, Some(tier3.id), "Tier 2 milestone parent_id must point to Tier 3 epoch");
+            assert_eq!(
+                fetched.parent_id,
+                Some(tier3.id),
+                "Tier 2 milestone parent_id must point to Tier 3 epoch"
+            );
         }
 
         // 5. Subsequent call returns None (all Tier 2 milestones are rolled up)
         let empty_second_call = pyramid_store
             .generate_session_narrative(Some("sess-full-pyramid"), Some(&bridge))
             .expect("second call");
-        assert!(empty_second_call.is_none(), "No unrolled Tier 2 milestones remaining");
+        assert!(
+            empty_second_call.is_none(),
+            "No unrolled Tier 2 milestones remaining"
+        );
 
         // 6. Drill down from Tier 3 reconstructs all 4 leaf episodes
         let tree_opt = pyramid_store.drill_down(&tier3.id).expect("drill down");
@@ -1803,7 +1884,11 @@ mod tests {
         let tree = tree_opt.unwrap();
         assert_eq!(tree.root.id, tier3.id);
         assert_eq!(tree.root.tier, 3);
-        assert_eq!(tree.leaves.len(), 4, "Hierarchical drill down from Tier 3 must reach all 4 Tier 1 leaves");
+        assert_eq!(
+            tree.leaves.len(),
+            4,
+            "Hierarchical drill down from Tier 3 must reach all 4 Tier 1 leaves"
+        );
         assert_eq!(tree.total_steps, 4);
     }
 }

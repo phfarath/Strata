@@ -5,8 +5,8 @@ use std::time::Instant;
 use strata_core::errors::StrataError;
 use strata_core::state::{MemoryRecord, MemoryType, Scope};
 use strata_memory::{
-    CallGraphAnalyzer, ClusteringConfig, CommunityDetector, CommunityMemoryRouter,
-    HybridRanker, LanguageKind, SqliteStore,
+    CallGraphAnalyzer, ClusteringConfig, CommunityDetector, CommunityMemoryRouter, HybridRanker,
+    LanguageKind, SqliteStore,
 };
 
 /// Evaluation results for Community-Scoped Memory Recall Benchmark.
@@ -15,10 +15,10 @@ pub struct CommunityScopedRecallEvalResult {
     pub candidate_reduction_pct: f64,
     pub candidate_reduction_passed: bool, // >= 60%
     pub determinism_runs: usize,
-    pub determinism_passed: bool, // 100% match across 5 runs
-    pub cold_start_fallback_passed: bool, // Transparent fallback when < k
+    pub determinism_passed: bool,          // 100% match across 5 runs
+    pub cold_start_fallback_passed: bool,  // Transparent fallback when < k
     pub assignment_migration_passed: bool, // Active memories preserved across re-clustering
-    pub top_k_accuracy_passed: bool, // Top-k labeled queries retrieve correct domain memories
+    pub top_k_accuracy_passed: bool,       // Top-k labeled queries retrieve correct domain memories
     pub eval_duration_micros: u128,
 }
 
@@ -53,7 +53,8 @@ pub fn sync_worker() { sync_poll(); }
 pub fn sync_poll() { sync_apply(); }
 pub fn sync_apply() { sync_worker(); }
 "#;
-        let edges = analyzer.analyze_source(code_subsystems, LanguageKind::Rust, "src/subsystems.rs")?;
+        let edges =
+            analyzer.analyze_source(code_subsystems, LanguageKind::Rust, "src/subsystems.rs")?;
 
         let config = ClusteringConfig {
             seed: 42,
@@ -71,7 +72,11 @@ pub fn sync_apply() { sync_worker(); }
                 determinism_passed = false;
                 break;
             }
-            for (c1, c2) in baseline_summary.clusters.iter().zip(next_summary.clusters.iter()) {
+            for (c1, c2) in baseline_summary
+                .clusters
+                .iter()
+                .zip(next_summary.clusters.iter())
+            {
                 if c1.id != c2.id || c1.members.len() != c2.members.len() {
                     determinism_passed = false;
                     break;
@@ -91,7 +96,9 @@ pub fn sync_apply() { sync_worker(); }
         for i in 0..10 {
             store.insert_or_update_memory(&MemoryRecord::new(
                 MemoryType::Semantic,
-                format!("Authentication invariant {i}: RSA 256 JWT bearer signing and secret rotation"),
+                format!(
+                    "Authentication invariant {i}: RSA 256 JWT bearer signing and secret rotation"
+                ),
                 Scope::Community(cluster_auth.to_string()),
             ))?;
             store.insert_or_update_memory(&MemoryRecord::new(
@@ -134,7 +141,9 @@ pub fn sync_apply() { sync_worker(); }
 
         let mut top_k_accuracy_passed = !recall_result.memories.is_empty();
         for mem in &recall_result.memories {
-            if !mem.content.contains("Authentication") && mem.scope != Scope::Community(cluster_auth.to_string()) {
+            if !mem.content.contains("Authentication")
+                && mem.scope != Scope::Community(cluster_auth.to_string())
+            {
                 top_k_accuracy_passed = false;
             }
         }
@@ -161,8 +170,8 @@ pub fn sync_apply() { sync_worker(); }
             )
             .await?;
 
-        let cold_start_fallback_passed = cold_recall.fallback_to_global
-            && !cold_recall.memories.is_empty();
+        let cold_start_fallback_passed =
+            cold_recall.fallback_to_global && !cold_recall.memories.is_empty();
 
         // 5. Test Re-Clustering Assignment Migration
         // Create an active memory in a cluster that will undergo re-clustering
@@ -175,7 +184,8 @@ pub fn sync_apply() { sync_worker(); }
 
         // Simulate code modification adding new auth edges, yielding new summary
         let modified_code = format!("{}\npub fn auth_oauth() {{ auth_jwt(); }}", code_subsystems);
-        let mod_edges = analyzer.analyze_source(&modified_code, LanguageKind::Rust, "src/subsystems.rs")?;
+        let mod_edges =
+            analyzer.analyze_source(&modified_code, LanguageKind::Rust, "src/subsystems.rs")?;
         let next_summary = detector.detect_from_edges(&mod_edges, "eval-workspace");
 
         let migration_plan = detector.compute_migration_plan(&baseline_summary, &next_summary);
@@ -204,15 +214,33 @@ pub fn sync_apply() { sync_worker(); }
 
 pub async fn run_community_scoped_recall_scenario() -> anyhow::Result<()> {
     let res = CommunityScopedRecallEval::run_eval().await?;
-    println!("  -> Candidate Pool Reduction: {:.1}% (passed: {})", res.candidate_reduction_pct, res.candidate_reduction_passed);
-    println!("  -> Determinism across {} runs: {}", res.determinism_runs, res.determinism_passed);
-    println!("  -> Cold-start Transparent Fallback: {}", res.cold_start_fallback_passed);
-    println!("  -> Re-clustering Assignment Migration: {}", res.assignment_migration_passed);
-    println!("  -> Top-k Domain Recall Accuracy: {}", res.top_k_accuracy_passed);
+    println!(
+        "  -> Candidate Pool Reduction: {:.1}% (passed: {})",
+        res.candidate_reduction_pct, res.candidate_reduction_passed
+    );
+    println!(
+        "  -> Determinism across {} runs: {}",
+        res.determinism_runs, res.determinism_passed
+    );
+    println!(
+        "  -> Cold-start Transparent Fallback: {}",
+        res.cold_start_fallback_passed
+    );
+    println!(
+        "  -> Re-clustering Assignment Migration: {}",
+        res.assignment_migration_passed
+    );
+    println!(
+        "  -> Top-k Domain Recall Accuracy: {}",
+        res.top_k_accuracy_passed
+    );
     println!("  -> Execution time: {} µs", res.eval_duration_micros);
 
     if !res.candidate_reduction_passed {
-        anyhow::bail!("Candidate pool reduction failed: {:.1}% < 60.0%", res.candidate_reduction_pct);
+        anyhow::bail!(
+            "Candidate pool reduction failed: {:.1}% < 60.0%",
+            res.candidate_reduction_pct
+        );
     }
     if !res.determinism_passed {
         anyhow::bail!("Determinism check failed across runs with fixed seed");
@@ -240,10 +268,19 @@ mod tests {
             .await
             .expect("Community scoped recall eval failed");
 
-        assert!(result.candidate_reduction_passed, "Candidate reduction >= 60% failed");
+        assert!(
+            result.candidate_reduction_passed,
+            "Candidate reduction >= 60% failed"
+        );
         assert!(result.determinism_passed, "Determinism failed");
-        assert!(result.cold_start_fallback_passed, "Cold start fallback failed");
-        assert!(result.assignment_migration_passed, "Assignment migration failed");
+        assert!(
+            result.cold_start_fallback_passed,
+            "Cold start fallback failed"
+        );
+        assert!(
+            result.assignment_migration_passed,
+            "Assignment migration failed"
+        );
         assert!(result.top_k_accuracy_passed, "Top-k accuracy failed");
     }
 }

@@ -22,7 +22,11 @@ pub async fn run_consolidate(opts: ConsolidateOptions, store: Arc<SqliteStore>) 
     let start_time = Instant::now();
 
     if opts.hippocampus {
-        let sid = if opts.all { None } else { opts.session.as_deref() };
+        let sid = if opts.all {
+            None
+        } else {
+            opts.session.as_deref()
+        };
         let res = store
             .consolidate_episodes(sid)
             .context("Failed to run hippocampal consolidation over episodes")?;

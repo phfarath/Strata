@@ -160,17 +160,20 @@ impl MetaplasticityState {
 
     /// Convenience method: adapted decay stability using current state volatility.
     pub fn adapted_decay_stability(&self, base_s0: f32) -> f32 {
-        self.config.adapted_decay_stability(base_s0, self.volatility)
+        self.config
+            .adapted_decay_stability(base_s0, self.volatility)
     }
 
     /// Convenience method: adapted bypass threshold using current state volatility.
     pub fn adapted_bypass_threshold(&self, base_threshold: f32) -> f32 {
-        self.config.adapted_bypass_threshold(base_threshold, self.volatility)
+        self.config
+            .adapted_bypass_threshold(base_threshold, self.volatility)
     }
 
     /// Convenience method: adapted prune threshold using current state volatility.
     pub fn adapted_prune_threshold(&self, base_prune: f32) -> f32 {
-        self.config.adapted_prune_threshold(base_prune, self.volatility)
+        self.config
+            .adapted_prune_threshold(base_prune, self.volatility)
     }
 
     /// Record environmental turbulence (e.g. AST diffs, JTMS belief invalidations).
@@ -195,12 +198,18 @@ impl MetaplasticityState {
     }
 
     /// Adapt a `DecayCalculator` using current state volatility.
-    pub fn adapt_decay_calculator(&self, calculator: &crate::decay::DecayCalculator) -> crate::decay::DecayCalculator {
+    pub fn adapt_decay_calculator(
+        &self,
+        calculator: &crate::decay::DecayCalculator,
+    ) -> crate::decay::DecayCalculator {
         calculator.with_volatility(self.volatility)
     }
 
     /// Adapt a `SubconsciousConfig` using current state volatility.
-    pub fn adapt_subconscious_config(&self, config: &crate::subconscious::SubconsciousConfig) -> crate::subconscious::SubconsciousConfig {
+    pub fn adapt_subconscious_config(
+        &self,
+        config: &crate::subconscious::SubconsciousConfig,
+    ) -> crate::subconscious::SubconsciousConfig {
         config.with_volatility(self.volatility)
     }
 }

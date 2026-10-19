@@ -195,7 +195,10 @@ impl FastEmbedProvider {
         match model_str.map(|s| s.trim()) {
             None | Some("") => Self::try_new(),
             Some(name) => {
-                let clean = name.strip_prefix("fastembed:").unwrap_or(name).to_lowercase();
+                let clean = name
+                    .strip_prefix("fastembed:")
+                    .unwrap_or(name)
+                    .to_lowercase();
                 let model = match clean.as_str() {
                     "allminilml6v2" | "all-minilm-l6-v2" | "minilm" => {
                         fastembed::EmbeddingModel::AllMiniLML6V2

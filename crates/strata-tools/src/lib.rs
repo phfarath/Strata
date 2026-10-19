@@ -46,7 +46,8 @@ mod tests {
             scope: Option<&Scope>,
             limit: usize,
         ) -> Result<Vec<MemoryRecord>, StrataError> {
-            self.search_as_of(query, scope, None, None, None, limit).await
+            self.search_as_of(query, scope, None, None, None, limit)
+                .await
         }
 
         async fn search_as_of(
@@ -179,7 +180,10 @@ mod tests {
                     if let Some(fp) = f.file_path() {
                         let fp_norm = fp.replace('\\', "/");
                         let fp_norm = fp_norm.trim_start_matches("./");
-                        if fp_norm == norm_file || norm_file.contains(fp_norm) || fp_norm.contains(norm_file) {
+                        if fp_norm == norm_file
+                            || norm_file.contains(fp_norm)
+                            || fp_norm.contains(norm_file)
+                        {
                             if let Some(s) = symbol {
                                 return f.symbol_name() == Some(s) || f.symbol_name().is_none();
                             }
@@ -522,7 +526,10 @@ mod tests {
                 "as_of_time": t_now.to_rfc3339()
             }))
             .await;
-        assert!(get_now_err.is_err(), "rec1 should be not found at present time");
+        assert!(
+            get_now_err.is_err(),
+            "rec1 should be not found at present time"
+        );
     }
 
     #[tokio::test]
@@ -1202,7 +1209,11 @@ fn execute_step() {}
             },
         ];
 
-        assert!(dataset.len() >= 30, "Replay benchmark requires at least 30 real historical failures, got {}", dataset.len());
+        assert!(
+            dataset.len() >= 30,
+            "Replay benchmark requires at least 30 real historical failures, got {}",
+            dataset.len()
+        );
 
         let store = Arc::new(SqliteStore::open_in_memory().expect("open memory store"));
         let mut correct_precision_count = 0;
@@ -1217,7 +1228,11 @@ fn execute_step() {}
                 None,
                 None,
             );
-            assert!(parsed.is_some(), "Parser failed to produce FailurePattern for: {}", case.command);
+            assert!(
+                parsed.is_some(),
+                "Parser failed to produce FailurePattern for: {}",
+                case.command
+            );
             let p = parsed.unwrap();
 
             // 1. Verify Precision of symbol/file/error extraction
@@ -1260,11 +1275,15 @@ fn execute_step() {}
             assert!(
                 est_tokens < 50,
                 "Surgical guardrail must be < 50 tokens, got {} tokens (words={}): '{}'",
-                est_tokens, word_count, guardrail
+                est_tokens,
+                word_count,
+                guardrail
             );
 
             // Seed into SQLite store for latency benchmark
-            store.upsert_failure_pattern(&p).expect("upsert failure into store");
+            store
+                .upsert_failure_pattern(&p)
+                .expect("upsert failure into store");
             parsed_patterns.push(p);
         }
 
@@ -1290,7 +1309,9 @@ fn execute_step() {}
             let target_symbol = pat.symbol_name();
 
             let start = std::time::Instant::now();
-            let _ = store.find_symbol_anti_patterns(target_file, target_symbol, 3).unwrap();
+            let _ = store
+                .find_symbol_anti_patterns(target_file, target_symbol, 3)
+                .unwrap();
             latencies_us.push(start.elapsed().as_micros());
         }
 

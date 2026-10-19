@@ -51,8 +51,12 @@ impl A2aTransactiveDirectoryEval {
 
         let all_cards = coord.list_agent_cards()?;
         let capability_announcement_verified = all_cards.len() == 3
-            && all_cards.iter().any(|c| c.agent_id == "agent-memory-specialist")
-            && all_cards.iter().any(|c| c.agent_id == "agent-jtms-specialist");
+            && all_cards
+                .iter()
+                .any(|c| c.agent_id == "agent-memory-specialist")
+            && all_cards
+                .iter()
+                .any(|c| c.agent_id == "agent-jtms-specialist");
 
         // Register domain authorities
         coord.set_domain_authority(&DomainAuthority::new(
@@ -115,7 +119,8 @@ impl A2aTransactiveDirectoryEval {
 
         // 5. Query Routing & Inbox Delivery:
         // Simulate an agent querying "crates/strata-memory/src/jtms.rs"
-        let target_authority = coord.resolve_domain_authority("crates/strata-memory/src/jtms.rs")?
+        let target_authority = coord
+            .resolve_domain_authority("crates/strata-memory/src/jtms.rs")?
             .expect("must resolve authority");
         let query = TransactiveQuery::new(
             "qry-eval-1",
@@ -130,7 +135,8 @@ impl A2aTransactiveDirectoryEval {
             &query.from_agent,
             &target_authority.authoritative_agent,
             &query.query_text,
-        ).with_kind("transactive_query");
+        )
+        .with_kind("transactive_query");
         coord.save_a2a_message(&msg)?;
 
         let inbox = coord.get_a2a_inbox("agent-jtms-specialist", true)?;

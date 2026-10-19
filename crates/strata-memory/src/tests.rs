@@ -3251,11 +3251,17 @@ fn test_write_and_list_episodes() {
 
     store.write_episode(&ep).expect("write episode");
 
-    let fetched = store.get_episode(&ep.id).expect("get episode").expect("found");
+    let fetched = store
+        .get_episode(&ep.id)
+        .expect("get episode")
+        .expect("found");
     assert_eq!(fetched.id, ep.id);
     assert_eq!(fetched.summary, "Implemented auth middleware");
     assert_eq!(fetched.event_trace.len(), 2);
-    assert_eq!(fetched.outcomes, vec!["Auth middleware compiles cleanly".to_string()]);
+    assert_eq!(
+        fetched.outcomes,
+        vec!["Auth middleware compiles cleanly".to_string()]
+    );
     assert_eq!(fetched.salience_score, 0.9);
     assert!(!fetched.consolidated);
     assert_eq!(fetched.tier, 1);
@@ -3272,15 +3278,27 @@ fn test_hierarchical_episodic_pyramid_store() {
     let store = Arc::new(SqliteStore::open_in_memory().expect("open store"));
 
     // 1. Criação de episódios leaf (Tier 1)
-    let leaf1 = EpisodeRecord::new("sess-pyramid", "agent-worker", "Leaf Step 1: Added user schema")
-        .with_salience(0.6)
-        .with_outcome("Schema generated");
-    let leaf2 = EpisodeRecord::new("sess-pyramid", "agent-worker", "Leaf Step 2: Added user migrations")
-        .with_salience(0.7)
-        .with_outcome("Migration executed");
-    let leaf3 = EpisodeRecord::new("sess-pyramid", "agent-worker", "Leaf Step 3: Added user endpoints")
-        .with_salience(0.8)
-        .with_outcome("Endpoints bound");
+    let leaf1 = EpisodeRecord::new(
+        "sess-pyramid",
+        "agent-worker",
+        "Leaf Step 1: Added user schema",
+    )
+    .with_salience(0.6)
+    .with_outcome("Schema generated");
+    let leaf2 = EpisodeRecord::new(
+        "sess-pyramid",
+        "agent-worker",
+        "Leaf Step 2: Added user migrations",
+    )
+    .with_salience(0.7)
+    .with_outcome("Migration executed");
+    let leaf3 = EpisodeRecord::new(
+        "sess-pyramid",
+        "agent-worker",
+        "Leaf Step 3: Added user endpoints",
+    )
+    .with_salience(0.8)
+    .with_outcome("Endpoints bound");
 
     assert_eq!(leaf1.tier, 1);
     assert!(leaf1.is_leaf());
@@ -3296,17 +3314,25 @@ fn test_hierarchical_episodic_pyramid_store() {
     assert!(fetched_leaf1.child_ids.is_empty());
 
     // 2. Criação de Rollup (Tier 2) associando filhos via save_episode_rollup
-    let rollup1 = EpisodeRecord::new("sess-pyramid", "agent-architect", "Milestone 1: DB Layer Complete")
-        .with_tier(2)
-        .with_salience(0.85)
-        .with_child_ids(vec![leaf1.id, leaf2.id])
-        .with_outcome("Database layer verified");
+    let rollup1 = EpisodeRecord::new(
+        "sess-pyramid",
+        "agent-architect",
+        "Milestone 1: DB Layer Complete",
+    )
+    .with_tier(2)
+    .with_salience(0.85)
+    .with_child_ids(vec![leaf1.id, leaf2.id])
+    .with_outcome("Database layer verified");
 
-    let rollup2 = EpisodeRecord::new("sess-pyramid", "agent-architect", "Milestone 2: API Layer Complete")
-        .with_tier(2)
-        .with_salience(0.9)
-        .with_child_id(leaf3.id)
-        .with_outcome("API layer verified");
+    let rollup2 = EpisodeRecord::new(
+        "sess-pyramid",
+        "agent-architect",
+        "Milestone 2: API Layer Complete",
+    )
+    .with_tier(2)
+    .with_salience(0.9)
+    .with_child_id(leaf3.id)
+    .with_outcome("API layer verified");
 
     store.save_episode_rollup(&rollup1).expect("save rollup1");
     store.save_episode_rollup(&rollup2).expect("save rollup2");
@@ -3322,18 +3348,24 @@ fn test_hierarchical_episodic_pyramid_store() {
     assert_eq!(leaf3_updated.parent_id, Some(rollup2.id));
 
     // Test get_child_episodes
-    let children_of_rollup1 = store.get_child_episodes(&rollup1.id).expect("get child episodes");
+    let children_of_rollup1 = store
+        .get_child_episodes(&rollup1.id)
+        .expect("get child episodes");
     assert_eq!(children_of_rollup1.len(), 2);
     let child_ids: Vec<Uuid> = children_of_rollup1.iter().map(|c| c.id).collect();
     assert!(child_ids.contains(&leaf1.id));
     assert!(child_ids.contains(&leaf2.id));
 
     // 4. Criação de Epoch Rollup (Tier 3)
-    let epoch = EpisodeRecord::new("sess-pyramid", "agent-lead", "Epoch 1: User Feature Shipped")
-        .with_tier(3)
-        .with_salience(0.95)
-        .with_child_ids(vec![rollup1.id, rollup2.id])
-        .with_outcome("Feature complete and shipped");
+    let epoch = EpisodeRecord::new(
+        "sess-pyramid",
+        "agent-lead",
+        "Epoch 1: User Feature Shipped",
+    )
+    .with_tier(3)
+    .with_salience(0.95)
+    .with_child_ids(vec![rollup1.id, rollup2.id])
+    .with_outcome("Feature complete and shipped");
 
     store.save_episode_rollup(&epoch).expect("save epoch");
 
@@ -3345,14 +3377,21 @@ fn test_hierarchical_episodic_pyramid_store() {
     assert_eq!(rollup2_updated.parent_id, Some(epoch.id));
 
     // 5. get_drill_down_tree retornando a hierarquia completa
-    let full_tree = store.get_drill_down_tree(&epoch.id).expect("get drill down tree");
+    let full_tree = store
+        .get_drill_down_tree(&epoch.id)
+        .expect("get drill down tree");
     assert_eq!(full_tree.len(), 6); // 1 epoch + 2 milestones + 3 leaves
     assert_eq!(full_tree[0].id, epoch.id);
     assert_eq!(full_tree[0].tier, 3);
 
     // Topological order check: tier non-increasing
     for window in full_tree.windows(2) {
-        assert!(window[0].tier >= window[1].tier, "Expected tier {} >= {}", window[0].tier, window[1].tier);
+        assert!(
+            window[0].tier >= window[1].tier,
+            "Expected tier {} >= {}",
+            window[0].tier,
+            window[1].tier
+        );
     }
 
     // Subtree drill-down test
@@ -3362,21 +3401,29 @@ fn test_hierarchical_episodic_pyramid_store() {
     assert_eq!(sub_tree[0].tier, 2);
 
     // 6. list_episodes_by_tier filtrando corretamente por tier
-    let tier1_list = store.list_episodes_by_tier(1, Some("sess-pyramid"), 10).expect("list tier 1");
+    let tier1_list = store
+        .list_episodes_by_tier(1, Some("sess-pyramid"), 10)
+        .expect("list tier 1");
     assert_eq!(tier1_list.len(), 3);
     assert!(tier1_list.iter().all(|e| e.tier == 1));
 
-    let tier2_list = store.list_episodes_by_tier(2, Some("sess-pyramid"), 10).expect("list tier 2");
+    let tier2_list = store
+        .list_episodes_by_tier(2, Some("sess-pyramid"), 10)
+        .expect("list tier 2");
     assert_eq!(tier2_list.len(), 2);
     assert!(tier2_list.iter().all(|e| e.tier == 2));
 
-    let tier3_list = store.list_episodes_by_tier(3, Some("sess-pyramid"), 10).expect("list tier 3");
+    let tier3_list = store
+        .list_episodes_by_tier(3, Some("sess-pyramid"), 10)
+        .expect("list tier 3");
     assert_eq!(tier3_list.len(), 1);
     assert_eq!(tier3_list[0].id, epoch.id);
     assert_eq!(tier3_list[0].tier, 3);
 
     // Filtering by different session_id should return empty
-    let empty_list = store.list_episodes_by_tier(1, Some("other-session"), 10).expect("list other");
+    let empty_list = store
+        .list_episodes_by_tier(1, Some("other-session"), 10)
+        .expect("list other");
     assert!(empty_list.is_empty());
 }
 
@@ -3385,18 +3432,25 @@ fn test_replay_episode_evaluation() {
     let store = Arc::new(SqliteStore::open_in_memory().expect("open store"));
 
     let step_ok = EpisodeStep::new(0, "check_env");
-    let step_err = EpisodeStep::new(1, "connect_db")
-        .with_error("Connection timed out after 5000ms");
+    let step_err =
+        EpisodeStep::new(1, "connect_db").with_error("Connection timed out after 5000ms");
 
-    let ep = EpisodeRecord::new("sess-db", "agent-cursor", "Failed database connection attempt")
-        .with_salience(0.7)
-        .with_step(step_ok)
-        .with_step(step_err)
-        .with_outcome("Database unreachable");
+    let ep = EpisodeRecord::new(
+        "sess-db",
+        "agent-cursor",
+        "Failed database connection attempt",
+    )
+    .with_salience(0.7)
+    .with_step(step_ok)
+    .with_step(step_err)
+    .with_outcome("Database unreachable");
 
     store.write_episode(&ep).expect("write episode");
 
-    let replay: EpisodeReplay = store.replay_episode(&ep.id).expect("replay").expect("found");
+    let replay: EpisodeReplay = store
+        .replay_episode(&ep.id)
+        .expect("replay")
+        .expect("found");
     assert_eq!(replay.total_steps, 2);
     assert_eq!(replay.successful_steps, 1);
     assert_eq!(replay.failed_steps, 1);
@@ -3416,23 +3470,32 @@ fn test_consolidate_episodes_with_jtms_conflict_resolution() {
     )
     .with_importance(0.6)
     .with_confidence(0.8);
-    store.insert_or_update_semantic_fact(&existing_fact).expect("insert existing");
+    store
+        .insert_or_update_semantic_fact(&existing_fact)
+        .expect("insert existing");
 
     // 2. Write an episode with high salience that supersedes the old architecture (PostgreSQL 16 migration)
     let step1 = EpisodeStep::new(0, "migrate_db").with_output(serde_json::json!({"version": 16}));
-    let step_fail = EpisodeStep::new(1, "old_driver").with_error("Driver v1.0 incompatible with PG16");
+    let step_fail =
+        EpisodeStep::new(1, "old_driver").with_error("Driver v1.0 incompatible with PG16");
 
-    let ep = EpisodeRecord::new("sess-migration", "agent-claude", "Migrated database to PostgreSQL 16")
-        .with_salience(0.95)
-        .with_step(step1)
-        .with_step(step_fail)
-        .with_outcome("PostgreSQL 16 is now the primary database")
-        .with_provenance("migration-script");
+    let ep = EpisodeRecord::new(
+        "sess-migration",
+        "agent-claude",
+        "Migrated database to PostgreSQL 16",
+    )
+    .with_salience(0.95)
+    .with_step(step1)
+    .with_step(step_fail)
+    .with_outcome("PostgreSQL 16 is now the primary database")
+    .with_provenance("migration-script");
 
     store.write_episode(&ep).expect("write episode");
 
     // 3. Run hippocampal consolidation
-    let result = store.consolidate_episodes(Some("sess-migration")).expect("consolidate");
+    let result = store
+        .consolidate_episodes(Some("sess-migration"))
+        .expect("consolidate");
 
     assert_eq!(result.episodes_processed, 1);
     assert_eq!(result.facts_consolidated, 1);
@@ -3444,7 +3507,9 @@ fn test_consolidate_episodes_with_jtms_conflict_resolution() {
     assert!(ep_after.consolidated);
 
     // 5. Running consolidation again should process 0 episodes (idempotent)
-    let result2 = store.consolidate_episodes(Some("sess-migration")).expect("consolidate 2");
+    let result2 = store
+        .consolidate_episodes(Some("sess-migration"))
+        .expect("consolidate 2");
     assert_eq!(result2.episodes_processed, 0);
 }
 
@@ -3452,8 +3517,8 @@ fn test_consolidate_episodes_with_jtms_conflict_resolution() {
 async fn test_tripartite_synapse_outcome_plasticity() {
     use crate::spreading_activation::{EdgeKind, GraphNode, SpreadingActivationEngine};
     use crate::store::SqliteStore;
-    use strata_core::state::{MemoryRecord, MemoryType, Scope};
     use std::sync::Arc;
+    use strata_core::state::{MemoryRecord, MemoryType, Scope};
 
     let store = Arc::new(SqliteStore::open_in_memory().expect("open sqlite"));
 
@@ -3484,35 +3549,47 @@ async fn test_tripartite_synapse_outcome_plasticity() {
     let seeds = vec![(file_node.clone(), 1.0)];
     let act_initial = engine.propagate(&graph_initial, &seeds);
 
-    let e_good_0 = *act_initial.get(&GraphNode::memory(mem_good.id)).unwrap_or(&0.0);
-    let e_bad_0 = *act_initial.get(&GraphNode::memory(mem_bad.id)).unwrap_or(&0.0);
+    let e_good_0 = *act_initial
+        .get(&GraphNode::memory(mem_good.id))
+        .unwrap_or(&0.0);
+    let e_bad_0 = *act_initial
+        .get(&GraphNode::memory(mem_bad.id))
+        .unwrap_or(&0.0);
     assert!(e_good_0 > 0.3, "Memória boa deve ser ativada inicialmente");
     assert!(e_bad_0 > 0.3, "Memória ruim deve ser ativada inicialmente");
 
     // 3. Aplica Depressão de Longa Duração (LTD) na memória ruim (desfecho negativo / falha)
-    store.record_edge_feedback(
-        &file_node.canonical_id(),
-        &GraphNode::memory(mem_bad.id).canonical_id(),
-        EdgeKind::MentionsFile.as_str(),
-        false, // negative
-        1.0,
-    ).unwrap();
+    store
+        .record_edge_feedback(
+            &file_node.canonical_id(),
+            &GraphNode::memory(mem_bad.id).canonical_id(),
+            EdgeKind::MentionsFile.as_str(),
+            false, // negative
+            1.0,
+        )
+        .unwrap();
 
     // 4. Aplica Potenciação de Longa Duração (LTP) na memória boa (sucesso / reforço)
-    store.record_edge_feedback(
-        &file_node.canonical_id(),
-        &GraphNode::memory(mem_good.id).canonical_id(),
-        EdgeKind::MentionsFile.as_str(),
-        true, // positive
-        1.0,
-    ).unwrap();
+    store
+        .record_edge_feedback(
+            &file_node.canonical_id(),
+            &GraphNode::memory(mem_good.id).canonical_id(),
+            EdgeKind::MentionsFile.as_str(),
+            true, // positive
+            1.0,
+        )
+        .unwrap();
 
     // 5. Re-constrói o grafo a partir do store e re-executa a difusão
     let graph_plastic = engine.build_graph_from_store(&store, None).unwrap();
     let act_plastic = engine.propagate(&graph_plastic, &seeds);
 
-    let e_good_1 = *act_plastic.get(&GraphNode::memory(mem_good.id)).unwrap_or(&0.0);
-    let e_bad_1 = *act_plastic.get(&GraphNode::memory(mem_bad.id)).unwrap_or(&0.0);
+    let e_good_1 = *act_plastic
+        .get(&GraphNode::memory(mem_good.id))
+        .unwrap_or(&0.0);
+    let e_bad_1 = *act_plastic
+        .get(&GraphNode::memory(mem_bad.id))
+        .unwrap_or(&0.0);
 
     // INVARIANTES DA SINAPSE TRIPARTITE:
     // A memória reforçada deve ter ganho condutância (E_good_1 > E_good_0)
@@ -3536,9 +3613,9 @@ async fn test_tripartite_synapse_outcome_plasticity() {
 async fn test_record_memory_feedback_modulates_incident_edges() {
     use crate::spreading_activation::{EdgeKind, GraphNode};
     use crate::store::SqliteStore;
+    use std::sync::Arc;
     use strata_core::schemas::MemoryFeedback;
     use strata_core::state::{MemoryRecord, MemoryType, Scope};
-    use std::sync::Arc;
 
     let store = Arc::new(SqliteStore::open_in_memory().expect("open sqlite"));
     let mut mem = MemoryRecord::new(
@@ -3562,11 +3639,19 @@ async fn test_record_memory_feedback_modulates_incident_edges() {
 
     // Verify memory_edges got populated
     let edges = store.get_all_memory_edges().unwrap();
-    assert!(!edges.is_empty(), "Incident edges should be modulated on memory feedback");
+    assert!(
+        !edges.is_empty(),
+        "Incident edges should be modulated on memory feedback"
+    );
     let file_key = GraphNode::file("src/ipc/pipe.rs").canonical_id();
     let mem_key = GraphNode::memory(mem.id).canonical_id();
-    let pipe_edge = edges.iter().find(|e| e.source_id == file_key && e.target_id == mem_key);
-    assert!(pipe_edge.is_some(), "Pipe file -> mem edge should be present in memory_edges");
+    let pipe_edge = edges
+        .iter()
+        .find(|e| e.source_id == file_key && e.target_id == mem_key);
+    assert!(
+        pipe_edge.is_some(),
+        "Pipe file -> mem edge should be present in memory_edges"
+    );
     assert!(pipe_edge.unwrap().weight > EdgeKind::MentionsFile.default_weight());
 }
 
@@ -3628,25 +3713,42 @@ fn test_metaplasticity_threshold_adaptation_under_volatility() {
         let bypass = calculate_adapted_bypass_threshold(base_bypass, v);
         let prune = calculate_adapted_prune_threshold(base_prune, v);
 
-        assert!(s0 > 0.0, "Estabilidade nunca deve ser negativa ou zero: {s0}");
-        assert!(bypass > 0.0 && bypass <= 1.0, "Bypass deve estar em (0, 1]: {bypass}");
-        assert!(prune > 0.0 && prune <= 1.0, "Prune deve estar em (0, 1]: {prune}");
+        assert!(
+            s0 > 0.0,
+            "Estabilidade nunca deve ser negativa ou zero: {s0}"
+        );
+        assert!(
+            bypass > 0.0 && bypass <= 1.0,
+            "Bypass deve estar em (0, 1]: {bypass}"
+        );
+        assert!(
+            prune > 0.0 && prune <= 1.0,
+            "Prune deve estar em (0, 1]: {prune}"
+        );
         assert!(s0 <= base_s0, "Estabilidade nunca excede a base: {s0}");
-        assert!(bypass <= base_bypass, "Bypass nunca excede a base: {bypass}");
-        assert!(prune >= base_prune, "Prune nunca fica abaixo da base: {prune}");
+        assert!(
+            bypass <= base_bypass,
+            "Bypass nunca excede a base: {bypass}"
+        );
+        assert!(
+            prune >= base_prune,
+            "Prune nunca fica abaixo da base: {prune}"
+        );
     }
 
     // 2. Adaptação do Subconsciente: Assimilação rápida de regras (Bypass imediato)
     let event = Event::new(
         "sess-1",
         "agent-1",
-        strata_core::events::EventPayload::ObservationReceived(strata_core::events::ObservationReceived {
-            session_id: "sess-1".to_string(),
-            source: "user".to_string(),
-            content: serde_json::json!("Refactoring database schema"),
-            observation_type: "directive".to_string(),
-            timestamp: Utc::now(),
-        }),
+        strata_core::events::EventPayload::ObservationReceived(
+            strata_core::events::ObservationReceived {
+                session_id: "sess-1".to_string(),
+                source: "user".to_string(),
+                content: serde_json::json!("Refactoring database schema"),
+                observation_type: "directive".to_string(),
+                timestamp: Utc::now(),
+            },
+        ),
     );
     let embedding = vec![0.1; 64];
     let event_importance = 0.80; // Entre 0.75 e 0.90
@@ -3769,8 +3871,12 @@ async fn test_symbol_anti_pattern_lookup_and_dual_polarity() {
     .with_symbol_anchor("src/auth.rs", Some("login_handler"), Some("E0502"))
     .with_verified_correction("Clone UserToken before dispatching async verification call");
 
-    store.upsert_failure_pattern(&file_pat).expect("insert file pattern");
-    store.upsert_failure_pattern(&sym_pat).expect("insert symbol pattern");
+    store
+        .upsert_failure_pattern(&file_pat)
+        .expect("insert file pattern");
+    store
+        .upsert_failure_pattern(&sym_pat)
+        .expect("insert symbol pattern");
 
     // 3. Query symbol anti-patterns with exact symbol
     let results = store
@@ -3808,7 +3914,10 @@ async fn test_symbol_anti_pattern_lookup_and_dual_polarity() {
     let re_queried = store
         .find_symbol_anti_patterns("src/auth.rs", None, 5)
         .expect("re-query");
-    let file_p = re_queried.iter().find(|f| f.signature == "sig_file_borrow").unwrap();
+    let file_p = re_queried
+        .iter()
+        .find(|f| f.signature == "sig_file_borrow")
+        .unwrap();
     assert_eq!(
         file_p.verified_correction(),
         Some("Use interior mutability RefCell/Mutex")
@@ -3817,12 +3926,18 @@ async fn test_symbol_anti_pattern_lookup_and_dual_polarity() {
     // 7. Verify gate latency is well under 10ms (p95 requirement)
     let start = std::time::Instant::now();
     for _ in 0..100 {
-        let _ = store.find_symbol_anti_patterns("src/auth.rs", Some("login_handler"), 5).unwrap();
+        let _ = store
+            .find_symbol_anti_patterns("src/auth.rs", Some("login_handler"), 5)
+            .unwrap();
     }
     let elapsed = start.elapsed();
     let avg_us = elapsed.as_micros() / 100;
     println!("Average gate lookup latency: {} microseconds", avg_us);
-    assert!(avg_us < 10_000, "Gate lookup latency must be < 10ms, got {}us", avg_us);
+    assert!(
+        avg_us < 10_000,
+        "Gate lookup latency must be < 10ms, got {}us",
+        avg_us
+    );
 }
 
 #[tokio::test]
@@ -3859,8 +3974,12 @@ async fn test_bitemporal_time_travel_semantic_facts() {
     fact1.code_anchor = Some(anchor1);
 
     let emb1 = embedder.embed_text(&fact1.statement).await.unwrap();
-    store.insert_or_update_semantic_fact(&fact1).expect("insert fact 1");
-    store.update_semantic_fact_embedding(&fact1.id, &emb1).expect("embed fact 1");
+    store
+        .insert_or_update_semantic_fact(&fact1)
+        .expect("insert fact 1");
+    store
+        .update_semantic_fact_embedding(&fact1.id, &emb1)
+        .expect("embed fact 1");
 
     // 2. Fact 2 (New rule): Valid from t1 onwards
     let mut fact2 = SemanticFact::new(
@@ -3885,8 +4004,12 @@ async fn test_bitemporal_time_travel_semantic_facts() {
     fact2.code_anchor = Some(anchor2);
 
     let emb2 = embedder.embed_text(&fact2.statement).await.unwrap();
-    store.insert_or_update_semantic_fact(&fact2).expect("insert fact 2");
-    store.update_semantic_fact_embedding(&fact2.id, &emb2).expect("embed fact 2");
+    store
+        .insert_or_update_semantic_fact(&fact2)
+        .expect("insert fact 2");
+    store
+        .update_semantic_fact_embedding(&fact2.id, &emb2)
+        .expect("embed fact 2");
 
     // Query 1: Time-travel query at t_past (15 days ago)
     // At t_past: fact1 was active, fact2 did not exist yet
@@ -3902,7 +4025,11 @@ async fn test_bitemporal_time_travel_semantic_facts() {
     let present_facts = store
         .search_semantic_facts_as_of("SQLite", Some(t_now), None, None, 10)
         .expect("search at present");
-    assert_eq!(present_facts.len(), 1, "Should only return fact2 at present");
+    assert_eq!(
+        present_facts.len(),
+        1,
+        "Should only return fact2 at present"
+    );
     assert_eq!(present_facts[0].0.id, fact2.id);
     assert_eq!(present_facts[0].0.statement, fact2.statement);
 
@@ -3959,12 +4086,21 @@ async fn test_bitemporal_time_travel_memory_records() {
     let h2 = engine.write(&rec2).await.expect("write rec2");
 
     // Test 1: get_as_of for rec1
-    let fetched_past = engine.get_as_of(&h1.id, Some(t_past), None, None).await.expect("get rec1 at t_past");
+    let fetched_past = engine
+        .get_as_of(&h1.id, Some(t_past), None, None)
+        .await
+        .expect("get rec1 at t_past");
     assert!(fetched_past.is_some(), "rec1 should be active at t_past");
     assert_eq!(fetched_past.unwrap().id, h1.id);
 
-    let fetched_now = engine.get_as_of(&h1.id, Some(t_now), None, None).await.expect("get rec1 at t_now");
-    assert!(fetched_now.is_none(), "rec1 should be expired/invalidated at t_now");
+    let fetched_now = engine
+        .get_as_of(&h1.id, Some(t_now), None, None)
+        .await
+        .expect("get rec1 at t_now");
+    assert!(
+        fetched_now.is_none(),
+        "rec1 should be expired/invalidated at t_now"
+    );
 
     // Test 2: search_as_of via engine
     let search_past = engine
@@ -3983,14 +4119,28 @@ async fn test_bitemporal_time_travel_memory_records() {
 
     // Test 3: search_as_of with commit filtering
     let search_commit1 = engine
-        .search_as_of("tokens", Some(&Scope::Global), None, Some("sha_auth_v1"), None, 10)
+        .search_as_of(
+            "tokens",
+            Some(&Scope::Global),
+            None,
+            Some("sha_auth_v1"),
+            None,
+            10,
+        )
         .await
         .expect("search sha_auth_v1");
     assert_eq!(search_commit1.len(), 1);
     assert_eq!(search_commit1[0].id, h1.id);
 
     let search_commit2 = engine
-        .search_as_of("tokens", Some(&Scope::Global), None, Some("sha_auth_v2"), None, 10)
+        .search_as_of(
+            "tokens",
+            Some(&Scope::Global),
+            None,
+            Some("sha_auth_v2"),
+            None,
+            10,
+        )
         .await
         .expect("search sha_auth_v2");
     assert_eq!(search_commit2.len(), 1);
@@ -4037,45 +4187,104 @@ async fn test_branch_isolation_and_merge() {
 
     // Query on 'main': should only see main_rec (feat_rec and feat_y_rec must be excluded)
     let search_main = engine
-        .search_as_of("architecture", Some(&Scope::Global), None, None, Some("main"), 10)
+        .search_as_of(
+            "architecture",
+            Some(&Scope::Global),
+            None,
+            None,
+            Some("main"),
+            10,
+        )
         .await
         .expect("search on main");
     let main_ids: Vec<_> = search_main.iter().map(|r| r.id).collect();
-    assert!(main_ids.contains(&h_main.id), "main query must see main memory");
-    assert!(!main_ids.contains(&h_feat.id), "main query must NOT see feat/feature-x memory");
-    assert!(!main_ids.contains(&h_feat_y.id), "main query must NOT see feat/feature-y memory");
+    assert!(
+        main_ids.contains(&h_main.id),
+        "main query must see main memory"
+    );
+    assert!(
+        !main_ids.contains(&h_feat.id),
+        "main query must NOT see feat/feature-x memory"
+    );
+    assert!(
+        !main_ids.contains(&h_feat_y.id),
+        "main query must NOT see feat/feature-y memory"
+    );
 
     // Query on 'feat/feature-x': should see main_rec + feat_rec, but NOT feat_y_rec
     let search_feat_x = engine
-        .search_as_of("architecture", Some(&Scope::Global), None, None, Some("feat/feature-x"), 10)
+        .search_as_of(
+            "architecture",
+            Some(&Scope::Global),
+            None,
+            None,
+            Some("feat/feature-x"),
+            10,
+        )
         .await
         .expect("search on feat/feature-x");
     let feat_x_ids: Vec<_> = search_feat_x.iter().map(|r| r.id).collect();
-    assert!(feat_x_ids.contains(&h_main.id), "feature query must see main baseline");
-    assert!(feat_x_ids.contains(&h_feat.id), "feature query must see its own branch memory");
-    assert!(!feat_x_ids.contains(&h_feat_y.id), "feature query must NOT see other feature branch memory");
+    assert!(
+        feat_x_ids.contains(&h_main.id),
+        "feature query must see main baseline"
+    );
+    assert!(
+        feat_x_ids.contains(&h_feat.id),
+        "feature query must see its own branch memory"
+    );
+    assert!(
+        !feat_x_ids.contains(&h_feat_y.id),
+        "feature query must NOT see other feature branch memory"
+    );
 
     // get_as_of isolation:
-    let get_main_view = engine.get_as_of(&h_feat.id, None, None, Some("main")).await.expect("get_as_of");
-    assert!(get_main_view.is_none(), "main view cannot fetch feat memory by ID");
+    let get_main_view = engine
+        .get_as_of(&h_feat.id, None, None, Some("main"))
+        .await
+        .expect("get_as_of");
+    assert!(
+        get_main_view.is_none(),
+        "main view cannot fetch feat memory by ID"
+    );
 
-    let get_feat_view = engine.get_as_of(&h_feat.id, None, None, Some("feat/feature-x")).await.expect("get_as_of");
-    assert!(get_feat_view.is_some(), "feat view can fetch its own memory by ID");
+    let get_feat_view = engine
+        .get_as_of(&h_feat.id, None, None, Some("feat/feature-x"))
+        .await
+        .expect("get_as_of");
+    assert!(
+        get_feat_view.is_some(),
+        "feat view can fetch its own memory by ID"
+    );
 
     // 4. Merge branch 'feat/feature-x' into 'main'
-    let report = store.merge_branch_memories("feat/feature-x", "main").expect("merge branch");
+    let report = store
+        .merge_branch_memories("feat/feature-x", "main")
+        .expect("merge branch");
     assert_eq!(report.memories_merged, 1);
     assert_eq!(report.total_merged(), 1);
 
     // 5. Query on 'main' post-merge: now h_feat is promoted to 'main' and visible!
     let search_main_post = engine
-        .search_as_of("architecture", Some(&Scope::Global), None, None, Some("main"), 10)
+        .search_as_of(
+            "architecture",
+            Some(&Scope::Global),
+            None,
+            None,
+            Some("main"),
+            10,
+        )
         .await
         .expect("search on main post merge");
     let main_post_ids: Vec<_> = search_main_post.iter().map(|r| r.id).collect();
     assert!(main_post_ids.contains(&h_main.id));
-    assert!(main_post_ids.contains(&h_feat.id), "h_feat must now be visible in main post-merge");
-    assert!(!main_post_ids.contains(&h_feat_y.id), "feat/feature-y remains isolated");
+    assert!(
+        main_post_ids.contains(&h_feat.id),
+        "h_feat must now be visible in main post-merge"
+    );
+    assert!(
+        !main_post_ids.contains(&h_feat_y.id),
+        "feat/feature-y remains isolated"
+    );
 }
 
 #[tokio::test]
@@ -4083,9 +4292,15 @@ async fn test_branch_namespaces_all_entities_merge() {
     let store = SqliteStore::open_in_memory().expect("open store");
 
     // 1. Semantic Fact on branch
-    let fact = SemanticFact::new("Auth tokens must be signed with RS256", "auth", Scope::Global)
-        .with_branch("feat/auth-v2");
-    store.insert_or_update_semantic_fact(&fact).expect("insert fact");
+    let fact = SemanticFact::new(
+        "Auth tokens must be signed with RS256",
+        "auth",
+        Scope::Global,
+    )
+    .with_branch("feat/auth-v2");
+    store
+        .insert_or_update_semantic_fact(&fact)
+        .expect("insert fact");
 
     // 2. Event on branch
     let event = Event::new(
@@ -4108,22 +4323,30 @@ async fn test_branch_namespaces_all_entities_merge() {
         Utc::now(),
     )
     .with_git_branch("feat/auth-v2");
-    store.insert_episodic_memory(&ep_mem).expect("insert episodic");
+    store
+        .insert_episodic_memory(&ep_mem)
+        .expect("insert episodic");
 
     // 4. Episode on branch
-    let ep_rec = EpisodeRecord::new("sess-1", "agent-x", "Refactored auth")
-        .with_git_branch("feat/auth-v2");
+    let ep_rec =
+        EpisodeRecord::new("sess-1", "agent-x", "Refactored auth").with_git_branch("feat/auth-v2");
     store.save_episode(&ep_rec).expect("save episode");
 
     // Verify isolation on main
-    let main_facts = store.search_semantic_facts_as_of("tokens", None, None, Some("main"), 10).expect("search facts");
+    let main_facts = store
+        .search_semantic_facts_as_of("tokens", None, None, Some("main"), 10)
+        .expect("search facts");
     assert_eq!(main_facts.len(), 0);
 
-    let feat_facts = store.search_semantic_facts_as_of("tokens", None, None, Some("feat/auth-v2"), 10).expect("search facts");
+    let feat_facts = store
+        .search_semantic_facts_as_of("tokens", None, None, Some("feat/auth-v2"), 10)
+        .expect("search facts");
     assert_eq!(feat_facts.len(), 1);
 
     // Merge branch into main
-    let report = store.merge_branch_memories("feat/auth-v2", "main").expect("merge");
+    let report = store
+        .merge_branch_memories("feat/auth-v2", "main")
+        .expect("merge");
     assert_eq!(report.semantic_facts_merged, 1);
     assert_eq!(report.events_merged, 1);
     assert_eq!(report.episodic_memories_merged, 1);
@@ -4131,7 +4354,9 @@ async fn test_branch_namespaces_all_entities_merge() {
     assert_eq!(report.total_merged(), 4);
 
     // Post-merge on main
-    let main_facts_post = store.search_semantic_facts_as_of("tokens", None, None, Some("main"), 10).expect("search facts post");
+    let main_facts_post = store
+        .search_semantic_facts_as_of("tokens", None, None, Some("main"), 10)
+        .expect("search facts post");
     assert_eq!(main_facts_post.len(), 1);
 }
 
@@ -4139,11 +4364,9 @@ async fn test_branch_namespaces_all_entities_merge() {
 async fn test_procedural_rule_sqlite_persistence_roundtrip() {
     let store = SqliteStore::open_in_memory().expect("open in-memory SQLite store");
 
-    let mut rule = ProceduralRule::new(
-        "strict_tdd_flow",
-        "# TDD Flow\n1. Write tests before code.",
-    )
-    .with_category("engineering");
+    let mut rule =
+        ProceduralRule::new("strict_tdd_flow", "# TDD Flow\n1. Write tests before code.")
+            .with_category("engineering");
 
     let feedback = TextGradientFeedback::new("Timing error: test not executed in red phase")
         .with_correction("Run tests before code implementation")
@@ -4155,7 +4378,9 @@ async fn test_procedural_rule_sqlite_persistence_roundtrip() {
         Some(feedback.clone()),
     );
 
-    store.insert_or_update_procedural_rule(&rule).expect("insert rule");
+    store
+        .insert_or_update_procedural_rule(&rule)
+        .expect("insert rule");
 
     // Retrieve by ID
     let fetched = store
@@ -4175,7 +4400,11 @@ async fn test_procedural_rule_sqlite_persistence_roundtrip() {
     assert_eq!(fetched.versions[0].version, 1);
     assert_eq!(fetched.versions[1].version, 2);
     assert_eq!(
-        fetched.versions[1].feedback_applied.as_ref().unwrap().criticism,
+        fetched.versions[1]
+            .feedback_applied
+            .as_ref()
+            .unwrap()
+            .criticism,
         "Timing error: test not executed in red phase"
     );
 
@@ -4187,11 +4416,15 @@ async fn test_procedural_rule_sqlite_persistence_roundtrip() {
     assert_eq!(by_name.id, rule.id);
 
     // List rules
-    let list_cat = store.list_procedural_rules(Some("engineering")).expect("list category");
+    let list_cat = store
+        .list_procedural_rules(Some("engineering"))
+        .expect("list category");
     assert_eq!(list_cat.len(), 1);
     assert_eq!(list_cat[0].name, "strict_tdd_flow");
 
-    let list_empty = store.list_procedural_rules(Some("nonexistent")).expect("list empty");
+    let list_empty = store
+        .list_procedural_rules(Some("nonexistent"))
+        .expect("list empty");
     assert_eq!(list_empty.len(), 0);
 
     let list_all = store.list_procedural_rules(None).expect("list all");
@@ -4208,7 +4441,9 @@ async fn test_procedural_rule_version_history_order() {
     let fb2 = TextGradientFeedback::new("PR required for merge").with_score(0.2);
     rule.apply_version("v3: require PR review", "pr gate", Some(fb2));
 
-    store.insert_or_update_procedural_rule(&rule).expect("insert rule");
+    store
+        .insert_or_update_procedural_rule(&rule)
+        .expect("insert rule");
 
     let versions = store
         .get_procedural_rule_versions(&rule.id)
@@ -4231,7 +4466,9 @@ async fn test_procedural_rule_sqlite_rollback() {
     rule.apply_version("v2: blue-green deploy", "added blue-green", None);
     rule.apply_version("v3: experimental canary", "canary test", None);
 
-    store.insert_or_update_procedural_rule(&rule).expect("insert rule");
+    store
+        .insert_or_update_procedural_rule(&rule)
+        .expect("insert rule");
 
     // Rollback to v2
     let rolled = store
@@ -4262,7 +4499,9 @@ async fn test_record_procedural_rule_version_directly() {
     let store = SqliteStore::open_in_memory().expect("open store");
 
     let rule = ProceduralRule::new("canary_policy", "v1: initial canary");
-    store.insert_or_update_procedural_rule(&rule).expect("insert rule");
+    store
+        .insert_or_update_procedural_rule(&rule)
+        .expect("insert rule");
 
     let new_ver = ProceduralRuleVersion {
         version: 2,
@@ -4288,7 +4527,10 @@ async fn test_record_procedural_rule_version_directly() {
         .expect("fetch rule")
         .expect("rule exists");
     assert_eq!(updated_rule.current_version, 2);
-    assert_eq!(updated_rule.current_content, "v2: automated canary analysis");
+    assert_eq!(
+        updated_rule.current_content,
+        "v2: automated canary analysis"
+    );
 }
 
 #[tokio::test]
@@ -4320,10 +4562,16 @@ async fn test_context_rot_injection_tracking_and_sqlite_persistence() {
         .expect("get outcomes");
     assert_eq!(outcomes.len(), 2);
     assert_eq!(outcomes[0].id, rec1.id);
-    assert_eq!(outcomes[0].outcome, crate::context_rot::InjectionOutcome::Success);
+    assert_eq!(
+        outcomes[0].outcome,
+        crate::context_rot::InjectionOutcome::Success
+    );
     assert_eq!(outcomes[0].command.as_deref(), Some("cargo check"));
     assert_eq!(outcomes[1].id, rec2.id);
-    assert_eq!(outcomes[1].outcome, crate::context_rot::InjectionOutcome::Failure);
+    assert_eq!(
+        outcomes[1].outcome,
+        crate::context_rot::InjectionOutcome::Failure
+    );
 }
 
 #[tokio::test]
@@ -4350,7 +4598,9 @@ async fn test_context_rot_poisoning_detection_and_decay_penalty() {
     .with_summary("python2 legacy stubs")
     .with_importance(0.85)
     .with_confidence(0.95);
-    store.insert_memory(&poisoned_mem).expect("insert poisoned_mem");
+    store
+        .insert_memory(&poisoned_mem)
+        .expect("insert poisoned_mem");
 
     // Record 5 injections for valid_mem: all Success
     for i in 0..5 {
@@ -4379,7 +4629,9 @@ async fn test_context_rot_poisoning_detection_and_decay_penalty() {
         crate::context_rot::InjectionOutcome::Success,
     )
     .with_task_id("task-p-4");
-    store.record_injection_outcome(&rec_succ).expect("record rec");
+    store
+        .record_injection_outcome(&rec_succ)
+        .expect("record rec");
 
     let detector = crate::context_rot::ContextRotDetector::with_default_config();
 
@@ -4412,15 +4664,25 @@ async fn test_context_rot_poisoning_detection_and_decay_penalty() {
     assert_eq!(decayed_count, 1);
 
     // Verify poisoned memory was quarantined and penalized
-    assert!(store.is_memory_quarantined(&poisoned_mem.id).expect("check is quarantined"));
-    assert!(!store.is_memory_quarantined(&valid_mem.id).expect("check valid not quarantined"));
+    assert!(store
+        .is_memory_quarantined(&poisoned_mem.id)
+        .expect("check is quarantined"));
+    assert!(!store
+        .is_memory_quarantined(&valid_mem.id)
+        .expect("check valid not quarantined"));
 
     let updated_poison = store
         .get_memory(&poisoned_mem.id)
         .expect("get mem")
         .expect("found");
-    assert!(updated_poison.importance < 0.15, "Importance must be penalized by 0.1x");
-    assert!(updated_poison.confidence < 0.15, "Confidence must be penalized by 0.1x");
+    assert!(
+        updated_poison.importance < 0.15,
+        "Importance must be penalized by 0.1x"
+    );
+    assert!(
+        updated_poison.confidence < 0.15,
+        "Confidence must be penalized by 0.1x"
+    );
 
     // Test filter_suppressed_memories
     let mut candidate_list = vec![valid_mem.clone(), updated_poison];
@@ -4464,10 +4726,16 @@ async fn test_context_rot_retrieval_and_digest_suppression() {
     // Quarantine poisoned memory
     engine
         .store()
-        .quarantine_memory(&poisoned_mem.id, "Context poisoning detected: rejection rate > 60%")
+        .quarantine_memory(
+            &poisoned_mem.id,
+            "Context poisoning detected: rejection rate > 60%",
+        )
         .expect("quarantine");
 
-    assert!(engine.store().is_memory_quarantined(&poisoned_mem.id).expect("quarantined"));
+    assert!(engine
+        .store()
+        .is_memory_quarantined(&poisoned_mem.id)
+        .expect("quarantined"));
 
     // Verify search suppresses the quarantined memory
     let search_after_quarantine = engine
@@ -4475,7 +4743,9 @@ async fn test_context_rot_retrieval_and_digest_suppression() {
         .await
         .expect("search after");
     assert!(
-        !search_after_quarantine.iter().any(|m| m.id == poisoned_mem.id),
+        !search_after_quarantine
+            .iter()
+            .any(|m| m.id == poisoned_mem.id),
         "Quarantined memory must NOT be returned in search"
     );
 
@@ -4527,7 +4797,10 @@ async fn test_concurrency_access_metrics_preserves_external_updates_and_quaranti
         .expect("engine get")
         .expect("found");
     assert_eq!(mem_read_a.access_count, 1);
-    assert_eq!(mem_read_a.content, "Version A: Original active configuration");
+    assert_eq!(
+        mem_read_a.content,
+        "Version A: Original active configuration"
+    );
 
     // 3. Process B concurrently updates the record to Version B (quarantined, low importance, updated content)
     let mut record_v2 = mem_read_a.clone();
@@ -4537,11 +4810,19 @@ async fn test_concurrency_access_metrics_preserves_external_updates_and_quaranti
         "status": "quarantined",
         "quarantine_reason": "CVE-2026-REGRESSION"
     });
-    store_b.insert_or_update_memory(&record_v2).expect("store b updates memory");
+    store_b
+        .insert_or_update_memory(&record_v2)
+        .expect("store b updates memory");
 
     // Verify Process B wrote Version B successfully
-    let db_v2 = store_b.get_memory(&record_v1.id).expect("get").expect("found");
-    assert_eq!(db_v2.content, "Version B: Quarantined insecure configuration");
+    let db_v2 = store_b
+        .get_memory(&record_v1.id)
+        .expect("get")
+        .expect("found");
+    assert_eq!(
+        db_v2.content,
+        "Version B: Quarantined insecure configuration"
+    );
     assert_eq!(db_v2.importance, 0.1);
     assert_eq!(db_v2.metadata["status"], "quarantined");
 
@@ -4549,7 +4830,10 @@ async fn test_concurrency_access_metrics_preserves_external_updates_and_quaranti
     // In the previous implementation, mark_accessed() followed by insert_or_update_memory(mem_read_a)
     // would rewrite the entire row, reverting Version B to Version A (wiping quarantine and restoring importance 0.9).
     // With update_access_metrics, only access_count and last_accessed_at are updated atomically.
-    let _ = engine.search("configuration", None, 5).await.expect("search");
+    let _ = engine
+        .search("configuration", None, 5)
+        .await
+        .expect("search");
     let fetched_again = engine
         .get(&record_v1.id)
         .await
@@ -4558,18 +4842,15 @@ async fn test_concurrency_access_metrics_preserves_external_updates_and_quaranti
 
     // 5. Assertions: Version B and its quarantine status MUST NOT be overwritten by read operations
     assert_eq!(
-        fetched_again.content,
-        "Version B: Quarantined insecure configuration",
+        fetched_again.content, "Version B: Quarantined insecure configuration",
         "Concurrent reading MUST NOT overwrite updated content"
     );
     assert_eq!(
-        fetched_again.importance,
-        0.1,
+        fetched_again.importance, 0.1,
         "Concurrent reading MUST NOT revert importance"
     );
     assert_eq!(
-        fetched_again.metadata["status"],
-        "quarantined",
+        fetched_again.metadata["status"], "quarantined",
         "Concurrent reading MUST NOT revert quarantine status"
     );
     assert!(
@@ -4583,7 +4864,8 @@ async fn test_concurrency_access_metrics_preserves_external_updates_and_quaranti
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn test_concurrency_access_metrics_atomic_increments() {
-    let temp_db_path = std::env::temp_dir().join(format!("strata_conc_stress_{}.db", Uuid::new_v4()));
+    let temp_db_path =
+        std::env::temp_dir().join(format!("strata_conc_stress_{}.db", Uuid::new_v4()));
     let _ = std::fs::remove_file(&temp_db_path);
 
     let engine = Arc::new(SqliteMemoryEngine::open(&temp_db_path, None).expect("init engine"));
@@ -4635,13 +4917,17 @@ async fn test_concurrency_access_metrics_timestamp_monotonicity() {
     let t1 = t2 - chrono::Duration::seconds(60);
 
     // Apply t2 first
-    let ok = store.update_access_metrics(&record.id, t2).expect("update t2");
+    let ok = store
+        .update_access_metrics(&record.id, t2)
+        .expect("update t2");
     assert!(ok);
     let mem = store.get_memory(&record.id).expect("get").expect("found");
     assert!(mem.last_accessed_at.is_some());
 
     // Apply earlier timestamp t1 (out-of-order execution)
-    let ok = store.update_access_metrics(&record.id, t1).expect("update t1");
+    let ok = store
+        .update_access_metrics(&record.id, t1)
+        .expect("update t1");
     assert!(ok);
     let mem_after = store.get_memory(&record.id).expect("get").expect("found");
     assert_eq!(
@@ -4653,8 +4939,8 @@ async fn test_concurrency_access_metrics_timestamp_monotonicity() {
 
 #[test]
 fn test_atomic_claim_concurrency_two_connections_wal() {
-    use strata_core::blackboard::{TaskRecord, TaskStatus};
     use std::sync::Barrier;
+    use strata_core::blackboard::{TaskRecord, TaskStatus};
 
     let temp_db_path = std::env::temp_dir().join(format!("strata_task_conc_{}.db", Uuid::new_v4()));
     let _ = std::fs::remove_file(&temp_db_path);
@@ -4700,7 +4986,10 @@ fn test_atomic_claim_concurrency_two_connections_wal() {
     );
 
     // Verify final state in database
-    let final_task = store_a.get_task("shared-task-1").expect("get task").expect("task found");
+    let final_task = store_a
+        .get_task("shared-task-1")
+        .expect("get task")
+        .expect("task found");
     assert_eq!(final_task.status, TaskStatus::Claimed);
     assert_eq!(final_task.claim_generation, 1);
     let winning_agent = if a_won { "agent-a" } else { "agent-b" };
@@ -4732,14 +5021,29 @@ fn test_task_lifecycle_enforcement_and_fencing_tokens() {
     assert_eq!(claimed_a.status, TaskStatus::Claimed);
 
     // 3. Rogue Agent B attempts to update progress, complete, or fail Agent A's task -> MUST be rejected
-    let rogue_progress = store.update_task_progress("task-fencing", "agent-b", "rogue update").unwrap();
-    assert!(!rogue_progress, "Rogue agent must not be able to update progress");
+    let rogue_progress = store
+        .update_task_progress("task-fencing", "agent-b", "rogue update")
+        .unwrap();
+    assert!(
+        !rogue_progress,
+        "Rogue agent must not be able to update progress"
+    );
 
-    let rogue_complete = store.complete_task("task-fencing", "agent-b", Some("done by rogue"), None).unwrap();
-    assert!(!rogue_complete, "Rogue agent must not be able to complete another agent's task");
+    let rogue_complete = store
+        .complete_task("task-fencing", "agent-b", Some("done by rogue"), None)
+        .unwrap();
+    assert!(
+        !rogue_complete,
+        "Rogue agent must not be able to complete another agent's task"
+    );
 
-    let rogue_fail = store.fail_task("task-fencing", "agent-b", "rogue failure").unwrap();
-    assert!(!rogue_fail, "Rogue agent must not be able to fail another agent's task");
+    let rogue_fail = store
+        .fail_task("task-fencing", "agent-b", "rogue failure")
+        .unwrap();
+    assert!(
+        !rogue_fail,
+        "Rogue agent must not be able to fail another agent's task"
+    );
 
     // 4. Agent A updates progress with valid generation -> succeeds
     let progress_ok = store
@@ -4751,29 +5055,45 @@ fn test_task_lifecycle_enforcement_and_fencing_tokens() {
     let progress_bad_gen = store
         .update_task_progress_with_generation("task-fencing", "agent-a", "compiling", Some(99))
         .unwrap();
-    assert!(!progress_bad_gen, "Mismatched generation token must be rejected");
+    assert!(
+        !progress_bad_gen,
+        "Mismatched generation token must be rejected"
+    );
 
     // 5. Stale reclaim: task is reclaimed because worker hung
-    store
-        .reclaim_stale_tasks(0)
-        .expect("reclaim stale");
+    store.reclaim_stale_tasks(0).expect("reclaim stale");
 
     let reclaimed_task = store.get_task("task-fencing").unwrap().unwrap();
     assert_eq!(reclaimed_task.status, TaskStatus::Pending);
     assert!(reclaimed_task.assigned_agent.is_none());
-    assert_eq!(reclaimed_task.claim_generation, 2, "Reclaim must bump claim generation");
+    assert_eq!(
+        reclaimed_task.claim_generation, 2,
+        "Reclaim must bump claim generation"
+    );
 
     // 6. Old Agent A now wakes up and attempts to complete the task with generation 1 -> MUST be rejected
     let late_complete = store
-        .complete_task_with_generation("task-fencing", "agent-a", Some("finally done"), None, Some(1))
+        .complete_task_with_generation(
+            "task-fencing",
+            "agent-a",
+            Some("finally done"),
+            None,
+            Some(1),
+        )
         .unwrap();
-    assert!(!late_complete, "Stale worker must not be able to complete reclaimed task");
+    assert!(
+        !late_complete,
+        "Stale worker must not be able to complete reclaimed task"
+    );
 
     // Even without specifying expected_generation, Agent A is no longer assigned_agent
     let late_complete_no_gen = store
         .complete_task("task-fencing", "agent-a", Some("finally done"), None)
         .unwrap();
-    assert!(!late_complete_no_gen, "Unassigned agent must not be able to complete task");
+    assert!(
+        !late_complete_no_gen,
+        "Unassigned agent must not be able to complete task"
+    );
 
     // 7. Agent C claims the task
     let claimed_c = store
@@ -4784,9 +5104,21 @@ fn test_task_lifecycle_enforcement_and_fencing_tokens() {
     assert_eq!(claimed_c.assigned_agent.as_deref(), Some("agent-c"));
 
     // 8. Agent C completes the task with generation 3 -> succeeds
-    let art = TaskArtifact::new("art-1", "task-fencing", "agent-c", "diff", "+ auth token refresh");
+    let art = TaskArtifact::new(
+        "art-1",
+        "task-fencing",
+        "agent-c",
+        "diff",
+        "+ auth token refresh",
+    );
     let complete_c = store
-        .complete_task_with_generation("task-fencing", "agent-c", Some("Token refresh implemented"), Some(&art), Some(3))
+        .complete_task_with_generation(
+            "task-fencing",
+            "agent-c",
+            Some("Token refresh implemented"),
+            Some(&art),
+            Some(3),
+        )
         .unwrap();
     assert!(complete_c);
 
@@ -4794,7 +5126,10 @@ fn test_task_lifecycle_enforcement_and_fencing_tokens() {
     let re_complete = store
         .complete_task("task-fencing", "agent-c", Some("again"), None)
         .unwrap();
-    assert!(!re_complete, "Already completed task cannot be completed again");
+    assert!(
+        !re_complete,
+        "Already completed task cannot be completed again"
+    );
 }
 
 #[tokio::test]
@@ -4815,20 +5150,53 @@ async fn test_embedding_provider_factory_and_compatibility() {
     // 2. Compatibility rules
     assert!(are_embedding_models_compatible("mock", "mock-hash"));
     assert!(are_embedding_models_compatible("mock-hash", "mock"));
-    assert!(are_embedding_models_compatible("all-minilm-l6-v2", "allminilml6v2"));
-    assert!(are_embedding_models_compatible("bge-small-en-v1.5", "bgesmallenv15"));
-    assert!(are_embedding_models_compatible("fastembed:AllMiniLML6V2", "all-minilm-l6-v2"));
-    assert!(are_embedding_models_compatible("fastembed/bge-small-en-v1.5", "bgesmallenv15"));
-    assert!(are_embedding_models_compatible("all-minilm-l6-v2", "fastembed:AllMiniLML6V2"));
-    assert!(!are_embedding_models_compatible("all-minilm-l6-v2", "bge-small-en-v1.5"));
-    assert!(!are_embedding_models_compatible("mock-hash", "all-minilm-l6-v2"));
+    assert!(are_embedding_models_compatible(
+        "all-minilm-l6-v2",
+        "allminilml6v2"
+    ));
+    assert!(are_embedding_models_compatible(
+        "bge-small-en-v1.5",
+        "bgesmallenv15"
+    ));
+    assert!(are_embedding_models_compatible(
+        "fastembed:AllMiniLML6V2",
+        "all-minilm-l6-v2"
+    ));
+    assert!(are_embedding_models_compatible(
+        "fastembed/bge-small-en-v1.5",
+        "bgesmallenv15"
+    ));
+    assert!(are_embedding_models_compatible(
+        "all-minilm-l6-v2",
+        "fastembed:AllMiniLML6V2"
+    ));
+    assert!(!are_embedding_models_compatible(
+        "all-minilm-l6-v2",
+        "bge-small-en-v1.5"
+    ));
+    assert!(!are_embedding_models_compatible(
+        "mock-hash",
+        "all-minilm-l6-v2"
+    ));
 
     // 3. Query compatibility
     assert!(is_embedding_compatible_with_query("mock-hash", None));
-    assert!(is_embedding_compatible_with_query("mock-hash", Some("mock-hash")));
-    assert!(is_embedding_compatible_with_query("all-minilm-l6-v2", Some("allminilml6v2")));
-    assert!(!is_embedding_compatible_with_query("mock-hash", Some("all-minilm-l6-v2")));
-    assert!(!is_embedding_compatible_with_query("all-minilm-l6-v2", Some("mock-hash")));
+    assert!(is_embedding_compatible_with_query(
+        "mock-hash",
+        Some("mock-hash")
+    ));
+    assert!(is_embedding_compatible_with_query(
+        "all-minilm-l6-v2",
+        Some("allminilml6v2")
+    ));
+    assert!(!is_embedding_compatible_with_query(
+        "mock-hash",
+        Some("all-minilm-l6-v2")
+    ));
+    assert!(!is_embedding_compatible_with_query(
+        "all-minilm-l6-v2",
+        Some("mock-hash")
+    ));
 
     // 4. Factory creation with explicit mock configuration
     let config = StrataConfig {
@@ -4890,11 +5258,20 @@ async fn test_vector_consistency_stats_and_reindex() {
     store.insert_or_update_memory(&mem2).unwrap();
 
     // 3. Insert semantic fact with mock-hash model
-    let fact = SemanticFact::new("Always use prepared statements for SQL", "database", Scope::Global);
+    let fact = SemanticFact::new(
+        "Always use prepared statements for SQL",
+        "database",
+        Scope::Global,
+    );
     let fact_vec = mock.embed_text(&fact.statement).await.unwrap();
     store.insert_or_update_semantic_fact(&fact).unwrap();
     store
-        .update_semantic_fact_embedding_with_model(&fact.id, &fact_vec, Some("mock-hash"), Some("1"))
+        .update_semantic_fact_embedding_with_model(
+            &fact.id,
+            &fact_vec,
+            Some("mock-hash"),
+            Some("1"),
+        )
         .unwrap();
 
     // 4. Insert procedural skill with untagged/missing embedding model
@@ -4902,7 +5279,12 @@ async fn test_vector_consistency_stats_and_reindex() {
     store.insert_or_update_procedural_skill(&skill).unwrap();
     let skill_vec = mock.embed_text(&skill.description).await.unwrap();
     store
-        .update_procedural_skill_embedding_with_model(&skill.id, &skill_vec, Some("all-minilm-l6-v2"), Some("1"))
+        .update_procedural_skill_embedding_with_model(
+            &skill.id,
+            &skill_vec,
+            Some("all-minilm-l6-v2"),
+            Some("1"),
+        )
         .unwrap();
 
     // 4.5 Insert episodic memory with different model
@@ -4916,7 +5298,12 @@ async fn test_vector_consistency_stats_and_reindex() {
     );
     store.insert_episodic_memory(&episode).unwrap();
     store
-        .update_episodic_memory_embedding_with_model(&episode.id, &skill_vec, Some("all-minilm-l6-v2"), Some("1"))
+        .update_episodic_memory_embedding_with_model(
+            &episode.id,
+            &skill_vec,
+            Some("all-minilm-l6-v2"),
+            Some("1"),
+        )
         .unwrap();
 
     // Verify get_semantic_facts_with_embeddings_and_models returns tagged model
@@ -4939,8 +5326,14 @@ async fn test_vector_consistency_stats_and_reindex() {
     assert_eq!(stats.skills_with_embeddings, 1);
     assert_eq!(stats.total_episodic_memories, 1);
     assert_eq!(stats.episodes_with_embeddings, 1);
-    assert_eq!(stats.distinct_models_count, 2, "Must detect 2 different embedding models");
-    assert!(!stats.is_consistent, "Database is NOT consistent across models");
+    assert_eq!(
+        stats.distinct_models_count, 2,
+        "Must detect 2 different embedding models"
+    );
+    assert!(
+        !stats.is_consistent,
+        "Database is NOT consistent across models"
+    );
     assert!(!stats.recommendations.is_empty());
 
     // 6. Run reindex (force = false, only re-embed records not matching active model "mock-hash")
@@ -4950,7 +5343,10 @@ async fn test_vector_consistency_stats_and_reindex() {
         .expect("reindex embeddings");
 
     assert_eq!(report.target_model, "mock-hash");
-    assert_eq!(report.memories_reindexed, 1, "Only mem2 had non-mock-hash model");
+    assert_eq!(
+        report.memories_reindexed, 1,
+        "Only mem2 had non-mock-hash model"
+    );
     assert_eq!(report.facts_reindexed, 0, "Fact already had mock-hash");
     assert_eq!(report.skills_reindexed, 1, "Skill had all-minilm-l6-v2");
     assert_eq!(report.episodes_reindexed, 1, "Episode had all-minilm-l6-v2");
@@ -4984,7 +5380,10 @@ async fn test_retrieval_discards_incompatible_vector_models() {
     let mock = MockEmbeddingProvider::default();
 
     // Memory 1: Tagged with "mock-hash"
-    let emb1 = mock.embed_text("authentication bearer token").await.unwrap();
+    let emb1 = mock
+        .embed_text("authentication bearer token")
+        .await
+        .unwrap();
     let mut mem1 = MemoryRecord::new(
         MemoryType::Semantic,
         "Use bearer tokens with authorization headers for API calls",
@@ -4998,7 +5397,10 @@ async fn test_retrieval_discards_incompatible_vector_models() {
     store.insert_or_update_memory(&mem1).unwrap();
 
     // Memory 2: Identical high similarity vector, but tagged with "incompatible-neural-model"
-    let emb2 = mock.embed_text("authentication bearer token").await.unwrap();
+    let emb2 = mock
+        .embed_text("authentication bearer token")
+        .await
+        .unwrap();
     let mut mem2 = MemoryRecord::new(
         MemoryType::Semantic,
         "Completely different statement that would otherwise match lexical/vector",
@@ -5020,7 +5422,14 @@ async fn test_retrieval_discards_incompatible_vector_models() {
     });
 
     let results = ranker
-        .retrieve(&store, Some(&mock), "authentication bearer token", None, None, 5)
+        .retrieve(
+            &store,
+            Some(&mock),
+            "authentication bearer token",
+            None,
+            None,
+            5,
+        )
         .await
         .expect("retrieve");
 
@@ -5049,9 +5458,16 @@ async fn test_memory_engine_write_and_promote_sets_embedding_metadata() {
     .with_tier(MemoryTier::Working);
 
     let handle = engine.write(&rec).await.expect("write memory");
-    let fetched = engine.get(&handle.id).await.unwrap().expect("fetched memory");
+    let fetched = engine
+        .get(&handle.id)
+        .await
+        .unwrap()
+        .expect("fetched memory");
 
-    assert!(fetched.embedding.is_some(), "Embedding must be automatically generated");
+    assert!(
+        fetched.embedding.is_some(),
+        "Embedding must be automatically generated"
+    );
     assert_eq!(
         fetched.embedding_model.as_deref(),
         Some("mock-hash"),
@@ -5114,7 +5530,9 @@ async fn test_audn_pipeline_rejects_incompatible_embedding_spaces() {
     cand_mem.embedding_model = Some("mock-hash".to_string());
     cand_mem.embedding_version = Some("1".to_string());
 
-    let decision = pipeline.classify_memory(&store, &cand_mem).expect("classify");
+    let decision = pipeline
+        .classify_memory(&store, &cand_mem)
+        .expect("classify");
     assert_eq!(
         decision.cosine_similarity, 0.0,
         "Cross-model vector similarity must be 0.0 to prevent space corruption"
@@ -5124,7 +5542,12 @@ async fn test_audn_pipeline_rejects_incompatible_embedding_spaces() {
     let fact = SemanticFact::new("Database uses WAL mode", "database", Scope::Global);
     store.insert_or_update_semantic_fact(&fact).unwrap();
     store
-        .update_semantic_fact_embedding_with_model(&fact.id, &vec_raw, Some("all-minilm-l6-v2"), Some("1"))
+        .update_semantic_fact_embedding_with_model(
+            &fact.id,
+            &vec_raw,
+            Some("all-minilm-l6-v2"),
+            Some("1"),
+        )
         .unwrap();
 
     // Candidate fact evaluated with Mock embedder ("mock-hash")
@@ -5139,4 +5562,3 @@ async fn test_audn_pipeline_rejects_incompatible_embedding_spaces() {
         "Fact ingestion must reject cosine similarity across different models"
     );
 }
-

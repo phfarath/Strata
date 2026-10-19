@@ -132,8 +132,14 @@ impl DynamicReplanner {
         for skill in &self.procedural_recovery_skills {
             let skill_name_clean = skill.name.to_lowercase();
             let matches_error = err_lower.contains(&skill_name_clean)
-                || skill.tags.iter().any(|t| err_lower.contains(&t.to_lowercase()))
-                || skill.preconditions.iter().any(|p| err_lower.contains(&p.to_lowercase()));
+                || skill
+                    .tags
+                    .iter()
+                    .any(|t| err_lower.contains(&t.to_lowercase()))
+                || skill
+                    .preconditions
+                    .iter()
+                    .any(|p| err_lower.contains(&p.to_lowercase()));
 
             if matches_error && !skill.steps.is_empty() {
                 let mut mitigation_nodes = Vec::new();
@@ -166,7 +172,9 @@ impl DynamicReplanner {
                     &reverify_id,
                     format!("Re-verify after {}", skill.name),
                 )
-                .with_description("Re-run verification gate after applying mined procedural recovery routine")
+                .with_description(
+                    "Re-run verification gate after applying mined procedural recovery routine",
+                )
                 .with_action(failed_node.action.as_deref().unwrap_or("verify"));
 
                 if let Some(prev) = &prev_id {

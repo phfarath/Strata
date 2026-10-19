@@ -216,10 +216,19 @@ impl GoalDag {
             };
 
             let mut resources = Vec::new();
-            if let Some(target) = node.metadata.get("target_resource").and_then(|v| v.as_str()) {
+            if let Some(target) = node
+                .metadata
+                .get("target_resource")
+                .and_then(|v| v.as_str())
+            {
                 resources.push(target.to_string());
             } else if let Some(action) = &node.action {
-                if action.contains('/') || action.contains('\\') || action.ends_with(".rs") || action.ends_with(".ts") || action.ends_with(".py") {
+                if action.contains('/')
+                    || action.contains('\\')
+                    || action.ends_with(".rs")
+                    || action.ends_with(".ts")
+                    || action.ends_with(".py")
+                {
                     resources.push(format!("file:{action}"));
                 }
             }
@@ -550,23 +559,20 @@ impl GoalDag {
         for step in &skill.steps {
             let step_id = format!("{}_macro_step_{}", target_id, step.order);
             let action_desc = step.expected_result.as_deref().unwrap_or("execute");
-            let node = GoalNode::task(
-                &step_id,
-                format!("[{}] {}", skill.name, step.action),
-            )
-            .with_description(format!(
-                "Macro step {} using tool '{}' ({})",
-                step.order, step.tool, action_desc
-            ))
-            .with_action(&step.tool)
-            .with_action_params(step.arguments.clone())
-            .with_metadata(serde_json::json!({
-                "procedural_macro_id": skill.id.to_string(),
-                "procedural_macro_name": skill.name,
-                "step_order": step.order,
-                "expected_result": step.expected_result,
-                "notes": step.notes,
-            }));
+            let node = GoalNode::task(&step_id, format!("[{}] {}", skill.name, step.action))
+                .with_description(format!(
+                    "Macro step {} using tool '{}' ({})",
+                    step.order, step.tool, action_desc
+                ))
+                .with_action(&step.tool)
+                .with_action_params(step.arguments.clone())
+                .with_metadata(serde_json::json!({
+                    "procedural_macro_id": skill.id.to_string(),
+                    "procedural_macro_name": skill.name,
+                    "step_order": step.order,
+                    "expected_result": step.expected_result,
+                    "notes": step.notes,
+                }));
 
             self.add_node(node);
             step_node_ids.push(step_id);
@@ -578,7 +584,10 @@ impl GoalDag {
         }
 
         // 3. Inject verification gate if skill has postconditions or requested
-        if auto_inject_verification && (!skill.postconditions.is_empty() || skill.steps.iter().any(|s| s.expected_result.is_some())) {
+        if auto_inject_verification
+            && (!skill.postconditions.is_empty()
+                || skill.steps.iter().any(|s| s.expected_result.is_some()))
+        {
             let verify_id = format!("{}_macro_verify", target_id);
             let post_desc = if skill.postconditions.is_empty() {
                 "Verify macro execution outcome and invariants".to_string()
@@ -586,16 +595,14 @@ impl GoalDag {
                 format!("Verify postconditions: {}", skill.postconditions.join("; "))
             };
 
-            let verify_node = GoalNode::verification(
-                &verify_id,
-                format!("Verify [{}]", skill.name),
-            )
-            .with_description(post_desc)
-            .with_action("verify_macro_invariants")
-            .with_metadata(serde_json::json!({
-                "macro_id": skill.id.to_string(),
-                "postconditions": skill.postconditions,
-            }));
+            let verify_node =
+                GoalNode::verification(&verify_id, format!("Verify [{}]", skill.name))
+                    .with_description(post_desc)
+                    .with_action("verify_macro_invariants")
+                    .with_metadata(serde_json::json!({
+                        "macro_id": skill.id.to_string(),
+                        "postconditions": skill.postconditions,
+                    }));
 
             self.add_node(verify_node);
 

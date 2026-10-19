@@ -52,34 +52,24 @@ pub async fn run_context_rot_scenario() -> Result<ContextRotEvalReport> {
     // 3. Simulate post-generation injection outcomes
     // Memory 1 gets 5 successful injections -> rejection rate 0.0%
     for i in 0..5 {
-        let rec = MemoryInjectionRecord::new(
-            valid_mem.id,
-            session_id,
-            InjectionOutcome::Success,
-        )
-        .with_task_id(format!("task-valid-{i}"))
-        .with_command("cargo check");
+        let rec = MemoryInjectionRecord::new(valid_mem.id, session_id, InjectionOutcome::Success)
+            .with_task_id(format!("task-valid-{i}"))
+            .with_command("cargo check");
         store.record_injection_outcome(&rec)?;
     }
 
     // Memory 2 gets 4 failures and 1 success out of 5 injections -> rejection rate 80% (> 60%)
     for i in 0..4 {
-        let rec = MemoryInjectionRecord::new(
-            poisoned_mem.id,
-            session_id,
-            InjectionOutcome::Failure,
-        )
-        .with_task_id(format!("task-poison-{i}"))
-        .with_command("python2 scripts/generate_stubs.py");
+        let rec =
+            MemoryInjectionRecord::new(poisoned_mem.id, session_id, InjectionOutcome::Failure)
+                .with_task_id(format!("task-poison-{i}"))
+                .with_command("python2 scripts/generate_stubs.py");
         store.record_injection_outcome(&rec)?;
     }
-    let rec_succ = MemoryInjectionRecord::new(
-        poisoned_mem.id,
-        session_id,
-        InjectionOutcome::Success,
-    )
-    .with_task_id("task-poison-4")
-    .with_command("python2 scripts/generate_stubs.py");
+    let rec_succ =
+        MemoryInjectionRecord::new(poisoned_mem.id, session_id, InjectionOutcome::Success)
+            .with_task_id("task-poison-4")
+            .with_command("python2 scripts/generate_stubs.py");
     store.record_injection_outcome(&rec_succ)?;
 
     // 4. Run ContextRotDetector
@@ -91,7 +81,10 @@ pub async fn run_context_rot_scenario() -> Result<ContextRotEvalReport> {
         bail!("Valid memory was falsely flagged as poisoned!");
     }
     if valid_metric.rejection_rate != 0.0 {
-        bail!("Valid memory rejection rate should be 0.0, got {}", valid_metric.rejection_rate);
+        bail!(
+            "Valid memory rejection rate should be 0.0, got {}",
+            valid_metric.rejection_rate
+        );
     }
 
     let poison_metric = detector.evaluate_memory_efficacy(store, &poisoned_mem.id)?;
@@ -99,19 +92,28 @@ pub async fn run_context_rot_scenario() -> Result<ContextRotEvalReport> {
         bail!("Poisoned memory was NOT detected as poisoned!");
     }
     if poison_metric.rejection_rate <= 0.60 {
-        bail!("Poisoned memory rejection rate should be > 0.60, got {}", poison_metric.rejection_rate);
+        bail!(
+            "Poisoned memory rejection rate should be > 0.60, got {}",
+            poison_metric.rejection_rate
+        );
     }
 
     // Detect poisoned memories
     let poisoned_list = detector.detect_poisoned_memories(store)?;
     if poisoned_list.len() != 1 || poisoned_list[0].memory_id != poisoned_mem.id {
-        bail!("Expected exactly 1 poisoned memory (poisoned_mem), found: {:?}", poisoned_list);
+        bail!(
+            "Expected exactly 1 poisoned memory (poisoned_mem), found: {:?}",
+            poisoned_list
+        );
     }
 
     // 5. Apply automatic penalty decay and quarantine
     let decayed_count = detector.apply_penalty_decay(store)?;
     if decayed_count != 1 {
-        bail!("Expected 1 memory to be decayed and quarantined, got {}", decayed_count);
+        bail!(
+            "Expected 1 memory to be decayed and quarantined, got {}",
+            decayed_count
+        );
     }
 
     let is_poisoned_quarantined = store.is_memory_quarantined(&poisoned_mem.id)?;
@@ -153,7 +155,10 @@ pub async fn run_context_rot_scenario() -> Result<ContextRotEvalReport> {
         bail!("filter_suppressed_memories failed to filter out poisoned memory!");
     }
 
-    println!("  ✔ Poisoned memory detected: rejection rate {:.1}% > 60%", poison_metric.rejection_rate * 100.0);
+    println!(
+        "  ✔ Poisoned memory detected: rejection rate {:.1}% > 60%",
+        poison_metric.rejection_rate * 100.0
+    );
     println!("  ✔ Decay penalty applied: importance and confidence penalized, memory quarantined");
     println!("  ✔ Context rot prevented: poisoned memory suppressed from recall and digest");
 
