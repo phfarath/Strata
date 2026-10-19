@@ -23,7 +23,11 @@ pub enum MemoryAction {
     /// Recompute embeddings across memories, semantic facts, and procedural skills using the active provider
     #[command(name = "reindex", alias = "re-embed")]
     Reindex {
-        #[arg(long, default_value_t = 64, help = "Batch size for embedding generation")]
+        #[arg(
+            long,
+            default_value_t = 64,
+            help = "Batch size for embedding generation"
+        )]
         batch_size: usize,
 
         #[arg(
@@ -82,7 +86,9 @@ pub async fn run_memory(args: MemoryArgs, store: Arc<SqliteStore>) -> Result<()>
                             .unwrap_or("Fallback provider active")
                     );
                 } else {
-                    println!("Fallback Mode:      No (Active provider explicitly configured/detected)");
+                    println!(
+                        "Fallback Mode:      No (Active provider explicitly configured/detected)"
+                    );
                 }
 
                 println!("\n📊 Vector Consistency:");
@@ -140,7 +146,9 @@ pub async fn run_memory(args: MemoryArgs, store: Arc<SqliteStore>) -> Result<()>
                     .context("Failed to query vector consistency statistics")?;
 
                 let to_reindex = if force {
-                    stats.total_memories + stats.total_semantic_facts + stats.total_procedural_skills
+                    stats.total_memories
+                        + stats.total_semantic_facts
+                        + stats.total_procedural_skills
                 } else {
                     let active = embedder.model_name();
                     let current_matched: usize = stats
@@ -149,7 +157,9 @@ pub async fn run_memory(args: MemoryArgs, store: Arc<SqliteStore>) -> Result<()>
                         .filter(|mb| mb.model == active)
                         .map(|mb| mb.count)
                         .sum();
-                    (stats.total_memories + stats.total_semantic_facts + stats.total_procedural_skills)
+                    (stats.total_memories
+                        + stats.total_semantic_facts
+                        + stats.total_procedural_skills)
                         .saturating_sub(current_matched)
                 };
 
@@ -178,8 +188,12 @@ pub async fn run_memory(args: MemoryArgs, store: Arc<SqliteStore>) -> Result<()>
                     println!("Records to Reindex: {}", to_reindex);
                     println!("Force Mode:         {}", force);
                     println!("Batch Size:         {}", batch_size);
-                    println!("ℹ️ No database modifications made. Run without --dry-run to execute.");
-                    println!("══════════════════════════════════════════════════════════════════\n");
+                    println!(
+                        "ℹ️ No database modifications made. Run without --dry-run to execute."
+                    );
+                    println!(
+                        "══════════════════════════════════════════════════════════════════\n"
+                    );
                 }
                 return Ok(());
             }

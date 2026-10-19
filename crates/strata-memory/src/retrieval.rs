@@ -7,9 +7,7 @@ use uuid::Uuid;
 
 use crate::call_graph::CallEdge;
 use crate::compiler::{matches_path_glob, PathScopedExt};
-use crate::embedding::{
-    cosine_similarity, is_embedding_compatible_with_query, EmbeddingProvider,
-};
+use crate::embedding::{cosine_similarity, is_embedding_compatible_with_query, EmbeddingProvider};
 use crate::spreading_activation::{
     GraphNode, SpreadingActivationConfig, SpreadingActivationEngine,
 };
@@ -752,24 +750,23 @@ impl HybridRanker {
                     candidate_limit,
                 )?;
                 candidates.retain(|rec| {
-                    let is_suppressed = rec
-                        .metadata
-                        .get("quarantined")
-                        .and_then(|v| v.as_bool())
-                        .unwrap_or(false)
-                        || rec
-                            .metadata
-                            .get("suppressed")
+                    let is_suppressed =
+                        rec.metadata
+                            .get("quarantined")
                             .and_then(|v| v.as_bool())
                             .unwrap_or(false)
-                        || rec
-                            .metadata
-                            .get("status")
-                            .and_then(|v| v.as_str())
-                            .map_or(false, |s| {
-                                s.eq_ignore_ascii_case("quarantined")
-                                    || s.eq_ignore_ascii_case("suppressed")
-                            });
+                            || rec
+                                .metadata
+                                .get("suppressed")
+                                .and_then(|v| v.as_bool())
+                                .unwrap_or(false)
+                            || rec.metadata.get("status").and_then(|v| v.as_str()).map_or(
+                                false,
+                                |s| {
+                                    s.eq_ignore_ascii_case("quarantined")
+                                        || s.eq_ignore_ascii_case("suppressed")
+                                },
+                            );
                     !is_suppressed
                 });
                 if let Some(ref prox) = proximity_engine {
@@ -823,7 +820,14 @@ impl HybridRanker {
         graph_ranked: &[(MemoryRecord, f32)],
         limit: usize,
     ) -> Vec<MemoryRecord> {
-        self.fuse_tri_ranks_with_proximity(fts_ranked, vector_ranked, graph_ranked, None, &[], limit)
+        self.fuse_tri_ranks_with_proximity(
+            fts_ranked,
+            vector_ranked,
+            graph_ranked,
+            None,
+            &[],
+            limit,
+        )
     }
 
     /// Fuse BM25, Vector, and Spreading Activation rankings using Tri-Modal RRF,
@@ -1226,10 +1230,22 @@ mod tests {
         // Build import chain: src/app.rs -> src/auth.rs (hop 1) -> src/crypto.rs (hop 2) -> src/primitives.rs (hop 3)
         // And unconnected: src/billing.rs
         let edges = vec![
-            CallEdge::new("src/app.rs", "<top-level>", "crate::auth", 1, CallType::Import)
-                .with_callee_file("src/auth.rs"),
-            CallEdge::new("src/auth.rs", "<top-level>", "crate::crypto", 2, CallType::Import)
-                .with_callee_file("src/crypto.rs"),
+            CallEdge::new(
+                "src/app.rs",
+                "<top-level>",
+                "crate::auth",
+                1,
+                CallType::Import,
+            )
+            .with_callee_file("src/auth.rs"),
+            CallEdge::new(
+                "src/auth.rs",
+                "<top-level>",
+                "crate::crypto",
+                2,
+                CallType::Import,
+            )
+            .with_callee_file("src/crypto.rs"),
             CallEdge::new(
                 "src/crypto.rs",
                 "<top-level>",
@@ -1283,10 +1299,22 @@ mod tests {
 
         // Persist import graph: src/app.rs -> src/auth.rs (hop 1) -> src/crypto.rs (hop 2)
         let edges = vec![
-            CallEdge::new("src/app.rs", "handle_req", "verify_jwt", 10, CallType::FunctionCall)
-                .with_callee_file("src/auth.rs"),
-            CallEdge::new("src/auth.rs", "verify_jwt", "hmac_sha256", 25, CallType::FunctionCall)
-                .with_callee_file("src/crypto.rs"),
+            CallEdge::new(
+                "src/app.rs",
+                "handle_req",
+                "verify_jwt",
+                10,
+                CallType::FunctionCall,
+            )
+            .with_callee_file("src/auth.rs"),
+            CallEdge::new(
+                "src/auth.rs",
+                "verify_jwt",
+                "hmac_sha256",
+                25,
+                CallType::FunctionCall,
+            )
+            .with_callee_file("src/crypto.rs"),
         ];
         store.save_call_edges(&edges).expect("save call edges");
 
@@ -1359,8 +1387,14 @@ mod tests {
         let edges = vec![
             CallEdge::new("src/main.rs", "main", "init_db", 5, CallType::FunctionCall)
                 .with_callee_file("src/db.rs"),
-            CallEdge::new("src/db.rs", "init_db", "open_pool", 12, CallType::FunctionCall)
-                .with_callee_file("src/pool.rs"),
+            CallEdge::new(
+                "src/db.rs",
+                "init_db",
+                "open_pool",
+                12,
+                CallType::FunctionCall,
+            )
+            .with_callee_file("src/pool.rs"),
         ];
         engine.store().save_call_edges(&edges).unwrap();
 
@@ -1411,4 +1445,3 @@ mod tests {
         assert_eq!(digest.key_pointers[3].id, m_unrelated.id);
     }
 }
-

@@ -65,8 +65,14 @@ pub async fn run_callgraph(
         println!(" Source Files Scanned:        {}", report.files_scanned);
         println!(" AST Symbols Indexed:         {}", report.symbols_indexed);
         println!(" Total Call Edges Detected:   {}", report.call_edges_total);
-        println!(" Cross-File Edges Resolved:   {}", report.cross_file_edges_resolved);
-        println!(" Knowledge Graph Edges (KG):  {}", report.kg_edges_generated);
+        println!(
+            " Cross-File Edges Resolved:   {}",
+            report.cross_file_edges_resolved
+        );
+        println!(
+            " Knowledge Graph Edges (KG):  {}",
+            report.kg_edges_generated
+        );
         println!(" Status:                      ✅ Successfully indexed and persisted to SQLite");
         println!("══════════════════════════════════════════════════════════════════════════");
         return Ok(());

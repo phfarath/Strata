@@ -636,13 +636,15 @@ fn render_swarm_split(f: &mut Frame, app: &App, area: Rect) {
 }
 
 fn render_swarm_tasks(f: &mut Frame, app: &App, area: Rect) {
-    let header_cells = ["Status", "ID", "Título", "Agente", "Deps"].iter().map(|h| {
-        Cell::from(*h).style(
-            Style::default()
-                .fg(Theme::PRIMARY)
-                .add_modifier(Modifier::BOLD),
-        )
-    });
+    let header_cells = ["Status", "ID", "Título", "Agente", "Deps"]
+        .iter()
+        .map(|h| {
+            Cell::from(*h).style(
+                Style::default()
+                    .fg(Theme::PRIMARY)
+                    .add_modifier(Modifier::BOLD),
+            )
+        });
     let header = Row::new(header_cells).height(1).bottom_margin(1);
 
     let visible_rows = area.height.saturating_sub(4) as usize;
@@ -652,60 +654,65 @@ fn render_swarm_tasks(f: &mut Frame, app: &App, area: Rect) {
         0
     };
 
-    let rows = app.tasks.iter().enumerate().skip(start_idx).map(|(idx, t)| {
-        let is_selected = idx == app.selected_task_idx;
-        let row_style = if is_selected {
-            Theme::selected_row_style()
-        } else {
-            Style::default().fg(Theme::TEXT)
-        };
+    let rows = app
+        .tasks
+        .iter()
+        .enumerate()
+        .skip(start_idx)
+        .map(|(idx, t)| {
+            let is_selected = idx == app.selected_task_idx;
+            let row_style = if is_selected {
+                Theme::selected_row_style()
+            } else {
+                Style::default().fg(Theme::TEXT)
+            };
 
-        let (status_tag, status_style) = match t.status {
-            TaskStatus::Pending => ("[PEND]", Style::default().fg(Theme::WARNING)),
-            TaskStatus::Claimed => ("[CLMD]", Style::default().fg(Theme::SECONDARY)),
-            TaskStatus::Running => (
-                "[RUN ]",
-                Style::default()
-                    .fg(Theme::SECONDARY)
-                    .add_modifier(Modifier::BOLD),
-            ),
-            TaskStatus::Blocked => ("[BLCK]", Style::default().fg(Theme::TEXT_MUTED)),
-            TaskStatus::Completed => (
-                "[DONE]",
-                Style::default()
-                    .fg(Theme::SUCCESS)
-                    .add_modifier(Modifier::BOLD),
-            ),
-            TaskStatus::Failed => (
-                "[FAIL]",
-                Style::default()
-                    .fg(Theme::DANGER)
-                    .add_modifier(Modifier::BOLD),
-            ),
-        };
+            let (status_tag, status_style) = match t.status {
+                TaskStatus::Pending => ("[PEND]", Style::default().fg(Theme::WARNING)),
+                TaskStatus::Claimed => ("[CLMD]", Style::default().fg(Theme::SECONDARY)),
+                TaskStatus::Running => (
+                    "[RUN ]",
+                    Style::default()
+                        .fg(Theme::SECONDARY)
+                        .add_modifier(Modifier::BOLD),
+                ),
+                TaskStatus::Blocked => ("[BLCK]", Style::default().fg(Theme::TEXT_MUTED)),
+                TaskStatus::Completed => (
+                    "[DONE]",
+                    Style::default()
+                        .fg(Theme::SUCCESS)
+                        .add_modifier(Modifier::BOLD),
+                ),
+                TaskStatus::Failed => (
+                    "[FAIL]",
+                    Style::default()
+                        .fg(Theme::DANGER)
+                        .add_modifier(Modifier::BOLD),
+                ),
+            };
 
-        let title_short: String = if t.title.chars().count() > 28 {
-            format!("{}…", t.title.chars().take(27).collect::<String>())
-        } else {
-            t.title.clone()
-        };
-        let agent_str = t.assigned_agent.as_deref().unwrap_or("-");
-        let deps_str = if t.dependencies.is_empty() {
-            "-".to_string()
-        } else {
-            t.dependencies.join(",")
-        };
+            let title_short: String = if t.title.chars().count() > 28 {
+                format!("{}…", t.title.chars().take(27).collect::<String>())
+            } else {
+                t.title.clone()
+            };
+            let agent_str = t.assigned_agent.as_deref().unwrap_or("-");
+            let deps_str = if t.dependencies.is_empty() {
+                "-".to_string()
+            } else {
+                t.dependencies.join(",")
+            };
 
-        Row::new(vec![
-            Cell::from(status_tag).style(status_style),
-            Cell::from(t.task_id.as_str()),
-            Cell::from(title_short),
-            Cell::from(agent_str),
-            Cell::from(deps_str),
-        ])
-        .style(row_style)
-        .height(1)
-    });
+            Row::new(vec![
+                Cell::from(status_tag).style(status_style),
+                Cell::from(t.task_id.as_str()),
+                Cell::from(title_short),
+                Cell::from(agent_str),
+                Cell::from(deps_str),
+            ])
+            .style(row_style)
+            .height(1)
+        });
 
     let list_block = Block::default()
         .borders(Borders::ALL)
@@ -762,7 +769,10 @@ fn render_swarm_leases(f: &mut Frame, app: &App, area: Rect) {
         .borders(Borders::ALL)
         .border_style(Theme::border_style())
         .border_type(BorderType::Rounded)
-        .title(format!(" LEASES DE RECURSOS ATIVAS ({}) ", app.leases.len()));
+        .title(format!(
+            " LEASES DE RECURSOS ATIVAS ({}) ",
+            app.leases.len()
+        ));
 
     let table = Table::new(
         rows,
@@ -915,8 +925,12 @@ mod tests {
     #[test]
     fn test_render_overview_and_swarm_tabs() {
         let engine = Arc::new(SqliteMemoryEngine::open_in_memory(None).expect("engine"));
-        let mut app = App::new(engine, PathBuf::from("test.db"), "TestWorkspace".to_string())
-            .expect("app new");
+        let mut app = App::new(
+            engine,
+            PathBuf::from("test.db"),
+            "TestWorkspace".to_string(),
+        )
+        .expect("app new");
 
         // Add dummy data for Swarm
         let mut task = TaskRecord::new("task-42", "Refactor core memory");
@@ -944,7 +958,9 @@ mod tests {
         // Test rendering with small terminal (dimension guard)
         let small_backend = TestBackend::new(50, 10);
         let mut small_terminal = Terminal::new(small_backend).expect("small terminal");
-        small_terminal.draw(|f| render(f, &app)).expect("draw small");
+        small_terminal
+            .draw(|f| render(f, &app))
+            .expect("draw small");
 
         // Test rendering with many tasks (scrolling/sliding window test)
         for i in 0..25 {
@@ -952,7 +968,8 @@ mod tests {
             app.tasks.push(extra_task);
         }
         app.selected_task_idx = 20; // past visible bounds
-        terminal.draw(|f| render(f, &app)).expect("draw scrolled swarm");
+        terminal
+            .draw(|f| render(f, &app))
+            .expect("draw scrolled swarm");
     }
 }
-

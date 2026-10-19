@@ -112,7 +112,8 @@ impl StigmergyCoordinator {
         agent_id: &str,
         lease_ttl_secs: i64,
     ) -> Result<Option<TaskRecord>, StrataError> {
-        self.store.claim_task_atomic(task_id_opt, agent_id, lease_ttl_secs)
+        self.store
+            .claim_task_atomic(task_id_opt, agent_id, lease_ttl_secs)
     }
 
     pub fn claim_task_atomic_typed(
@@ -122,7 +123,8 @@ impl StigmergyCoordinator {
         lease_ttl_secs: i64,
         supported_types: Option<&[&str]>,
     ) -> Result<Option<TaskRecord>, StrataError> {
-        self.store.claim_task_atomic_typed(task_id_opt, agent_id, lease_ttl_secs, supported_types)
+        self.store
+            .claim_task_atomic_typed(task_id_opt, agent_id, lease_ttl_secs, supported_types)
     }
 
     pub fn complete_task(
@@ -132,7 +134,8 @@ impl StigmergyCoordinator {
         summary: Option<&str>,
         artifact: Option<&TaskArtifact>,
     ) -> Result<bool, StrataError> {
-        self.store.complete_task(task_id, agent_id, summary, artifact)
+        self.store
+            .complete_task(task_id, agent_id, summary, artifact)
     }
 
     pub fn complete_task_with_generation(
@@ -143,7 +146,13 @@ impl StigmergyCoordinator {
         artifact: Option<&TaskArtifact>,
         expected_generation: Option<i64>,
     ) -> Result<bool, StrataError> {
-        self.store.complete_task_with_generation(task_id, agent_id, summary, artifact, expected_generation)
+        self.store.complete_task_with_generation(
+            task_id,
+            agent_id,
+            summary,
+            artifact,
+            expected_generation,
+        )
     }
 
     pub fn fail_task(
@@ -162,7 +171,8 @@ impl StigmergyCoordinator {
         error_message: &str,
         expected_generation: Option<i64>,
     ) -> Result<bool, StrataError> {
-        self.store.fail_task_with_generation(task_id, agent_id, error_message, expected_generation)
+        self.store
+            .fail_task_with_generation(task_id, agent_id, error_message, expected_generation)
     }
 
     pub fn update_task_progress(
@@ -181,7 +191,12 @@ impl StigmergyCoordinator {
         message: &str,
         expected_generation: Option<i64>,
     ) -> Result<bool, StrataError> {
-        self.store.update_task_progress_with_generation(task_id, agent_id, message, expected_generation)
+        self.store.update_task_progress_with_generation(
+            task_id,
+            agent_id,
+            message,
+            expected_generation,
+        )
     }
 
     pub fn renew_task_leases(
@@ -190,7 +205,8 @@ impl StigmergyCoordinator {
         agent_id: &str,
         lease_ttl_secs: i64,
     ) -> Result<bool, StrataError> {
-        self.store.renew_task_leases(task_id, agent_id, lease_ttl_secs)
+        self.store
+            .renew_task_leases(task_id, agent_id, lease_ttl_secs)
     }
 
     pub fn renew_task_leases_with_generation(
@@ -200,7 +216,12 @@ impl StigmergyCoordinator {
         lease_ttl_secs: i64,
         expected_generation: Option<i64>,
     ) -> Result<bool, StrataError> {
-        self.store.renew_task_leases_with_generation(task_id, agent_id, lease_ttl_secs, expected_generation)
+        self.store.renew_task_leases_with_generation(
+            task_id,
+            agent_id,
+            lease_ttl_secs,
+            expected_generation,
+        )
     }
 
     pub fn reclaim_stale_tasks(&self, stale_secs: i64) -> Result<Vec<String>, StrataError> {
@@ -221,7 +242,11 @@ impl StigmergyCoordinator {
         self.store.save_a2a_message(msg)
     }
 
-    pub fn get_a2a_inbox(&self, agent_id: &str, unread_only: bool) -> Result<Vec<A2aMessage>, StrataError> {
+    pub fn get_a2a_inbox(
+        &self,
+        agent_id: &str,
+        unread_only: bool,
+    ) -> Result<Vec<A2aMessage>, StrataError> {
         self.store.get_a2a_inbox(agent_id, unread_only)
     }
 
@@ -252,7 +277,10 @@ impl StigmergyCoordinator {
     }
 
     /// Fetches the authority record for an exact domain.
-    pub fn get_domain_authority(&self, domain: &str) -> Result<Option<DomainAuthority>, StrataError> {
+    pub fn get_domain_authority(
+        &self,
+        domain: &str,
+    ) -> Result<Option<DomainAuthority>, StrataError> {
         self.store.get_domain_authority(domain)
     }
 
@@ -262,12 +290,18 @@ impl StigmergyCoordinator {
     }
 
     /// Resolves the best specialist agent for a domain or file path using exact and hierarchical matching.
-    pub fn resolve_domain_authority(&self, domain_or_path: &str) -> Result<Option<DomainAuthority>, StrataError> {
+    pub fn resolve_domain_authority(
+        &self,
+        domain_or_path: &str,
+    ) -> Result<Option<DomainAuthority>, StrataError> {
         self.store.find_best_authority_for_domain(domain_or_path)
     }
 
     /// Alias for `resolve_domain_authority`.
-    pub fn find_best_authority_for_domain(&self, domain_or_path: &str) -> Result<Option<DomainAuthority>, StrataError> {
+    pub fn find_best_authority_for_domain(
+        &self,
+        domain_or_path: &str,
+    ) -> Result<Option<DomainAuthority>, StrataError> {
         self.resolve_domain_authority(domain_or_path)
     }
 }
@@ -432,7 +466,9 @@ mod tests {
             .with_required_resources(vec!["file:src/repo.rs".to_string()])
             .with_status(TaskStatus::Blocked);
 
-        coordinator.create_tasks_batch(&[t1, t2]).expect("batch insert");
+        coordinator
+            .create_tasks_batch(&[t1, t2])
+            .expect("batch insert");
 
         // Agent Claude claims next task: should receive subtask-1 (subtask-2 is blocked by dependency)
         let claimed_1 = coordinator
@@ -443,7 +479,10 @@ mod tests {
         assert_eq!(claimed_1.assigned_agent.as_deref(), Some("agent-claude"));
 
         // Verify resource lease acquired for file:src/schema.rs
-        let lease = coordinator.get_lease("file:src/schema.rs").unwrap().unwrap();
+        let lease = coordinator
+            .get_lease("file:src/schema.rs")
+            .unwrap()
+            .unwrap();
         assert_eq!(lease.agent_id, "agent-claude");
 
         // Agent Cursor attempts to claim next task: should be None because subtask-1 is claimed and subtask-2 is blocked
@@ -461,7 +500,12 @@ mod tests {
             "Created SQLite tables: tasks and messages",
         );
         let completed = coordinator
-            .complete_task("subtask-1", "agent-claude", Some("Schema ready"), Some(&art))
+            .complete_task(
+                "subtask-1",
+                "agent-claude",
+                Some("Schema ready"),
+                Some(&art),
+            )
             .expect("complete task");
         assert!(completed);
 
@@ -488,8 +532,13 @@ mod tests {
         let store = Arc::new(SqliteStore::open_in_memory().expect("in-memory db"));
         let coordinator = StigmergyCoordinator::new(store);
 
-        let msg1 = A2aMessage::direct("m-1", "agent-claude", "agent-cursor", "Can you review my schema?")
-            .with_task_id("subtask-1");
+        let msg1 = A2aMessage::direct(
+            "m-1",
+            "agent-claude",
+            "agent-cursor",
+            "Can you review my schema?",
+        )
+        .with_task_id("subtask-1");
         let msg2 = A2aMessage::broadcast("m-2", "agent-claude", "All tests passing on crate core");
 
         coordinator.save_a2a_message(&msg1).unwrap();
@@ -529,7 +578,8 @@ mod tests {
             .unwrap();
 
         // Healthy: claimed just now.
-        let mut fresh = TaskRecord::new("fresh", "Live agent task").with_status(TaskStatus::Claimed);
+        let mut fresh =
+            TaskRecord::new("fresh", "Live agent task").with_status(TaskStatus::Claimed);
         fresh.assigned_agent = Some("agent-live".to_string());
         coordinator.create_task(&fresh).unwrap();
 
@@ -591,15 +641,22 @@ mod tests {
 
         // Register agent card for claude-specialist
         let card1 = AgentCard::new("claude-specialist", "claude-code")
-            .with_domain_scopes(vec!["crates/strata-memory".into(), "crates/strata-core".into()])
+            .with_domain_scopes(vec![
+                "crates/strata-memory".into(),
+                "crates/strata-core".into(),
+            ])
             .with_confidence(0.95);
-        coordinator.register_agent_card(&card1).expect("register card1");
+        coordinator
+            .register_agent_card(&card1)
+            .expect("register card1");
 
         // Register agent card for cursor-generalist
         let card2 = AgentCard::new("cursor-generalist", "cursor")
             .with_domain_scopes(vec!["crates/strata-cli".into()])
             .with_confidence(0.80);
-        coordinator.register_agent_card(&card2).expect("register card2");
+        coordinator
+            .register_agent_card(&card2)
+            .expect("register card2");
 
         let cards = coordinator.list_agent_cards().expect("list cards");
         assert_eq!(cards.len(), 2);
@@ -663,16 +720,22 @@ mod tests {
         assert_eq!(lease_dot.agent_id, "agent-1");
 
         // Agent 2 sees conflict regardless of whether it queries with "file:" or raw path
-        let conflict_raw = coordinator.check_conflict("src/auth.rs", "agent-2").unwrap();
+        let conflict_raw = coordinator
+            .check_conflict("src/auth.rs", "agent-2")
+            .unwrap();
         assert!(conflict_raw.is_some());
         assert_eq!(conflict_raw.unwrap().agent_id, "agent-1");
 
-        let conflict_canon = coordinator.check_conflict("file:src/auth.rs", "agent-2").unwrap();
+        let conflict_canon = coordinator
+            .check_conflict("file:src/auth.rs", "agent-2")
+            .unwrap();
         assert!(conflict_canon.is_some());
         assert_eq!(conflict_canon.unwrap().agent_id, "agent-1");
 
         // Release via canonical path frees it for both
-        let released = coordinator.release_lease("file:src/auth.rs", "agent-1").unwrap();
+        let released = coordinator
+            .release_lease("file:src/auth.rs", "agent-1")
+            .unwrap();
         assert!(released);
         assert!(coordinator.get_lease("src/auth.rs").unwrap().is_none());
     }
@@ -709,7 +772,12 @@ mod tests {
 
         // Renewal with wrong generation fails
         let bad_gen = coordinator
-            .renew_task_leases_with_generation("task-renew-test", "agent-worker", 60, Some(gen + 99))
+            .renew_task_leases_with_generation(
+                "task-renew-test",
+                "agent-worker",
+                60,
+                Some(gen + 99),
+            )
             .unwrap();
         assert!(!bad_gen, "rejected due to fencing token mismatch");
 
@@ -721,7 +789,13 @@ mod tests {
 
         // Complete task -> subsequent renewal fails because task is completed
         let completed = coordinator
-            .complete_task_with_generation("task-renew-test", "agent-worker", Some("done"), None, Some(gen))
+            .complete_task_with_generation(
+                "task-renew-test",
+                "agent-worker",
+                Some("done"),
+                None,
+                Some(gen),
+            )
             .unwrap();
         assert!(completed);
 
@@ -747,17 +821,18 @@ mod tests {
         coordinator.create_task(&task_desc).unwrap();
 
         // Task 2: prompt task for LLM agent
-        let task_prompt = TaskRecord::new("task-prompt", "Refactor auth module")
-            .with_payload(TaskPayload::AgentPrompt {
+        let task_prompt = TaskRecord::new("task-prompt", "Refactor auth module").with_payload(
+            TaskPayload::AgentPrompt {
                 prompt: "Refactor auth tokens to use asymmetric keys".to_string(),
                 context_files: vec!["crates/strata-core/src/auth.rs".to_string()],
                 expected_artifacts: vec![],
-            });
+            },
+        );
         coordinator.create_task(&task_prompt).unwrap();
 
         // Task 3: shell command task for worker daemon
-        let task_cmd = TaskRecord::new("task-cmd", "Run test suite")
-            .with_payload(TaskPayload::ShellCommand {
+        let task_cmd =
+            TaskRecord::new("task-cmd", "Run test suite").with_payload(TaskPayload::ShellCommand {
                 command: "cargo test -p strata-core".to_string(),
                 cwd: None,
                 timeout_secs: Some(60),
@@ -765,11 +840,17 @@ mod tests {
         coordinator.create_task(&task_cmd).unwrap();
 
         // Verify payload persistence and retrieval
-        let fetched_prompt = coordinator.get_task("task-prompt").unwrap().expect("found prompt task");
+        let fetched_prompt = coordinator
+            .get_task("task-prompt")
+            .unwrap()
+            .expect("found prompt task");
         assert_eq!(fetched_prompt.payload_type(), "agent_prompt");
         assert!(!fetched_prompt.is_executable_by_worker());
 
-        let fetched_cmd = coordinator.get_task("task-cmd").unwrap().expect("found cmd task");
+        let fetched_cmd = coordinator
+            .get_task("task-cmd")
+            .unwrap()
+            .expect("found cmd task");
         assert_eq!(fetched_cmd.payload_type(), "shell_command");
         assert!(fetched_cmd.is_executable_by_worker());
 
@@ -803,4 +884,3 @@ mod tests {
         assert_eq!(untyped_claim.task_id, "task-desc");
     }
 }
-

@@ -134,10 +134,7 @@ impl SqliteStore {
             "ALTER TABLE episodes ADD COLUMN tier INTEGER NOT NULL DEFAULT 1",
             [],
         );
-        let _ = conn.execute(
-            "ALTER TABLE episodes ADD COLUMN parent_id TEXT",
-            [],
-        );
+        let _ = conn.execute("ALTER TABLE episodes ADD COLUMN parent_id TEXT", []);
         let _ = conn.execute(
             "ALTER TABLE episodes ADD COLUMN child_ids_json TEXT NOT NULL DEFAULT '[]'",
             [],
@@ -186,40 +183,124 @@ impl SqliteStore {
             "ALTER TABLE episodes ADD COLUMN git_branch TEXT DEFAULT NULL",
             [],
         );
-        let _ = conn.execute("CREATE INDEX IF NOT EXISTS idx_events_branch ON events(git_branch)", []);
-        let _ = conn.execute("CREATE INDEX IF NOT EXISTS idx_memories_branch ON memories(git_branch)", []);
-        let _ = conn.execute("CREATE INDEX IF NOT EXISTS idx_facts_branch ON semantic_facts(git_branch)", []);
-        let _ = conn.execute("CREATE INDEX IF NOT EXISTS idx_episodic_branch ON episodic_memories(git_branch)", []);
-        let _ = conn.execute("CREATE INDEX IF NOT EXISTS idx_episodes_branch ON episodes(git_branch)", []);
-        let _ = conn.execute("ALTER TABLE tasks ADD COLUMN claim_generation INTEGER NOT NULL DEFAULT 0", []);
-        let _ = conn.execute("ALTER TABLE tasks ADD COLUMN payload_json TEXT DEFAULT NULL", []);
-        let _ = conn.execute("ALTER TABLE memories ADD COLUMN embedding_model TEXT DEFAULT NULL", []);
-        let _ = conn.execute("ALTER TABLE memories ADD COLUMN embedding_version TEXT DEFAULT NULL", []);
-        let _ = conn.execute("ALTER TABLE episodic_memories ADD COLUMN embedding_model TEXT DEFAULT NULL", []);
-        let _ = conn.execute("ALTER TABLE episodic_memories ADD COLUMN embedding_version TEXT DEFAULT NULL", []);
-        let _ = conn.execute("ALTER TABLE semantic_facts ADD COLUMN embedding_model TEXT DEFAULT NULL", []);
-        let _ = conn.execute("ALTER TABLE semantic_facts ADD COLUMN embedding_version TEXT DEFAULT NULL", []);
-        let _ = conn.execute("ALTER TABLE procedural_skills ADD COLUMN embedding_model TEXT DEFAULT NULL", []);
-        let _ = conn.execute("ALTER TABLE procedural_skills ADD COLUMN embedding_version TEXT DEFAULT NULL", []);
-        let _ = conn.execute("CREATE INDEX IF NOT EXISTS idx_memories_embedding_model ON memories(embedding_model)", []);
+        let _ = conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_events_branch ON events(git_branch)",
+            [],
+        );
+        let _ = conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_memories_branch ON memories(git_branch)",
+            [],
+        );
+        let _ = conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_facts_branch ON semantic_facts(git_branch)",
+            [],
+        );
+        let _ = conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_episodic_branch ON episodic_memories(git_branch)",
+            [],
+        );
+        let _ = conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_episodes_branch ON episodes(git_branch)",
+            [],
+        );
+        let _ = conn.execute(
+            "ALTER TABLE tasks ADD COLUMN claim_generation INTEGER NOT NULL DEFAULT 0",
+            [],
+        );
+        let _ = conn.execute(
+            "ALTER TABLE tasks ADD COLUMN payload_json TEXT DEFAULT NULL",
+            [],
+        );
+        let _ = conn.execute(
+            "ALTER TABLE memories ADD COLUMN embedding_model TEXT DEFAULT NULL",
+            [],
+        );
+        let _ = conn.execute(
+            "ALTER TABLE memories ADD COLUMN embedding_version TEXT DEFAULT NULL",
+            [],
+        );
+        let _ = conn.execute(
+            "ALTER TABLE episodic_memories ADD COLUMN embedding_model TEXT DEFAULT NULL",
+            [],
+        );
+        let _ = conn.execute(
+            "ALTER TABLE episodic_memories ADD COLUMN embedding_version TEXT DEFAULT NULL",
+            [],
+        );
+        let _ = conn.execute(
+            "ALTER TABLE semantic_facts ADD COLUMN embedding_model TEXT DEFAULT NULL",
+            [],
+        );
+        let _ = conn.execute(
+            "ALTER TABLE semantic_facts ADD COLUMN embedding_version TEXT DEFAULT NULL",
+            [],
+        );
+        let _ = conn.execute(
+            "ALTER TABLE procedural_skills ADD COLUMN embedding_model TEXT DEFAULT NULL",
+            [],
+        );
+        let _ = conn.execute(
+            "ALTER TABLE procedural_skills ADD COLUMN embedding_version TEXT DEFAULT NULL",
+            [],
+        );
+        let _ = conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_memories_embedding_model ON memories(embedding_model)",
+            [],
+        );
         let _ = conn.execute("CREATE INDEX IF NOT EXISTS idx_facts_embedding_model ON semantic_facts(embedding_model)", []);
         let _ = conn.execute("CREATE INDEX IF NOT EXISTS idx_skills_embedding_model ON procedural_skills(embedding_model)", []);
         let _ = conn.execute("CREATE INDEX IF NOT EXISTS idx_episodic_embedding_model ON episodic_memories(embedding_model)", []);
         let _ = conn.execute("DROP TRIGGER IF EXISTS trg_memories_au", []);
 
         // Human approval audit columns migrations
-        let _ = conn.execute("ALTER TABLE memories ADD COLUMN approved_by TEXT DEFAULT NULL", []);
-        let _ = conn.execute("ALTER TABLE memories ADD COLUMN approved_at TEXT DEFAULT NULL", []);
-        let _ = conn.execute("ALTER TABLE memories ADD COLUMN approval_channel TEXT DEFAULT NULL", []);
-        let _ = conn.execute("ALTER TABLE memories ADD COLUMN approved_content_hash TEXT DEFAULT NULL", []);
-        let _ = conn.execute("ALTER TABLE semantic_facts ADD COLUMN approved_by TEXT DEFAULT NULL", []);
-        let _ = conn.execute("ALTER TABLE semantic_facts ADD COLUMN approved_at TEXT DEFAULT NULL", []);
-        let _ = conn.execute("ALTER TABLE semantic_facts ADD COLUMN approval_channel TEXT DEFAULT NULL", []);
-        let _ = conn.execute("ALTER TABLE semantic_facts ADD COLUMN approved_content_hash TEXT DEFAULT NULL", []);
-        let _ = conn.execute("ALTER TABLE cold_storage_memories ADD COLUMN approved_by TEXT DEFAULT NULL", []);
-        let _ = conn.execute("ALTER TABLE cold_storage_memories ADD COLUMN approved_at TEXT DEFAULT NULL", []);
-        let _ = conn.execute("ALTER TABLE cold_storage_memories ADD COLUMN approval_channel TEXT DEFAULT NULL", []);
-        let _ = conn.execute("ALTER TABLE cold_storage_memories ADD COLUMN approved_content_hash TEXT DEFAULT NULL", []);
+        let _ = conn.execute(
+            "ALTER TABLE memories ADD COLUMN approved_by TEXT DEFAULT NULL",
+            [],
+        );
+        let _ = conn.execute(
+            "ALTER TABLE memories ADD COLUMN approved_at TEXT DEFAULT NULL",
+            [],
+        );
+        let _ = conn.execute(
+            "ALTER TABLE memories ADD COLUMN approval_channel TEXT DEFAULT NULL",
+            [],
+        );
+        let _ = conn.execute(
+            "ALTER TABLE memories ADD COLUMN approved_content_hash TEXT DEFAULT NULL",
+            [],
+        );
+        let _ = conn.execute(
+            "ALTER TABLE semantic_facts ADD COLUMN approved_by TEXT DEFAULT NULL",
+            [],
+        );
+        let _ = conn.execute(
+            "ALTER TABLE semantic_facts ADD COLUMN approved_at TEXT DEFAULT NULL",
+            [],
+        );
+        let _ = conn.execute(
+            "ALTER TABLE semantic_facts ADD COLUMN approval_channel TEXT DEFAULT NULL",
+            [],
+        );
+        let _ = conn.execute(
+            "ALTER TABLE semantic_facts ADD COLUMN approved_content_hash TEXT DEFAULT NULL",
+            [],
+        );
+        let _ = conn.execute(
+            "ALTER TABLE cold_storage_memories ADD COLUMN approved_by TEXT DEFAULT NULL",
+            [],
+        );
+        let _ = conn.execute(
+            "ALTER TABLE cold_storage_memories ADD COLUMN approved_at TEXT DEFAULT NULL",
+            [],
+        );
+        let _ = conn.execute(
+            "ALTER TABLE cold_storage_memories ADD COLUMN approval_channel TEXT DEFAULT NULL",
+            [],
+        );
+        let _ = conn.execute(
+            "ALTER TABLE cold_storage_memories ADD COLUMN approved_content_hash TEXT DEFAULT NULL",
+            [],
+        );
 
         // Idempotently backfill valid_until for legacy deprecated records
         let _ = conn.execute(
@@ -987,10 +1068,7 @@ impl SqliteStore {
             "ALTER TABLE episodes ADD COLUMN tier INTEGER NOT NULL DEFAULT 1",
             [],
         );
-        let _ = conn.execute(
-            "ALTER TABLE episodes ADD COLUMN parent_id TEXT",
-            [],
-        );
+        let _ = conn.execute("ALTER TABLE episodes ADD COLUMN parent_id TEXT", []);
         let _ = conn.execute(
             "ALTER TABLE episodes ADD COLUMN child_ids_json TEXT NOT NULL DEFAULT '[]'",
             [],
@@ -1381,10 +1459,26 @@ impl SqliteStore {
                 )
             } else {
                 (
-                    memory.metadata.get("approved_by").and_then(|v| v.as_str()).map(String::from),
-                    memory.metadata.get("approved_at").and_then(|v| v.as_str()).map(String::from),
-                    memory.metadata.get("approval_channel").and_then(|v| v.as_str()).map(String::from),
-                    memory.metadata.get("approved_content_hash").and_then(|v| v.as_str()).map(String::from),
+                    memory
+                        .metadata
+                        .get("approved_by")
+                        .and_then(|v| v.as_str())
+                        .map(String::from),
+                    memory
+                        .metadata
+                        .get("approved_at")
+                        .and_then(|v| v.as_str())
+                        .map(String::from),
+                    memory
+                        .metadata
+                        .get("approval_channel")
+                        .and_then(|v| v.as_str())
+                        .map(String::from),
+                    memory
+                        .metadata
+                        .get("approved_content_hash")
+                        .and_then(|v| v.as_str())
+                        .map(String::from),
                 )
             };
 
@@ -1506,13 +1600,15 @@ impl SqliteStore {
             .lock()
             .map_err(|_| StrataError::Database("Lock poisoned on SQLite connection".to_string()))?;
 
-        let mut sql = "SELECT id, memory_type, content, summary, scope, tier, approved_by_human, importance,
+        let mut sql =
+            "SELECT id, memory_type, content, summary, scope, tier, approved_by_human, importance,
                               confidence, tags_json, created_at, updated_at, access_count,
                               last_accessed_at, evidence_ids_json, embedding, metadata_json,
                               embedding_model, embedding_version,
                               approved_by, approved_at, approval_channel, approved_content_hash
                        FROM memories
-                       WHERE id = ?1".to_string();
+                       WHERE id = ?1"
+                .to_string();
 
         let mut params_vec: Vec<Box<dyn rusqlite::ToSql>> = vec![Box::new(id.to_string())];
 
@@ -1533,7 +1629,9 @@ impl SqliteStore {
 
         if let Some(b) = as_of_branch {
             if b == "main" || b == "master" {
-                sql.push_str(" AND (git_branch IS NULL OR git_branch = 'main' OR git_branch = 'master')");
+                sql.push_str(
+                    " AND (git_branch IS NULL OR git_branch = 'main' OR git_branch = 'master')",
+                );
             } else if b != "*" && b != "all" {
                 sql.push_str(" AND (git_branch IS NULL OR git_branch = 'main' OR git_branch = 'master' OR git_branch = ?)");
                 params_vec.push(Box::new(b.to_string()));
@@ -1645,7 +1743,9 @@ impl SqliteStore {
 
         if let Some(b) = as_of_branch {
             if b == "main" || b == "master" {
-                query.push_str(" AND (git_branch IS NULL OR git_branch = 'main' OR git_branch = 'master')");
+                query.push_str(
+                    " AND (git_branch IS NULL OR git_branch = 'main' OR git_branch = 'master')",
+                );
             } else if b != "*" && b != "all" {
                 query.push_str(" AND (git_branch IS NULL OR git_branch = 'main' OR git_branch = 'master' OR git_branch = ?)");
                 params_vec.push(Box::new(b.to_string()));
@@ -1744,7 +1844,9 @@ impl SqliteStore {
 
         if let Some(b) = as_of_branch {
             if b == "main" || b == "master" {
-                query.push_str(" AND (git_branch IS NULL OR git_branch = 'main' OR git_branch = 'master')");
+                query.push_str(
+                    " AND (git_branch IS NULL OR git_branch = 'main' OR git_branch = 'master')",
+                );
             } else if b != "*" && b != "all" {
                 query.push_str(" AND (git_branch IS NULL OR git_branch = 'main' OR git_branch = 'master' OR git_branch = ?)");
                 params_vec.push(Box::new(b.to_string()));
@@ -1944,7 +2046,9 @@ impl SqliteStore {
                 .map(|i| format!("?{}", i + 2))
                 .collect();
             let placeholders_str = placeholders.join(",");
-            sql.push_str(&format!(" AND (m.scope IN ({placeholders_str}) OR m.scope = 'global')"));
+            sql.push_str(&format!(
+                " AND (m.scope IN ({placeholders_str}) OR m.scope = 'global')"
+            ));
             for s in non_global_scopes {
                 params_vec.push(Box::new(s));
             }
@@ -2008,7 +2112,9 @@ impl SqliteStore {
 
         if !non_global_scopes.is_empty() {
             let placeholders = vec!["?"; non_global_scopes.len()].join(",");
-            query.push_str(&format!(" AND (scope IN ({placeholders}) OR scope = 'global')"));
+            query.push_str(&format!(
+                " AND (scope IN ({placeholders}) OR scope = 'global')"
+            ));
             for s in non_global_scopes {
                 params_vec.push(Box::new(s));
             }
@@ -2084,7 +2190,11 @@ impl SqliteStore {
             .map_err(|_| StrataError::Database("Lock poisoned on SQLite connection".to_string()))?;
         conn.execute(
             "UPDATE memories SET scope = ?1, updated_at = ?2 WHERE id = ?3",
-            rusqlite::params![new_scope.to_string(), Utc::now().to_rfc3339(), id.to_string()],
+            rusqlite::params![
+                new_scope.to_string(),
+                Utc::now().to_rfc3339(),
+                id.to_string()
+            ],
         )
         .map_err(|e| StrataError::Database(e.to_string()))?;
         Ok(())
@@ -2168,8 +2278,26 @@ impl SqliteStore {
             .transaction()
             .map_err(|e| StrataError::Database(format!("Transaction begin error: {e}")))?;
 
-        let (entity_id_str, _entity_type, content_hash, approved_by, channel, _created_at_str, expires_at_str, used, rationale): (
-            String, String, String, String, String, String, String, i64, Option<String>
+        let (
+            entity_id_str,
+            _entity_type,
+            content_hash,
+            approved_by,
+            channel,
+            _created_at_str,
+            expires_at_str,
+            used,
+            rationale,
+        ): (
+            String,
+            String,
+            String,
+            String,
+            String,
+            String,
+            String,
+            i64,
+            Option<String>,
         ) = {
             let mut stmt = tx
                 .prepare(
@@ -2195,14 +2323,22 @@ impl SqliteStore {
             };
 
             (
-                row.get(0).map_err(|e| StrataError::Database(e.to_string()))?,
-                row.get(1).map_err(|e| StrataError::Database(e.to_string()))?,
-                row.get(2).map_err(|e| StrataError::Database(e.to_string()))?,
-                row.get(3).map_err(|e| StrataError::Database(e.to_string()))?,
-                row.get(4).map_err(|e| StrataError::Database(e.to_string()))?,
-                row.get(5).map_err(|e| StrataError::Database(e.to_string()))?,
-                row.get(6).map_err(|e| StrataError::Database(e.to_string()))?,
-                row.get(7).map_err(|e| StrataError::Database(e.to_string()))?,
+                row.get(0)
+                    .map_err(|e| StrataError::Database(e.to_string()))?,
+                row.get(1)
+                    .map_err(|e| StrataError::Database(e.to_string()))?,
+                row.get(2)
+                    .map_err(|e| StrataError::Database(e.to_string()))?,
+                row.get(3)
+                    .map_err(|e| StrataError::Database(e.to_string()))?,
+                row.get(4)
+                    .map_err(|e| StrataError::Database(e.to_string()))?,
+                row.get(5)
+                    .map_err(|e| StrataError::Database(e.to_string()))?,
+                row.get(6)
+                    .map_err(|e| StrataError::Database(e.to_string()))?,
+                row.get(7)
+                    .map_err(|e| StrataError::Database(e.to_string()))?,
                 row.get(8).ok(),
             )
         };
@@ -2278,10 +2414,19 @@ impl SqliteStore {
 
         if let serde_json::Value::Object(ref mut map) = mem.metadata {
             if let Some(ref r) = approval.rationale {
-                map.insert("promotion_reason".to_string(), serde_json::Value::String(r.clone()));
+                map.insert(
+                    "promotion_reason".to_string(),
+                    serde_json::Value::String(r.clone()),
+                );
             }
-            map.insert("promoted_at".to_string(), serde_json::Value::String(approval.approved_at.to_rfc3339()));
-            map.insert("human_approval".to_string(), serde_json::to_value(&approval).unwrap_or(serde_json::json!({})));
+            map.insert(
+                "promoted_at".to_string(),
+                serde_json::Value::String(approval.approved_at.to_rfc3339()),
+            );
+            map.insert(
+                "human_approval".to_string(),
+                serde_json::to_value(&approval).unwrap_or(serde_json::json!({})),
+            );
         } else {
             mem.metadata = serde_json::json!({
                 "promotion_reason": approval.rationale,
@@ -3191,7 +3336,9 @@ impl SqliteStore {
 
         if let Some(b) = as_of_branch {
             if b == "main" || b == "master" {
-                sql.push_str(" AND (git_branch IS NULL OR git_branch = 'main' OR git_branch = 'master')");
+                sql.push_str(
+                    " AND (git_branch IS NULL OR git_branch = 'main' OR git_branch = 'master')",
+                );
             } else if b != "*" && b != "all" {
                 sql.push_str(" AND (git_branch IS NULL OR git_branch = 'main' OR git_branch = 'master' OR git_branch = ?)");
                 params_vec.push(Box::new(b.to_string()));
@@ -3250,7 +3397,8 @@ impl SqliteStore {
             FROM episodic_memories_fts f
             JOIN episodic_memories m ON m.id = f.id
             WHERE episodic_memories_fts MATCH ?1
-        ".to_string();
+        "
+        .to_string();
 
         let mut params_vec: Vec<Box<dyn rusqlite::ToSql>> = Vec::new();
         params_vec.push(Box::new(sanitized));
@@ -3372,9 +3520,11 @@ impl SqliteStore {
                 (None, None, None, None)
             };
 
-        let tx = conn
-            .transaction()
-            .map_err(|e| StrataError::Database(format!("Failed to begin transaction for semantic fact: {e}")))?;
+        let tx = conn.transaction().map_err(|e| {
+            StrataError::Database(format!(
+                "Failed to begin transaction for semantic fact: {e}"
+            ))
+        })?;
 
         tx.execute(
             "INSERT INTO semantic_facts (
@@ -3445,7 +3595,9 @@ impl SqliteStore {
             "DELETE FROM fact_dependencies WHERE dependent_fact_id = ?1",
             params![id_str],
         )
-        .map_err(|e| StrataError::Database(format!("Failed to clear existing fact dependencies: {e}")))?;
+        .map_err(|e| {
+            StrataError::Database(format!("Failed to clear existing fact dependencies: {e}"))
+        })?;
 
         for prereq_id in &fact.depends_on {
             let dep_id = format!("{}_{}", fact.id, prereq_id);
@@ -3458,8 +3610,9 @@ impl SqliteStore {
             .map_err(|e| StrataError::Database(format!("Failed to insert fact dependency: {e}")))?;
         }
 
-        tx.commit()
-            .map_err(|e| StrataError::Database(format!("Failed to commit semantic fact transaction: {e}")))?;
+        tx.commit().map_err(|e| {
+            StrataError::Database(format!("Failed to commit semantic fact transaction: {e}"))
+        })?;
 
         Ok(())
     }
@@ -3504,7 +3657,9 @@ impl SqliteStore {
 
         if let Some(b) = as_of_branch {
             if b == "main" || b == "master" {
-                sql.push_str(" AND (git_branch IS NULL OR git_branch = 'main' OR git_branch = 'master')");
+                sql.push_str(
+                    " AND (git_branch IS NULL OR git_branch = 'main' OR git_branch = 'master')",
+                );
             } else if b != "*" && b != "all" {
                 sql.push_str(" AND (git_branch IS NULL OR git_branch = 'main' OR git_branch = 'master' OR git_branch = ?)");
                 params_vec.push(Box::new(b.to_string()));
@@ -3636,7 +3791,9 @@ impl SqliteStore {
 
         if let Some(b) = as_of_branch {
             if b == "main" || b == "master" {
-                sql.push_str(" AND (git_branch IS NULL OR git_branch = 'main' OR git_branch = 'master')");
+                sql.push_str(
+                    " AND (git_branch IS NULL OR git_branch = 'main' OR git_branch = 'master')",
+                );
             } else if b != "*" && b != "all" {
                 sql.push_str(" AND (git_branch IS NULL OR git_branch = 'main' OR git_branch = 'master' OR git_branch = ?)");
                 params_vec.push(Box::new(b.to_string()));
@@ -4561,38 +4718,56 @@ impl SqliteStore {
         let human_approval: Option<HumanApprovalRecord> = match (
             row.get::<_, Option<String>>("approved_by").ok().flatten(),
             row.get::<_, Option<String>>("approved_at").ok().flatten(),
-            row.get::<_, Option<String>>("approval_channel").ok().flatten(),
-            row.get::<_, Option<String>>("approved_content_hash").ok().flatten(),
+            row.get::<_, Option<String>>("approval_channel")
+                .ok()
+                .flatten(),
+            row.get::<_, Option<String>>("approved_content_hash")
+                .ok()
+                .flatten(),
         ) {
-            (Some(by), Some(at_str), Some(ch), Some(hash)) => {
-                DateTime::parse_from_rfc3339(&at_str)
-                    .ok()
-                    .map(|dt| HumanApprovalRecord {
-                        approved_by: by,
-                        approved_at: dt.with_timezone(&Utc),
-                        channel: ch,
-                        content_hash: hash,
-                        rationale: metadata.get("promotion_reason").and_then(|v| v.as_str()).map(String::from),
-                    })
-            }
+            (Some(by), Some(at_str), Some(ch), Some(hash)) => DateTime::parse_from_rfc3339(&at_str)
+                .ok()
+                .map(|dt| HumanApprovalRecord {
+                    approved_by: by,
+                    approved_at: dt.with_timezone(&Utc),
+                    channel: ch,
+                    content_hash: hash,
+                    rationale: metadata
+                        .get("promotion_reason")
+                        .and_then(|v| v.as_str())
+                        .map(String::from),
+                }),
             _ => metadata
                 .get("human_approval")
                 .and_then(|v| serde_json::from_value(v.clone()).ok())
                 .or_else(|| {
                     if approved_by_human {
-                        let by = metadata.get("approved_by").and_then(|v| v.as_str()).unwrap_or("cli_user").to_string();
-                        let ch = metadata.get("approval_channel").and_then(|v| v.as_str()).unwrap_or("cli_direct").to_string();
-                        let at = metadata.get("promoted_at")
+                        let by = metadata
+                            .get("approved_by")
+                            .and_then(|v| v.as_str())
+                            .unwrap_or("cli_user")
+                            .to_string();
+                        let ch = metadata
+                            .get("approval_channel")
+                            .and_then(|v| v.as_str())
+                            .unwrap_or("cli_direct")
+                            .to_string();
+                        let at = metadata
+                            .get("promoted_at")
                             .or_else(|| metadata.get("approved_at"))
                             .and_then(|v| v.as_str())
                             .and_then(|s| DateTime::parse_from_rfc3339(s).ok())
                             .map(|dt| dt.with_timezone(&Utc))
                             .unwrap_or(updated_at);
-                        let hash = metadata.get("approved_content_hash")
+                        let hash = metadata
+                            .get("approved_content_hash")
                             .and_then(|v| v.as_str())
                             .map(String::from)
                             .unwrap_or_else(|| HumanApprovalRecord::compute_content_hash(&content));
-                        let rat = metadata.get("promotion_reason").and_then(|v| v.as_str()).map(String::from);
+                        let rat = metadata
+                            .get("promotion_reason")
+                            .and_then(|v| v.as_str())
+                            .map(String::from);
                         Some(HumanApprovalRecord {
                             approved_by: by,
                             approved_at: at,
@@ -4785,20 +4960,25 @@ impl SqliteStore {
         let human_approval: Option<HumanApprovalRecord> = match (
             row.get::<_, Option<String>>("approved_by").ok().flatten(),
             row.get::<_, Option<String>>("approved_at").ok().flatten(),
-            row.get::<_, Option<String>>("approval_channel").ok().flatten(),
-            row.get::<_, Option<String>>("approved_content_hash").ok().flatten(),
+            row.get::<_, Option<String>>("approval_channel")
+                .ok()
+                .flatten(),
+            row.get::<_, Option<String>>("approved_content_hash")
+                .ok()
+                .flatten(),
         ) {
-            (Some(by), Some(at_str), Some(ch), Some(hash)) => {
-                DateTime::parse_from_rfc3339(&at_str)
-                    .ok()
-                    .map(|dt| HumanApprovalRecord {
-                        approved_by: by,
-                        approved_at: dt.with_timezone(&Utc),
-                        channel: ch,
-                        content_hash: hash,
-                        rationale: tags.iter().find(|t| t.starts_with("reason:")).map(|t| t[7..].to_string()),
-                    })
-            }
+            (Some(by), Some(at_str), Some(ch), Some(hash)) => DateTime::parse_from_rfc3339(&at_str)
+                .ok()
+                .map(|dt| HumanApprovalRecord {
+                    approved_by: by,
+                    approved_at: dt.with_timezone(&Utc),
+                    channel: ch,
+                    content_hash: hash,
+                    rationale: tags
+                        .iter()
+                        .find(|t| t.starts_with("reason:"))
+                        .map(|t| t[7..].to_string()),
+                }),
             _ => {
                 if approved_by_human {
                     Some(HumanApprovalRecord {
@@ -4806,7 +4986,10 @@ impl SqliteStore {
                         approved_at: last_updated_at,
                         channel: "cli_direct".to_string(),
                         content_hash: HumanApprovalRecord::compute_content_hash(&statement),
-                        rationale: tags.iter().find(|t| t.starts_with("reason:")).map(|t| t[7..].to_string()),
+                        rationale: tags
+                            .iter()
+                            .find(|t| t.starts_with("reason:"))
+                            .map(|t| t[7..].to_string()),
                     })
                 } else {
                     None
@@ -5469,7 +5652,8 @@ impl SqliteStore {
 
             if let Some(syms) = obj.get("symbols").and_then(|v| v.as_array()) {
                 for sym in syms.iter().filter_map(|v| v.as_str()) {
-                    let sym_key = crate::spreading_activation::GraphNode::symbol(sym).canonical_id();
+                    let sym_key =
+                        crate::spreading_activation::GraphNode::symbol(sym).canonical_id();
                     let _ = self.record_edge_feedback(
                         &sym_key,
                         &target_key,
@@ -6545,10 +6729,17 @@ impl SqliteStore {
             .lock()
             .map_err(|_| StrataError::Database("Lock poisoned on SQLite connection".to_string()))?;
 
-        let req_res = serde_json::to_string(&task.required_resources).unwrap_or_else(|_| "[]".to_string());
+        let req_res =
+            serde_json::to_string(&task.required_resources).unwrap_or_else(|_| "[]".to_string());
         let deps = serde_json::to_string(&task.dependencies).unwrap_or_else(|_| "[]".to_string());
-        let outputs = task.outputs.as_ref().map(|o| serde_json::to_string(o).unwrap_or_default());
-        let payload_json = task.payload.as_ref().map(|p| serde_json::to_string(p).unwrap_or_default());
+        let outputs = task
+            .outputs
+            .as_ref()
+            .map(|o| serde_json::to_string(o).unwrap_or_default());
+        let payload_json = task
+            .payload
+            .as_ref()
+            .map(|p| serde_json::to_string(p).unwrap_or_default());
 
         conn.execute(
             "INSERT INTO tasks (
@@ -6603,10 +6794,18 @@ impl SqliteStore {
             .map_err(|e| StrataError::Database(format!("Failed to start transaction: {e}")))?;
 
         for task in tasks {
-            let req_res = serde_json::to_string(&task.required_resources).unwrap_or_else(|_| "[]".to_string());
-            let deps = serde_json::to_string(&task.dependencies).unwrap_or_else(|_| "[]".to_string());
-            let outputs = task.outputs.as_ref().map(|o| serde_json::to_string(o).unwrap_or_default());
-            let payload_json = task.payload.as_ref().map(|p| serde_json::to_string(p).unwrap_or_default());
+            let req_res = serde_json::to_string(&task.required_resources)
+                .unwrap_or_else(|_| "[]".to_string());
+            let deps =
+                serde_json::to_string(&task.dependencies).unwrap_or_else(|_| "[]".to_string());
+            let outputs = task
+                .outputs
+                .as_ref()
+                .map(|o| serde_json::to_string(o).unwrap_or_default());
+            let payload_json = task
+                .payload
+                .as_ref()
+                .map(|p| serde_json::to_string(p).unwrap_or_default());
 
             tx.execute(
                 "INSERT INTO tasks (
@@ -6714,9 +6913,12 @@ impl SqliteStore {
             sql.push_str(&format!(" LIMIT {limit}"));
         }
 
-        let mut stmt = conn.prepare(&sql).map_err(|e| StrataError::Database(e.to_string()))?;
+        let mut stmt = conn
+            .prepare(&sql)
+            .map_err(|e| StrataError::Database(e.to_string()))?;
 
-        let params_slice: Vec<&dyn rusqlite::ToSql> = param_values.iter().map(|b| b.as_ref()).collect();
+        let params_slice: Vec<&dyn rusqlite::ToSql> =
+            param_values.iter().map(|b| b.as_ref()).collect();
         let rows = stmt
             .query_map(&params_slice[..], map_task_row)
             .map_err(|e| StrataError::Database(e.to_string()))?;
@@ -6834,7 +7036,11 @@ impl SqliteStore {
             }
 
             // Check 1: Are all prerequisite dependencies completed?
-            if !candidate.dependencies.iter().all(|dep| completed_ids.contains(dep)) {
+            if !candidate
+                .dependencies
+                .iter()
+                .all(|dep| completed_ids.contains(dep))
+            {
                 continue;
             }
 
@@ -6881,8 +7087,9 @@ impl SqliteStore {
 
             // Atomically update task to claimed and increment claim_generation
             let new_generation = candidate.claim_generation + 1;
-            let rows_updated = tx.execute(
-                "UPDATE tasks
+            let rows_updated = tx
+                .execute(
+                    "UPDATE tasks
                  SET status = 'claimed',
                      assigned_agent = ?1,
                      updated_at = ?2,
@@ -6893,16 +7100,25 @@ impl SqliteStore {
                        OR (status IN ('claimed', 'running') AND assigned_agent = ?1)
                    )
                    AND claim_generation = ?5",
-                params![agent_id, now, new_generation, candidate.task_id, candidate.claim_generation],
-            )
-            .map_err(|e| StrataError::Database(format!("Failed to update task to claimed: {e}")))?;
+                    params![
+                        agent_id,
+                        now,
+                        new_generation,
+                        candidate.task_id,
+                        candidate.claim_generation
+                    ],
+                )
+                .map_err(|e| {
+                    StrataError::Database(format!("Failed to update task to claimed: {e}"))
+                })?;
 
             if rows_updated == 0 {
                 continue;
             }
 
-            tx.commit()
-                .map_err(|e| StrataError::Database(format!("Failed to commit claim transaction: {e}")))?;
+            tx.commit().map_err(|e| {
+                StrataError::Database(format!("Failed to commit claim transaction: {e}"))
+            })?;
 
             let mut claimed_task = candidate;
             claimed_task.status = TaskStatus::Claimed;
@@ -6958,12 +7174,11 @@ impl SqliteStore {
             let mut stmt = tx
                 .prepare("SELECT status, assigned_agent, required_resources_json, claim_generation FROM tasks WHERE task_id = ?1")
                 .map_err(|e| StrataError::Database(e.to_string()))?;
-            stmt
-                .query_row(params![task_id], |row| {
-                    Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?))
-                })
-                .optional()
-                .map_err(|e| StrataError::Database(e.to_string()))?
+            stmt.query_row(params![task_id], |row| {
+                Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?))
+            })
+            .optional()
+            .map_err(|e| StrataError::Database(e.to_string()))?
         };
 
         let (status_str, assigned_agent, res_json, current_gen) = match task_meta {
@@ -6988,20 +7203,24 @@ impl SqliteStore {
             }
         }
 
-        let outputs_val = summary.map(|s| serde_json::json!({ "summary": s, "completed_by": agent_id }));
+        let outputs_val =
+            summary.map(|s| serde_json::json!({ "summary": s, "completed_by": agent_id }));
         let outputs_str = outputs_val.map(|v| serde_json::to_string(&v).unwrap_or_default());
 
-        let rows = tx.execute(
-            "UPDATE tasks
+        let rows = tx
+            .execute(
+                "UPDATE tasks
              SET status = 'completed',
                  outputs_json = COALESCE(?1, outputs_json),
                  updated_at = ?2
              WHERE task_id = ?3
                AND assigned_agent = ?4
                AND status IN ('claimed', 'running')",
-            params![outputs_str, now, task_id, agent_id],
-        )
-        .map_err(|e| StrataError::Database(format!("Failed to update task to completed: {e}")))?;
+                params![outputs_str, now, task_id, agent_id],
+            )
+            .map_err(|e| {
+                StrataError::Database(format!("Failed to update task to completed: {e}"))
+            })?;
 
         if rows == 0 {
             return Ok(false);
@@ -7063,8 +7282,9 @@ impl SqliteStore {
             }
         }
 
-        tx.commit()
-            .map_err(|e| StrataError::Database(format!("Failed to commit completion transaction: {e}")))?;
+        tx.commit().map_err(|e| {
+            StrataError::Database(format!("Failed to commit completion transaction: {e}"))
+        })?;
 
         Ok(true)
     }
@@ -7107,12 +7327,11 @@ impl SqliteStore {
             let mut stmt = tx
                 .prepare("SELECT status, assigned_agent, required_resources_json, claim_generation FROM tasks WHERE task_id = ?1")
                 .map_err(|e| StrataError::Database(e.to_string()))?;
-            stmt
-                .query_row(params![task_id], |row| {
-                    Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?))
-                })
-                .optional()
-                .map_err(|e| StrataError::Database(e.to_string()))?
+            stmt.query_row(params![task_id], |row| {
+                Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?))
+            })
+            .optional()
+            .map_err(|e| StrataError::Database(e.to_string()))?
         };
 
         let (status_str, assigned_agent, res_json, current_gen) = match task_meta {
@@ -7171,8 +7390,9 @@ impl SqliteStore {
             params![agent_id, format!("task:{task_id}%")],
         );
 
-        tx.commit()
-            .map_err(|e| StrataError::Database(format!("Failed to commit fail_task transaction: {e}")))?;
+        tx.commit().map_err(|e| {
+            StrataError::Database(format!("Failed to commit fail_task transaction: {e}"))
+        })?;
 
         Ok(true)
     }
@@ -7207,14 +7427,15 @@ impl SqliteStore {
 
         let task_meta: Option<(String, Option<String>, i64)> = {
             let mut stmt = tx
-                .prepare("SELECT status, assigned_agent, claim_generation FROM tasks WHERE task_id = ?1")
+                .prepare(
+                    "SELECT status, assigned_agent, claim_generation FROM tasks WHERE task_id = ?1",
+                )
                 .map_err(|e| StrataError::Database(e.to_string()))?;
-            stmt
-                .query_row(params![task_id], |row| {
-                    Ok((row.get(0)?, row.get(1)?, row.get(2)?))
-                })
-                .optional()
-                .map_err(|e| StrataError::Database(e.to_string()))?
+            stmt.query_row(params![task_id], |row| {
+                Ok((row.get(0)?, row.get(1)?, row.get(2)?))
+            })
+            .optional()
+            .map_err(|e| StrataError::Database(e.to_string()))?
         };
 
         let (status_str, assigned_agent, current_gen) = match task_meta {
@@ -7256,8 +7477,11 @@ impl SqliteStore {
             )
             .map_err(|e| StrataError::Database(format!("Failed to update task progress: {e}")))?;
 
-        tx.commit()
-            .map_err(|e| StrataError::Database(format!("Failed to commit update_task_progress transaction: {e}")))?;
+        tx.commit().map_err(|e| {
+            StrataError::Database(format!(
+                "Failed to commit update_task_progress transaction: {e}"
+            ))
+        })?;
 
         Ok(rows > 0)
     }
@@ -7307,12 +7531,11 @@ impl SqliteStore {
             let mut stmt = tx
                 .prepare("SELECT status, assigned_agent, required_resources_json, claim_generation FROM tasks WHERE task_id = ?1")
                 .map_err(|e| StrataError::Database(e.to_string()))?;
-            stmt
-                .query_row(params![task_id], |row| {
-                    Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?))
-                })
-                .optional()
-                .map_err(|e| StrataError::Database(e.to_string()))?
+            stmt.query_row(params![task_id], |row| {
+                Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?))
+            })
+            .optional()
+            .map_err(|e| StrataError::Database(e.to_string()))?
         };
 
         let (status_str, assigned_agent, res_json, current_gen) = match task_meta {
@@ -7387,8 +7610,9 @@ impl SqliteStore {
         )
         .map_err(|e| StrataError::Database(format!("Failed to touch task updated_at: {e}")))?;
 
-        tx.commit()
-            .map_err(|e| StrataError::Database(format!("Failed to commit renew transaction: {e}")))?;
+        tx.commit().map_err(|e| {
+            StrataError::Database(format!("Failed to commit renew transaction: {e}"))
+        })?;
 
         Ok(true)
     }
@@ -7429,11 +7653,14 @@ impl SqliteStore {
                 "DELETE FROM resource_leases WHERE metadata = ?1",
                 params![format!("task:{id}")],
             )
-            .map_err(|e| StrataError::Database(format!("Failed to drop leases for task {id}: {e}")))?;
+            .map_err(|e| {
+                StrataError::Database(format!("Failed to drop leases for task {id}: {e}"))
+            })?;
         }
 
-        tx.commit()
-            .map_err(|e| StrataError::Database(format!("Failed to commit reclaim transaction: {e}")))?;
+        tx.commit().map_err(|e| {
+            StrataError::Database(format!("Failed to commit reclaim transaction: {e}"))
+        })?;
 
         Ok(ids)
     }
@@ -7532,7 +7759,11 @@ impl SqliteStore {
     }
 
     /// Fetches inbox messages for an agent (including broadcasts).
-    pub fn get_a2a_inbox(&self, agent_id: &str, unread_only: bool) -> Result<Vec<A2aMessage>, StrataError> {
+    pub fn get_a2a_inbox(
+        &self,
+        agent_id: &str,
+        unread_only: bool,
+    ) -> Result<Vec<A2aMessage>, StrataError> {
         let conn = self
             .conn
             .lock()
@@ -7550,7 +7781,9 @@ impl SqliteStore {
              ORDER BY created_at ASC"
         };
 
-        let mut stmt = conn.prepare(sql).map_err(|e| StrataError::Database(e.to_string()))?;
+        let mut stmt = conn
+            .prepare(sql)
+            .map_err(|e| StrataError::Database(e.to_string()))?;
 
         let rows = stmt
             .query_map(params![agent_id], |row| {
@@ -7681,9 +7914,12 @@ impl SqliteStore {
                 let domains_str: String = row.get(3)?;
                 let tenants_str: String = row.get(5)?;
 
-                let memory_capabilities: Vec<String> = serde_json::from_str(&caps_str).unwrap_or_default();
-                let domain_scopes: Vec<String> = serde_json::from_str(&domains_str).unwrap_or_default();
-                let tenant_scopes: Vec<String> = serde_json::from_str(&tenants_str).unwrap_or_default();
+                let memory_capabilities: Vec<String> =
+                    serde_json::from_str(&caps_str).unwrap_or_default();
+                let domain_scopes: Vec<String> =
+                    serde_json::from_str(&domains_str).unwrap_or_default();
+                let tenant_scopes: Vec<String> =
+                    serde_json::from_str(&tenants_str).unwrap_or_default();
 
                 Ok(AgentCard {
                     agent_id: row.get(0)?,
@@ -7726,9 +7962,12 @@ impl SqliteStore {
                 let domains_str: String = row.get(3)?;
                 let tenants_str: String = row.get(5)?;
 
-                let memory_capabilities: Vec<String> = serde_json::from_str(&caps_str).unwrap_or_default();
-                let domain_scopes: Vec<String> = serde_json::from_str(&domains_str).unwrap_or_default();
-                let tenant_scopes: Vec<String> = serde_json::from_str(&tenants_str).unwrap_or_default();
+                let memory_capabilities: Vec<String> =
+                    serde_json::from_str(&caps_str).unwrap_or_default();
+                let domain_scopes: Vec<String> =
+                    serde_json::from_str(&domains_str).unwrap_or_default();
+                let tenant_scopes: Vec<String> =
+                    serde_json::from_str(&tenants_str).unwrap_or_default();
 
                 Ok(AgentCard {
                     agent_id: row.get(0)?,
@@ -7792,7 +8031,10 @@ impl SqliteStore {
     }
 
     /// Fetches the explicit domain authority record for a domain.
-    pub fn get_domain_authority(&self, domain: &str) -> Result<Option<DomainAuthority>, StrataError> {
+    pub fn get_domain_authority(
+        &self,
+        domain: &str,
+    ) -> Result<Option<DomainAuthority>, StrataError> {
         let conn = self
             .conn
             .lock()
@@ -7940,18 +8182,23 @@ impl SqliteStore {
             .map_err(|_| StrataError::Database("Lock poisoned on SQLite connection".to_string()))?;
 
         let id_str = episode.id.to_string();
-        let event_trace_json = serde_json::to_string(&episode.event_trace)
-            .map_err(|e| StrataError::Serialization(format!("Failed to serialize event trace: {e}")))?;
-        let outcomes_json = serde_json::to_string(&episode.outcomes)
-            .map_err(|e| StrataError::Serialization(format!("Failed to serialize outcomes: {e}")))?;
+        let event_trace_json = serde_json::to_string(&episode.event_trace).map_err(|e| {
+            StrataError::Serialization(format!("Failed to serialize event trace: {e}"))
+        })?;
+        let outcomes_json = serde_json::to_string(&episode.outcomes).map_err(|e| {
+            StrataError::Serialization(format!("Failed to serialize outcomes: {e}"))
+        })?;
         let snapshot_json = episode
             .state_snapshot
             .as_ref()
             .map(serde_json::to_string)
             .transpose()
-            .map_err(|e| StrataError::Serialization(format!("Failed to serialize state snapshot: {e}")))?;
-        let child_ids_json = serde_json::to_string(&episode.child_ids)
-            .map_err(|e| StrataError::Serialization(format!("Failed to serialize child_ids: {e}")))?;
+            .map_err(|e| {
+                StrataError::Serialization(format!("Failed to serialize state snapshot: {e}"))
+            })?;
+        let child_ids_json = serde_json::to_string(&episode.child_ids).map_err(|e| {
+            StrataError::Serialization(format!("Failed to serialize child_ids: {e}"))
+        })?;
 
         conn.execute(
             "INSERT INTO episodes (
@@ -8012,18 +8259,23 @@ impl SqliteStore {
             .map_err(|e| StrataError::Database(format!("Failed to begin transaction: {e}")))?;
 
         let id_str = rollup.id.to_string();
-        let event_trace_json = serde_json::to_string(&rollup.event_trace)
-            .map_err(|e| StrataError::Serialization(format!("Failed to serialize event trace: {e}")))?;
-        let outcomes_json = serde_json::to_string(&rollup.outcomes)
-            .map_err(|e| StrataError::Serialization(format!("Failed to serialize outcomes: {e}")))?;
+        let event_trace_json = serde_json::to_string(&rollup.event_trace).map_err(|e| {
+            StrataError::Serialization(format!("Failed to serialize event trace: {e}"))
+        })?;
+        let outcomes_json = serde_json::to_string(&rollup.outcomes).map_err(|e| {
+            StrataError::Serialization(format!("Failed to serialize outcomes: {e}"))
+        })?;
         let snapshot_json = rollup
             .state_snapshot
             .as_ref()
             .map(serde_json::to_string)
             .transpose()
-            .map_err(|e| StrataError::Serialization(format!("Failed to serialize state snapshot: {e}")))?;
-        let child_ids_json = serde_json::to_string(&rollup.child_ids)
-            .map_err(|e| StrataError::Serialization(format!("Failed to serialize child_ids: {e}")))?;
+            .map_err(|e| {
+                StrataError::Serialization(format!("Failed to serialize state snapshot: {e}"))
+            })?;
+        let child_ids_json = serde_json::to_string(&rollup.child_ids).map_err(|e| {
+            StrataError::Serialization(format!("Failed to serialize child_ids: {e}"))
+        })?;
 
         tx.execute(
             "INSERT INTO episodes (
@@ -8071,7 +8323,11 @@ impl SqliteStore {
             for child_id in &rollup.child_ids {
                 update_stmt
                     .execute(params![id_str, child_id.to_string()])
-                    .map_err(|e| StrataError::Database(format!("Failed to update parent_id for child {child_id}: {e}")))?;
+                    .map_err(|e| {
+                        StrataError::Database(format!(
+                            "Failed to update parent_id for child {child_id}: {e}"
+                        ))
+                    })?;
             }
         }
 
@@ -8141,8 +8397,11 @@ impl SqliteStore {
         query.push_str(" ORDER BY created_at DESC LIMIT ?");
         param_values.push(Box::new(limit as i64));
 
-        let mut stmt = conn.prepare(&query).map_err(|e| StrataError::Database(e.to_string()))?;
-        let rusqlite_params: Vec<&dyn rusqlite::ToSql> = param_values.iter().map(|p| p.as_ref()).collect();
+        let mut stmt = conn
+            .prepare(&query)
+            .map_err(|e| StrataError::Database(e.to_string()))?;
+        let rusqlite_params: Vec<&dyn rusqlite::ToSql> =
+            param_values.iter().map(|p| p.as_ref()).collect();
 
         let rows = stmt
             .query_map(rusqlite_params.as_slice(), Self::row_to_episode)
@@ -8185,8 +8444,11 @@ impl SqliteStore {
         query.push_str(" ORDER BY created_at DESC LIMIT ?");
         param_values.push(Box::new(limit as i64));
 
-        let mut stmt = conn.prepare(&query).map_err(|e| StrataError::Database(e.to_string()))?;
-        let rusqlite_params: Vec<&dyn rusqlite::ToSql> = param_values.iter().map(|p| p.as_ref()).collect();
+        let mut stmt = conn
+            .prepare(&query)
+            .map_err(|e| StrataError::Database(e.to_string()))?;
+        let rusqlite_params: Vec<&dyn rusqlite::ToSql> =
+            param_values.iter().map(|p| p.as_ref()).collect();
 
         let rows = stmt
             .query_map(rusqlite_params.as_slice(), Self::row_to_episode)
@@ -8247,7 +8509,9 @@ impl SqliteStore {
         query.push_str(" ORDER BY created_at DESC LIMIT ?");
         param_values.push(Box::new(limit as i64));
 
-        let mut stmt = conn.prepare(&query).map_err(|e| StrataError::Database(e.to_string()))?;
+        let mut stmt = conn
+            .prepare(&query)
+            .map_err(|e| StrataError::Database(e.to_string()))?;
         let rusqlite_params: Vec<&dyn rusqlite::ToSql> =
             param_values.iter().map(|p| p.as_ref()).collect();
 
@@ -8292,8 +8556,11 @@ impl SqliteStore {
         query.push_str(" ORDER BY created_at ASC LIMIT ?");
         param_values.push(Box::new(limit as i64));
 
-        let mut stmt = conn.prepare(&query).map_err(|e| StrataError::Database(e.to_string()))?;
-        let rusqlite_params: Vec<&dyn rusqlite::ToSql> = param_values.iter().map(|p| p.as_ref()).collect();
+        let mut stmt = conn
+            .prepare(&query)
+            .map_err(|e| StrataError::Database(e.to_string()))?;
+        let rusqlite_params: Vec<&dyn rusqlite::ToSql> =
+            param_values.iter().map(|p| p.as_ref()).collect();
 
         let rows = stmt
             .query_map(rusqlite_params.as_slice(), Self::row_to_episode)
@@ -8392,7 +8659,11 @@ impl SqliteStore {
             }
         }
 
-        list.sort_by(|a, b| b.tier.cmp(&a.tier).then_with(|| a.created_at.cmp(&b.created_at)));
+        list.sort_by(|a, b| {
+            b.tier
+                .cmp(&a.tier)
+                .then_with(|| a.created_at.cmp(&b.created_at))
+        });
 
         Ok(list)
     }
@@ -8400,11 +8671,7 @@ impl SqliteStore {
     fn row_to_episode(row: &rusqlite::Row<'_>) -> rusqlite::Result<EpisodeRecord> {
         let id_str: String = row.get(0)?;
         let id = Uuid::parse_str(&id_str).map_err(|e| {
-            rusqlite::Error::FromSqlConversionFailure(
-                0,
-                rusqlite::types::Type::Text,
-                Box::new(e),
-            )
+            rusqlite::Error::FromSqlConversionFailure(0, rusqlite::types::Type::Text, Box::new(e))
         })?;
         let session_id: String = row.get(1)?;
         let agent_id: String = row.get(2)?;
@@ -8474,7 +8741,8 @@ impl SqliteStore {
                 failed_steps += 1;
                 if let Some(err) = &step.error {
                     if err != "none" && !err.is_empty() {
-                        candidate_anti_patterns.push(format!("Action '{}' failed: {}", step.action, err));
+                        candidate_anti_patterns
+                            .push(format!("Action '{}' failed: {}", step.action, err));
                     }
                 }
             } else {
@@ -8519,12 +8787,14 @@ impl SqliteStore {
 
     /// Consolidates pending episodic traces into semantic facts and procedural failure patterns
     /// using Justification-based Truth Maintenance (JTMS) for non-monotonic contradiction arbitration.
-    pub fn consolidate_episodes(&self, session_id: Option<&str>) -> Result<HippocampalConsolidationResult, StrataError> {
+    pub fn consolidate_episodes(
+        &self,
+        session_id: Option<&str>,
+    ) -> Result<HippocampalConsolidationResult, StrataError> {
         let episodes = {
-            let conn = self
-                .conn
-                .lock()
-                .map_err(|_| StrataError::Database("Lock poisoned on SQLite connection".to_string()))?;
+            let conn = self.conn.lock().map_err(|_| {
+                StrataError::Database("Lock poisoned on SQLite connection".to_string())
+            })?;
 
             let mut query = String::from(
                 "SELECT id, session_id, agent_id, task_id, summary, event_trace_json,
@@ -8539,8 +8809,11 @@ impl SqliteStore {
             }
             query.push_str(" ORDER BY created_at ASC");
 
-            let mut stmt = conn.prepare(&query).map_err(|e| StrataError::Database(e.to_string()))?;
-            let rusqlite_params: Vec<&dyn rusqlite::ToSql> = param_values.iter().map(|p| p.as_ref()).collect();
+            let mut stmt = conn
+                .prepare(&query)
+                .map_err(|e| StrataError::Database(e.to_string()))?;
+            let rusqlite_params: Vec<&dyn rusqlite::ToSql> =
+                param_values.iter().map(|p| p.as_ref()).collect();
             let rows = stmt
                 .query_map(rusqlite_params.as_slice(), Self::row_to_episode)
                 .map_err(|e| StrataError::Database(e.to_string()))?;
@@ -8572,7 +8845,11 @@ impl SqliteStore {
                 let mut fact = SemanticFact::new(statement, "hippocampal_consolidation", scope)
                     .with_importance(ep.salience_score)
                     .with_confidence(0.9)
-                    .with_evidence(vec![EvidenceRef::new("episode", ep.id.to_string(), ep.salience_score)]);
+                    .with_evidence(vec![EvidenceRef::new(
+                        "episode",
+                        ep.id.to_string(),
+                        ep.salience_score,
+                    )]);
 
                 if ep.salience_score >= 0.8 {
                     fact.tier = MemoryTier::Core;
@@ -8582,7 +8859,8 @@ impl SqliteStore {
                 }
 
                 // Check for contradiction against existing facts in the store using JTMS arbitration
-                let existing_facts = self.get_all_semantic_facts(None, Some(FactStatus::Active), 1000)?;
+                let existing_facts =
+                    self.get_all_semantic_facts(None, Some(FactStatus::Active), 1000)?;
                 let jtms = crate::jtms::TruthMaintenanceSystem::with_default_threshold();
 
                 for existing in &existing_facts {
@@ -8592,8 +8870,11 @@ impl SqliteStore {
                     if !existing.scope.is_compatible(&fact.scope) {
                         continue;
                     }
-                    let (is_contradiction, cues) = jtms.detect_lexical_contradiction(&existing.statement, &fact.statement);
-                    if is_contradiction || (!cues.is_empty() && existing.statement != fact.statement) {
+                    let (is_contradiction, cues) =
+                        jtms.detect_lexical_contradiction(&existing.statement, &fact.statement);
+                    if is_contradiction
+                        || (!cues.is_empty() && existing.statement != fact.statement)
+                    {
                         let (resolution, _reason) = jtms.arbitrate_pair(existing, &fact, &cues);
                         match resolution {
                             crate::jtms::ConflictResolution::Supersede => {
@@ -8627,7 +8908,10 @@ impl SqliteStore {
                             sig,
                             format!("Action '{}' failure", step.action),
                             err.clone(),
-                            format!("Avoid repeating failed invocation in action '{}'", step.action),
+                            format!(
+                                "Avoid repeating failed invocation in action '{}'",
+                                step.action
+                            ),
                         );
                         fp.scope = Scope::Project(ep.session_id.clone());
                         fp.severity = FailureSeverity::Medium;
@@ -8642,10 +8926,9 @@ impl SqliteStore {
 
             // Mark episode as consolidated
             {
-                let conn = self
-                    .conn
-                    .lock()
-                    .map_err(|_| StrataError::Database("Lock poisoned on SQLite connection".to_string()))?;
+                let conn = self.conn.lock().map_err(|_| {
+                    StrataError::Database("Lock poisoned on SQLite connection".to_string())
+                })?;
                 let _ = conn.execute(
                     "UPDATE episodes SET consolidated = 1 WHERE id = ?1",
                     params![ep.id.to_string()],
@@ -8668,22 +8951,28 @@ impl SqliteStore {
             .lock()
             .map_err(|_| StrataError::Database("Lock poisoned on SQLite connection".to_string()))?;
 
-        let tx = conn
-            .transaction()
-            .map_err(|e| StrataError::Database(format!("Failed to begin branch merge transaction: {e}")))?;
+        let tx = conn.transaction().map_err(|e| {
+            StrataError::Database(format!("Failed to begin branch merge transaction: {e}"))
+        })?;
 
         let now_str = Utc::now().to_rfc3339();
         let mut report = BranchMergeReport::new(source_branch, target_branch);
 
         // 1. memories
-        let memories_merged = tx.execute(
-            "UPDATE memories
+        let memories_merged = tx
+            .execute(
+                "UPDATE memories
              SET git_branch = ?1,
                  metadata_json = json_set(metadata_json, '$.git_branch', ?1),
                  updated_at = ?2
              WHERE git_branch = ?3",
-            params![target_branch, now_str, source_branch],
-        ).map_err(|e| StrataError::Database(format!("Failed to merge memories for branch '{source_branch}': {e}")))?;
+                params![target_branch, now_str, source_branch],
+            )
+            .map_err(|e| {
+                StrataError::Database(format!(
+                    "Failed to merge memories for branch '{source_branch}': {e}"
+                ))
+            })?;
         report.memories_merged = memories_merged;
 
         // 2. semantic_facts
@@ -8701,30 +8990,48 @@ impl SqliteStore {
         report.semantic_facts_merged = facts_merged;
 
         // 3. events
-        let events_merged = tx.execute(
-            "UPDATE events
+        let events_merged = tx
+            .execute(
+                "UPDATE events
              SET git_branch = ?1
              WHERE git_branch = ?2",
-            params![target_branch, source_branch],
-        ).map_err(|e| StrataError::Database(format!("Failed to merge events for branch '{source_branch}': {e}")))?;
+                params![target_branch, source_branch],
+            )
+            .map_err(|e| {
+                StrataError::Database(format!(
+                    "Failed to merge events for branch '{source_branch}': {e}"
+                ))
+            })?;
         report.events_merged = events_merged;
 
         // 4. episodic_memories
-        let episodic_merged = tx.execute(
-            "UPDATE episodic_memories
+        let episodic_merged = tx
+            .execute(
+                "UPDATE episodic_memories
              SET git_branch = ?1
              WHERE git_branch = ?2",
-            params![target_branch, source_branch],
-        ).map_err(|e| StrataError::Database(format!("Failed to merge episodic memories for branch '{source_branch}': {e}")))?;
+                params![target_branch, source_branch],
+            )
+            .map_err(|e| {
+                StrataError::Database(format!(
+                    "Failed to merge episodic memories for branch '{source_branch}': {e}"
+                ))
+            })?;
         report.episodic_memories_merged = episodic_merged;
 
         // 5. episodes
-        let episodes_merged = tx.execute(
-            "UPDATE episodes
+        let episodes_merged = tx
+            .execute(
+                "UPDATE episodes
              SET git_branch = ?1
              WHERE git_branch = ?2",
-            params![target_branch, source_branch],
-        ).map_err(|e| StrataError::Database(format!("Failed to merge episodes for branch '{source_branch}': {e}")))?;
+                params![target_branch, source_branch],
+            )
+            .map_err(|e| {
+                StrataError::Database(format!(
+                    "Failed to merge episodes for branch '{source_branch}': {e}"
+                ))
+            })?;
         report.episodes_merged = episodes_merged;
 
         tx.commit().map_err(|e| {
@@ -8745,7 +9052,10 @@ impl SqliteStore {
     // Procedural Self-Editing & Rule Versioning
     // ==========================================
 
-    pub fn insert_or_update_procedural_rule(&self, rule: &ProceduralRule) -> Result<(), StrataError> {
+    pub fn insert_or_update_procedural_rule(
+        &self,
+        rule: &ProceduralRule,
+    ) -> Result<(), StrataError> {
         let conn = self
             .conn
             .lock()
@@ -8774,7 +9084,9 @@ impl SqliteStore {
                 updated_at_str,
             ],
         )
-        .map_err(|e| StrataError::Database(format!("Failed to insert or update procedural rule: {e}")))?;
+        .map_err(|e| {
+            StrataError::Database(format!("Failed to insert or update procedural rule: {e}"))
+        })?;
 
         // Persist all associated versions
         for ver in &rule.versions {
@@ -8806,7 +9118,11 @@ impl SqliteStore {
                     ver_created_at,
                 ],
             )
-            .map_err(|e| StrataError::Database(format!("Failed to insert or update procedural rule version: {e}")))?;
+            .map_err(|e| {
+                StrataError::Database(format!(
+                    "Failed to insert or update procedural rule version: {e}"
+                ))
+            })?;
         }
 
         Ok(())
@@ -8850,7 +9166,9 @@ impl SqliteStore {
                 ver_created_at,
             ],
         )
-        .map_err(|e| StrataError::Database(format!("Failed to record procedural rule version: {e}")))?;
+        .map_err(|e| {
+            StrataError::Database(format!("Failed to record procedural rule version: {e}"))
+        })?;
 
         let now_str = Utc::now().to_rfc3339();
         conn.execute(
@@ -8859,12 +9177,17 @@ impl SqliteStore {
              WHERE id = ?4 AND current_version < ?1",
             params![version.version, version.content, now_str, rule_id],
         )
-        .map_err(|e| StrataError::Database(format!("Failed to update rule current version: {e}")))?;
+        .map_err(|e| {
+            StrataError::Database(format!("Failed to update rule current version: {e}"))
+        })?;
 
         Ok(())
     }
 
-    pub fn get_procedural_rule_versions(&self, rule_id: &str) -> Result<Vec<ProceduralRuleVersion>, StrataError> {
+    pub fn get_procedural_rule_versions(
+        &self,
+        rule_id: &str,
+    ) -> Result<Vec<ProceduralRuleVersion>, StrataError> {
         let conn = self
             .conn
             .lock()
@@ -8940,13 +9263,28 @@ impl SqliteStore {
                 let current_content: String = row.get(4)?;
                 let created_at: String = row.get(5)?;
                 let updated_at: String = row.get(6)?;
-                Ok((id, name, category, current_version, current_content, created_at, updated_at))
+                Ok((
+                    id,
+                    name,
+                    category,
+                    current_version,
+                    current_content,
+                    created_at,
+                    updated_at,
+                ))
             })
             .map_err(|e| StrataError::Database(format!("Failed to query procedural rule: {e}")))?;
 
         if let Some(r) = rows.next() {
-            let (id, name, category, current_version, current_content, created_at_str, updated_at_str) =
-                r.map_err(|e| StrataError::Database(e.to_string()))?;
+            let (
+                id,
+                name,
+                category,
+                current_version,
+                current_content,
+                created_at_str,
+                updated_at_str,
+            ) = r.map_err(|e| StrataError::Database(e.to_string()))?;
 
             let created_at = DateTime::parse_from_rfc3339(&created_at_str)
                 .map(|dt| dt.with_timezone(&Utc))
@@ -8970,12 +9308,14 @@ impl SqliteStore {
         }
     }
 
-    pub fn get_procedural_rule_by_name(&self, name: &str) -> Result<Option<ProceduralRule>, StrataError> {
+    pub fn get_procedural_rule_by_name(
+        &self,
+        name: &str,
+    ) -> Result<Option<ProceduralRule>, StrataError> {
         let rule_id: Option<String> = {
-            let conn = self
-                .conn
-                .lock()
-                .map_err(|_| StrataError::Database("Lock poisoned on SQLite connection".to_string()))?;
+            let conn = self.conn.lock().map_err(|_| {
+                StrataError::Database("Lock poisoned on SQLite connection".to_string())
+            })?;
 
             let mut stmt = conn
                 .prepare("SELECT id FROM procedural_rules WHERE name = ?1 LIMIT 1")
@@ -8998,16 +9338,20 @@ impl SqliteStore {
         }
     }
 
-    pub fn list_procedural_rules(&self, category: Option<&str>) -> Result<Vec<ProceduralRule>, StrataError> {
+    pub fn list_procedural_rules(
+        &self,
+        category: Option<&str>,
+    ) -> Result<Vec<ProceduralRule>, StrataError> {
         let rule_ids: Vec<String> = {
-            let conn = self
-                .conn
-                .lock()
-                .map_err(|_| StrataError::Database("Lock poisoned on SQLite connection".to_string()))?;
+            let conn = self.conn.lock().map_err(|_| {
+                StrataError::Database("Lock poisoned on SQLite connection".to_string())
+            })?;
 
             if let Some(cat) = category {
                 let mut stmt = conn
-                    .prepare("SELECT id FROM procedural_rules WHERE category = ?1 ORDER BY name ASC")
+                    .prepare(
+                        "SELECT id FROM procedural_rules WHERE category = ?1 ORDER BY name ASC",
+                    )
                     .map_err(|e| StrataError::Database(format!("Failed to prepare query: {e}")))?;
                 let rows = stmt
                     .query_map(params![cat], |row| row.get::<_, String>(0))
@@ -9047,10 +9391,9 @@ impl SqliteStore {
         target_version: u32,
     ) -> Result<Option<ProceduralRule>, StrataError> {
         let target_content: Option<String> = {
-            let conn = self
-                .conn
-                .lock()
-                .map_err(|_| StrataError::Database("Lock poisoned on SQLite connection".to_string()))?;
+            let conn = self.conn.lock().map_err(|_| {
+                StrataError::Database("Lock poisoned on SQLite connection".to_string())
+            })?;
 
             let mut stmt = conn
                 .prepare(
@@ -9059,7 +9402,9 @@ impl SqliteStore {
                 .map_err(|e| StrataError::Database(format!("Failed to prepare query: {e}")))?;
 
             let mut rows = stmt
-                .query_map(params![rule_id, target_version], |row| row.get::<_, String>(0))
+                .query_map(params![rule_id, target_version], |row| {
+                    row.get::<_, String>(0)
+                })
                 .map_err(|e| StrataError::Database(format!("Query failed: {e}")))?;
 
             if let Some(r) = rows.next() {
@@ -9075,10 +9420,9 @@ impl SqliteStore {
         };
 
         {
-            let conn = self
-                .conn
-                .lock()
-                .map_err(|_| StrataError::Database("Lock poisoned on SQLite connection".to_string()))?;
+            let conn = self.conn.lock().map_err(|_| {
+                StrataError::Database("Lock poisoned on SQLite connection".to_string())
+            })?;
 
             let now_str = Utc::now().to_rfc3339();
             let rows_updated = conn
@@ -9088,7 +9432,9 @@ impl SqliteStore {
                      WHERE id = ?4",
                     params![target_version, content, now_str, rule_id],
                 )
-                .map_err(|e| StrataError::Database(format!("Failed to rollback procedural rule: {e}")))?;
+                .map_err(|e| {
+                    StrataError::Database(format!("Failed to rollback procedural rule: {e}"))
+                })?;
 
             if rows_updated == 0 {
                 return Ok(None);
@@ -9175,8 +9521,9 @@ impl SqliteStore {
             let (id_str, mem_id_str, session_id, task_id, command, outcome_str, created_str) =
                 row.map_err(|e| StrataError::Database(e.to_string()))?;
 
-            let id = Uuid::parse_str(&id_str)
-                .map_err(|e| StrataError::Validation(format!("Invalid UUID in injection id: {e}")))?;
+            let id = Uuid::parse_str(&id_str).map_err(|e| {
+                StrataError::Validation(format!("Invalid UUID in injection id: {e}"))
+            })?;
             let memory_id = Uuid::parse_str(&mem_id_str)
                 .map_err(|e| StrataError::Validation(format!("Invalid UUID in memory_id: {e}")))?;
             let outcome = outcome_str
@@ -9240,15 +9587,18 @@ impl SqliteStore {
             })
             .map_err(|e| StrataError::Database(e.to_string()))?;
 
-        let mut map: std::collections::HashMap<Uuid, Vec<crate::context_rot::MemoryInjectionRecord>> =
-            std::collections::HashMap::new();
+        let mut map: std::collections::HashMap<
+            Uuid,
+            Vec<crate::context_rot::MemoryInjectionRecord>,
+        > = std::collections::HashMap::new();
 
         for row in rows {
             let (id_str, mem_id_str, session_id, task_id, command, outcome_str, created_str) =
                 row.map_err(|e| StrataError::Database(e.to_string()))?;
 
-            let id = Uuid::parse_str(&id_str)
-                .map_err(|e| StrataError::Validation(format!("Invalid UUID in injection id: {e}")))?;
+            let id = Uuid::parse_str(&id_str).map_err(|e| {
+                StrataError::Validation(format!("Invalid UUID in injection id: {e}"))
+            })?;
             let memory_id = Uuid::parse_str(&mem_id_str)
                 .map_err(|e| StrataError::Validation(format!("Invalid UUID in memory_id: {e}")))?;
             let outcome = outcome_str
@@ -9353,11 +9703,21 @@ impl SqliteStore {
 
         if let Some(meta_str) = row_opt {
             if let Ok(val) = serde_json::from_str::<serde_json::Value>(&meta_str) {
-                if val.get("quarantined").and_then(|v| v.as_bool()).unwrap_or(false)
-                    || val.get("suppressed").and_then(|v| v.as_bool()).unwrap_or(false)
-                    || val.get("status").and_then(|v| v.as_str()).map_or(false, |s| {
-                        s.eq_ignore_ascii_case("quarantined") || s.eq_ignore_ascii_case("suppressed")
-                    })
+                if val
+                    .get("quarantined")
+                    .and_then(|v| v.as_bool())
+                    .unwrap_or(false)
+                    || val
+                        .get("suppressed")
+                        .and_then(|v| v.as_bool())
+                        .unwrap_or(false)
+                    || val
+                        .get("status")
+                        .and_then(|v| v.as_str())
+                        .map_or(false, |s| {
+                            s.eq_ignore_ascii_case("quarantined")
+                                || s.eq_ignore_ascii_case("suppressed")
+                        })
                 {
                     return Ok(true);
                 }
@@ -9378,11 +9738,9 @@ impl SqliteStore {
 
         // 1. Total and embedded counts per table
         let (total_memories, memories_with_embeddings): (i64, i64) = conn
-            .query_row(
-                "SELECT COUNT(*), COUNT(embedding) FROM memories",
-                [],
-                |r| Ok((r.get(0)?, r.get(1)?)),
-            )
+            .query_row("SELECT COUNT(*), COUNT(embedding) FROM memories", [], |r| {
+                Ok((r.get(0)?, r.get(1)?))
+            })
             .map_err(|e| StrataError::Database(e.to_string()))?;
 
         let (total_semantic_facts, facts_with_embeddings): (i64, i64) = conn
@@ -9539,27 +9897,40 @@ impl SqliteStore {
 
         // 1. Reindex memories
         let candidate_memories = {
-            let conn = self
-                .conn
-                .lock()
-                .map_err(|_| StrataError::Database("Lock poisoned on SQLite connection".to_string()))?;
+            let conn = self.conn.lock().map_err(|_| {
+                StrataError::Database("Lock poisoned on SQLite connection".to_string())
+            })?;
             let mut sql = "SELECT id, content, summary FROM memories WHERE 1=1".to_string();
             if !force_all {
-                sql.push_str(" AND (embedding IS NULL OR embedding_model IS NULL OR embedding_model != ?1)");
+                sql.push_str(
+                    " AND (embedding IS NULL OR embedding_model IS NULL OR embedding_model != ?1)",
+                );
             }
             let mut stmt = conn
                 .prepare(&sql)
                 .map_err(|e| StrataError::Database(e.to_string()))?;
             let rows: Vec<(String, String, Option<String>)> = if force_all {
-                stmt.query_map([], |r| Ok((r.get::<_, String>(0)?, r.get::<_, String>(1)?, r.get::<_, Option<String>>(2)?)))
-                    .map_err(|e| StrataError::Database(e.to_string()))?
-                    .collect::<Result<Vec<_>, _>>()
-                    .map_err(|e| StrataError::Database(e.to_string()))?
+                stmt.query_map([], |r| {
+                    Ok((
+                        r.get::<_, String>(0)?,
+                        r.get::<_, String>(1)?,
+                        r.get::<_, Option<String>>(2)?,
+                    ))
+                })
+                .map_err(|e| StrataError::Database(e.to_string()))?
+                .collect::<Result<Vec<_>, _>>()
+                .map_err(|e| StrataError::Database(e.to_string()))?
             } else {
-                stmt.query_map(params![target_model], |r| Ok((r.get::<_, String>(0)?, r.get::<_, String>(1)?, r.get::<_, Option<String>>(2)?)))
-                    .map_err(|e| StrataError::Database(e.to_string()))?
-                    .collect::<Result<Vec<_>, _>>()
-                    .map_err(|e| StrataError::Database(e.to_string()))?
+                stmt.query_map(params![target_model], |r| {
+                    Ok((
+                        r.get::<_, String>(0)?,
+                        r.get::<_, String>(1)?,
+                        r.get::<_, Option<String>>(2)?,
+                    ))
+                })
+                .map_err(|e| StrataError::Database(e.to_string()))?
+                .collect::<Result<Vec<_>, _>>()
+                .map_err(|e| StrataError::Database(e.to_string()))?
             };
             rows
         };
@@ -9577,10 +9948,9 @@ impl SqliteStore {
                 .collect();
             let vectors = embedder.embed_batch(&texts).await?;
             {
-                let mut conn = self
-                    .conn
-                    .lock()
-                    .map_err(|_| StrataError::Database("Lock poisoned on SQLite connection".to_string()))?;
+                let mut conn = self.conn.lock().map_err(|_| {
+                    StrataError::Database("Lock poisoned on SQLite connection".to_string())
+                })?;
                 let tx = conn
                     .transaction_with_behavior(rusqlite::TransactionBehavior::Immediate)
                     .map_err(|e| StrataError::Database(e.to_string()))?;
@@ -9592,19 +9962,21 @@ impl SqliteStore {
                     ).map_err(|e| StrataError::Database(e.to_string()))?;
                     report.memories_reindexed += rows_affected;
                 }
-                tx.commit().map_err(|e| StrataError::Database(e.to_string()))?;
+                tx.commit()
+                    .map_err(|e| StrataError::Database(e.to_string()))?;
             }
         }
 
         // 2. Reindex semantic_facts
         let candidate_facts = {
-            let conn = self
-                .conn
-                .lock()
-                .map_err(|_| StrataError::Database("Lock poisoned on SQLite connection".to_string()))?;
+            let conn = self.conn.lock().map_err(|_| {
+                StrataError::Database("Lock poisoned on SQLite connection".to_string())
+            })?;
             let mut sql = "SELECT id, statement FROM semantic_facts WHERE 1=1".to_string();
             if !force_all {
-                sql.push_str(" AND (embedding IS NULL OR embedding_model IS NULL OR embedding_model != ?1)");
+                sql.push_str(
+                    " AND (embedding IS NULL OR embedding_model IS NULL OR embedding_model != ?1)",
+                );
             }
             let mut stmt = conn
                 .prepare(&sql)
@@ -9615,10 +9987,12 @@ impl SqliteStore {
                     .collect::<Result<Vec<_>, _>>()
                     .map_err(|e| StrataError::Database(e.to_string()))?
             } else {
-                stmt.query_map(params![target_model], |r| Ok((r.get::<_, String>(0)?, r.get::<_, String>(1)?)))
-                    .map_err(|e| StrataError::Database(e.to_string()))?
-                    .collect::<Result<Vec<_>, _>>()
-                    .map_err(|e| StrataError::Database(e.to_string()))?
+                stmt.query_map(params![target_model], |r| {
+                    Ok((r.get::<_, String>(0)?, r.get::<_, String>(1)?))
+                })
+                .map_err(|e| StrataError::Database(e.to_string()))?
+                .collect::<Result<Vec<_>, _>>()
+                .map_err(|e| StrataError::Database(e.to_string()))?
             };
             rows
         };
@@ -9627,10 +10001,9 @@ impl SqliteStore {
             let texts: Vec<String> = chunk.iter().map(|(_, stmt)| stmt.clone()).collect();
             let vectors = embedder.embed_batch(&texts).await?;
             {
-                let mut conn = self
-                    .conn
-                    .lock()
-                    .map_err(|_| StrataError::Database("Lock poisoned on SQLite connection".to_string()))?;
+                let mut conn = self.conn.lock().map_err(|_| {
+                    StrataError::Database("Lock poisoned on SQLite connection".to_string())
+                })?;
                 let tx = conn
                     .transaction_with_behavior(rusqlite::TransactionBehavior::Immediate)
                     .map_err(|e| StrataError::Database(e.to_string()))?;
@@ -9642,45 +10015,62 @@ impl SqliteStore {
                     ).map_err(|e| StrataError::Database(e.to_string()))?;
                     report.facts_reindexed += rows_affected;
                 }
-                tx.commit().map_err(|e| StrataError::Database(e.to_string()))?;
+                tx.commit()
+                    .map_err(|e| StrataError::Database(e.to_string()))?;
             }
         }
 
         // 3. Reindex procedural_skills
         let candidate_skills = {
-            let conn = self
-                .conn
-                .lock()
-                .map_err(|_| StrataError::Database("Lock poisoned on SQLite connection".to_string()))?;
-            let mut sql = "SELECT id, name, description FROM procedural_skills WHERE 1=1".to_string();
+            let conn = self.conn.lock().map_err(|_| {
+                StrataError::Database("Lock poisoned on SQLite connection".to_string())
+            })?;
+            let mut sql =
+                "SELECT id, name, description FROM procedural_skills WHERE 1=1".to_string();
             if !force_all {
-                sql.push_str(" AND (embedding IS NULL OR embedding_model IS NULL OR embedding_model != ?1)");
+                sql.push_str(
+                    " AND (embedding IS NULL OR embedding_model IS NULL OR embedding_model != ?1)",
+                );
             }
             let mut stmt = conn
                 .prepare(&sql)
                 .map_err(|e| StrataError::Database(e.to_string()))?;
             let rows: Vec<(String, String, String)> = if force_all {
-                stmt.query_map([], |r| Ok((r.get::<_, String>(0)?, r.get::<_, String>(1)?, r.get::<_, String>(2)?)))
-                    .map_err(|e| StrataError::Database(e.to_string()))?
-                    .collect::<Result<Vec<_>, _>>()
-                    .map_err(|e| StrataError::Database(e.to_string()))?
+                stmt.query_map([], |r| {
+                    Ok((
+                        r.get::<_, String>(0)?,
+                        r.get::<_, String>(1)?,
+                        r.get::<_, String>(2)?,
+                    ))
+                })
+                .map_err(|e| StrataError::Database(e.to_string()))?
+                .collect::<Result<Vec<_>, _>>()
+                .map_err(|e| StrataError::Database(e.to_string()))?
             } else {
-                stmt.query_map(params![target_model], |r| Ok((r.get::<_, String>(0)?, r.get::<_, String>(1)?, r.get::<_, String>(2)?)))
-                    .map_err(|e| StrataError::Database(e.to_string()))?
-                    .collect::<Result<Vec<_>, _>>()
-                    .map_err(|e| StrataError::Database(e.to_string()))?
+                stmt.query_map(params![target_model], |r| {
+                    Ok((
+                        r.get::<_, String>(0)?,
+                        r.get::<_, String>(1)?,
+                        r.get::<_, String>(2)?,
+                    ))
+                })
+                .map_err(|e| StrataError::Database(e.to_string()))?
+                .collect::<Result<Vec<_>, _>>()
+                .map_err(|e| StrataError::Database(e.to_string()))?
             };
             rows
         };
 
         for chunk in candidate_skills.chunks(bsize) {
-            let texts: Vec<String> = chunk.iter().map(|(_, name, desc)| format!("{name}: {desc}")).collect();
+            let texts: Vec<String> = chunk
+                .iter()
+                .map(|(_, name, desc)| format!("{name}: {desc}"))
+                .collect();
             let vectors = embedder.embed_batch(&texts).await?;
             {
-                let mut conn = self
-                    .conn
-                    .lock()
-                    .map_err(|_| StrataError::Database("Lock poisoned on SQLite connection".to_string()))?;
+                let mut conn = self.conn.lock().map_err(|_| {
+                    StrataError::Database("Lock poisoned on SQLite connection".to_string())
+                })?;
                 let tx = conn
                     .transaction_with_behavior(rusqlite::TransactionBehavior::Immediate)
                     .map_err(|e| StrataError::Database(e.to_string()))?;
@@ -9692,19 +10082,21 @@ impl SqliteStore {
                     ).map_err(|e| StrataError::Database(e.to_string()))?;
                     report.skills_reindexed += rows_affected;
                 }
-                tx.commit().map_err(|e| StrataError::Database(e.to_string()))?;
+                tx.commit()
+                    .map_err(|e| StrataError::Database(e.to_string()))?;
             }
         }
 
         // 4. Reindex episodic_memories
         let candidate_episodes = {
-            let conn = self
-                .conn
-                .lock()
-                .map_err(|_| StrataError::Database("Lock poisoned on SQLite connection".to_string()))?;
+            let conn = self.conn.lock().map_err(|_| {
+                StrataError::Database("Lock poisoned on SQLite connection".to_string())
+            })?;
             let mut sql = "SELECT id, summary FROM episodic_memories WHERE 1=1".to_string();
             if !force_all {
-                sql.push_str(" AND (embedding IS NULL OR embedding_model IS NULL OR embedding_model != ?1)");
+                sql.push_str(
+                    " AND (embedding IS NULL OR embedding_model IS NULL OR embedding_model != ?1)",
+                );
             }
             let mut stmt = conn
                 .prepare(&sql)
@@ -9715,10 +10107,12 @@ impl SqliteStore {
                     .collect::<Result<Vec<_>, _>>()
                     .map_err(|e| StrataError::Database(e.to_string()))?
             } else {
-                stmt.query_map(params![target_model], |r| Ok((r.get::<_, String>(0)?, r.get::<_, String>(1)?)))
-                    .map_err(|e| StrataError::Database(e.to_string()))?
-                    .collect::<Result<Vec<_>, _>>()
-                    .map_err(|e| StrataError::Database(e.to_string()))?
+                stmt.query_map(params![target_model], |r| {
+                    Ok((r.get::<_, String>(0)?, r.get::<_, String>(1)?))
+                })
+                .map_err(|e| StrataError::Database(e.to_string()))?
+                .collect::<Result<Vec<_>, _>>()
+                .map_err(|e| StrataError::Database(e.to_string()))?
             };
             rows
         };
@@ -9727,10 +10121,9 @@ impl SqliteStore {
             let texts: Vec<String> = chunk.iter().map(|(_, summary)| summary.clone()).collect();
             let vectors = embedder.embed_batch(&texts).await?;
             {
-                let mut conn = self
-                    .conn
-                    .lock()
-                    .map_err(|_| StrataError::Database("Lock poisoned on SQLite connection".to_string()))?;
+                let mut conn = self.conn.lock().map_err(|_| {
+                    StrataError::Database("Lock poisoned on SQLite connection".to_string())
+                })?;
                 let tx = conn
                     .transaction_with_behavior(rusqlite::TransactionBehavior::Immediate)
                     .map_err(|e| StrataError::Database(e.to_string()))?;
@@ -9742,11 +10135,15 @@ impl SqliteStore {
                     ).map_err(|e| StrataError::Database(e.to_string()))?;
                     report.episodes_reindexed += rows_affected;
                 }
-                tx.commit().map_err(|e| StrataError::Database(e.to_string()))?;
+                tx.commit()
+                    .map_err(|e| StrataError::Database(e.to_string()))?;
             }
         }
 
-        report.total_reindexed = report.memories_reindexed + report.facts_reindexed + report.skills_reindexed + report.episodes_reindexed;
+        report.total_reindexed = report.memories_reindexed
+            + report.facts_reindexed
+            + report.skills_reindexed
+            + report.episodes_reindexed;
         report.duration_ms = start.elapsed().as_secs_f64() * 1000.0;
         Ok(report)
     }
@@ -9811,10 +10208,13 @@ fn map_task_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<TaskRecord> {
     let claim_generation: i64 = row.get(12).unwrap_or(0);
     let payload_str: Option<String> = row.get(13).ok();
 
-    let status = status_str.parse::<TaskStatus>().unwrap_or(TaskStatus::Pending);
+    let status = status_str
+        .parse::<TaskStatus>()
+        .unwrap_or(TaskStatus::Pending);
     let required_resources: Vec<String> = serde_json::from_str(&req_res_str).unwrap_or_default();
     let dependencies: Vec<String> = serde_json::from_str(&deps_str).unwrap_or_default();
-    let outputs: Option<serde_json::Value> = outputs_str.and_then(|s| serde_json::from_str(&s).ok());
+    let outputs: Option<serde_json::Value> =
+        outputs_str.and_then(|s| serde_json::from_str(&s).ok());
     let payload: Option<TaskPayload> = payload_str.and_then(|s| serde_json::from_str(&s).ok());
 
     Ok(TaskRecord {

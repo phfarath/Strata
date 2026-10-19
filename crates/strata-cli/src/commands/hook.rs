@@ -403,7 +403,11 @@ pub async fn handle_hook(command: HookCommand, engine: Arc<SqliteMemoryEngine>) 
                         ttl as i64,
                         Some(&metadata),
                     ) {
-                        Ok(strata_core::a2a::LeaseAcquireResult::Conflict { held_by, remaining_seconds, .. }) => {
+                        Ok(strata_core::a2a::LeaseAcquireResult::Conflict {
+                            held_by,
+                            remaining_seconds,
+                            ..
+                        }) => {
                             eprintln!(
                                 "\n❌ [Strata A2A Concurrency Blocked]: Resource '{}' is exclusively leased by '{}' ({}s remaining).",
                                 resource_id, held_by, remaining_seconds
@@ -454,8 +458,7 @@ pub async fn handle_hook(command: HookCommand, engine: Arc<SqliteMemoryEngine>) 
             target,
             symbol,
         } => {
-            let (agent_id, task_key) =
-                resolve_futility_ids(agent, task, |k| std::env::var(k).ok());
+            let (agent_id, task_key) = resolve_futility_ids(agent, task, |k| std::env::var(k).ok());
             // Tool identity includes params so an unrelated success cannot mask a loop.
             let tool_ident = match params.as_deref() {
                 Some(p) if !p.trim().is_empty() => format!("{tool} {p}"),
@@ -473,11 +476,11 @@ pub async fn handle_hook(command: HookCommand, engine: Arc<SqliteMemoryEngine>) 
                         AntiPatternParser::parse(&tool, "", &err_msg, 1, context.as_deref(), None)
                             .unwrap_or_else(|| {
                                 let mut f = FailurePattern::new(
-                                    format!("{tool}_failure"),
-                                    format!("{tool} execution error"),
-                                    err_msg.clone(),
-                                    "Avoid repeating identical invalid parameters or unverified flags",
-                                );
+                            format!("{tool}_failure"),
+                            format!("{tool} execution error"),
+                            err_msg.clone(),
+                            "Avoid repeating identical invalid parameters or unverified flags",
+                        );
                                 f.error_type = "ToolExecutionError".to_string();
                                 f.trigger_condition = params.clone().unwrap_or_default();
                                 f.severity = FailureSeverity::High;
@@ -489,17 +492,14 @@ pub async fn handle_hook(command: HookCommand, engine: Arc<SqliteMemoryEngine>) 
 
                     if let Some(ref t) = target {
                         if failure.file_path().is_none() {
-                            failure = failure.with_symbol_anchor(t, symbol.as_deref(), None::<&str>);
+                            failure =
+                                failure.with_symbol_anchor(t, symbol.as_deref(), None::<&str>);
                         }
                     } else if let Some(ref s) = symbol {
                         if failure.symbol_name().is_none() {
                             let curr_file = failure.file_path().unwrap_or("").to_string();
                             let err_class = failure.error_class().map(|c| c.to_string());
-                            failure = failure.with_symbol_anchor(
-                                curr_file,
-                                Some(s),
-                                err_class,
-                            );
+                            failure = failure.with_symbol_anchor(curr_file, Some(s), err_class);
                         }
                     }
 
@@ -518,8 +518,7 @@ pub async fn handle_hook(command: HookCommand, engine: Arc<SqliteMemoryEngine>) 
             task,
             command,
         } => {
-            let (agent_id, task_key) =
-                resolve_futility_ids(agent, task, |k| std::env::var(k).ok());
+            let (agent_id, task_key) = resolve_futility_ids(agent, task, |k| std::env::var(k).ok());
             let command_ident = command.join(" ");
             let parsed_scope = scope.as_deref().and_then(|s| s.parse::<Scope>().ok());
             let interceptor =
@@ -547,9 +546,24 @@ pub async fn handle_hook(command: HookCommand, engine: Arc<SqliteMemoryEngine>) 
                 if code == 0 {
                     shadow_success(&shadow_store, &agent_id, &task_key, &command_ident);
                 } else {
-                    let detail = if res.stderr.trim().is_empty() { &res.stdout } else { &res.stderr };
-                    let tail: String = detail.chars().rev().take(500).collect::<Vec<_>>().into_iter().rev().collect();
-                    let error = if tail.trim().is_empty() { format!("exit code {code}") } else { tail };
+                    let detail = if res.stderr.trim().is_empty() {
+                        &res.stdout
+                    } else {
+                        &res.stderr
+                    };
+                    let tail: String = detail
+                        .chars()
+                        .rev()
+                        .take(500)
+                        .collect::<Vec<_>>()
+                        .into_iter()
+                        .rev()
+                        .collect();
+                    let error = if tail.trim().is_empty() {
+                        format!("exit code {code}")
+                    } else {
+                        tail
+                    };
                     shadow_failure(&shadow_store, &agent_id, &task_key, &command_ident, &error);
                 }
             }
@@ -636,7 +650,13 @@ mod futility_shadow_tests {
     fn failures_with_changing_numbers_share_a_signature_and_trip() {
         let store = SqliteStore::open_in_memory().unwrap();
         for i in 0..4 {
-            shadow_failure(&store, "a", "t", "cargo test", &format!("error[E0599] at line {i}"));
+            shadow_failure(
+                &store,
+                "a",
+                "t",
+                "cargo test",
+                &format!("error[E0599] at line {i}"),
+            );
         }
         let trace = store.list_futility_trace("a", "t", 50).unwrap();
         assert_eq!(trace.len(), 4);
@@ -760,4 +780,4 @@ mod futility_shadow_tests {
         assert_eq!(lease.resource_id, "file:crates/strata-cli/src/main.rs");
         assert!(lease.agent_id.starts_with("agent-"));
     }
-}
+}

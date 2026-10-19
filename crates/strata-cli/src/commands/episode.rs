@@ -103,11 +103,18 @@ pub enum EpisodeCommand {
         min_cluster: usize,
 
         /// Cosine similarity threshold for grouping
-        #[arg(long, default_value_t = 0.70, help = "Similarity threshold for clustering")]
+        #[arg(
+            long,
+            default_value_t = 0.70,
+            help = "Similarity threshold for clustering"
+        )]
         similarity: f32,
 
         /// Generate Tier 3 session narrative via local SLM SmolLM2 adapter
-        #[arg(long, help = "Generate Tier 3 session narrative via local SLM SmolLM2 adapter")]
+        #[arg(
+            long,
+            help = "Generate Tier 3 session narrative via local SLM SmolLM2 adapter"
+        )]
         slm_narrative: bool,
 
         /// Custom path to SmolLM2 LoRA adapter directory
@@ -229,12 +236,22 @@ pub async fn run_episode(args: EpisodeArgs, store: Arc<SqliteStore>) -> Result<(
             if json {
                 println!("{}", serde_json::to_string_pretty(&episodes)?);
             } else {
-                println!("\n🧠 [Strata Episodic Memory Traces ({} found)]", episodes.len());
+                println!(
+                    "\n🧠 [Strata Episodic Memory Traces ({} found)]",
+                    episodes.len()
+                );
                 println!("════════════════════════════════════════════════════════════════════════════════════");
-                println!("{:<36}  {:<12}  {:<6}  {:<8}  {:<8}  SUMMARY", "ID", "AGENT", "STEPS", "SALIENCE", "STATUS");
+                println!(
+                    "{:<36}  {:<12}  {:<6}  {:<8}  {:<8}  SUMMARY",
+                    "ID", "AGENT", "STEPS", "SALIENCE", "STATUS"
+                );
                 println!("────────────────────────────────────────────────────────────────────────────────────");
                 for ep in &episodes {
-                    let status = if ep.consolidated { "CONSOLID" } else { "PENDING" };
+                    let status = if ep.consolidated {
+                        "CONSOLID"
+                    } else {
+                        "PENDING"
+                    };
                     let summary_truncated = if ep.summary.len() > 30 {
                         format!("{}...", &ep.summary[..27])
                     } else {
@@ -243,7 +260,11 @@ pub async fn run_episode(args: EpisodeArgs, store: Arc<SqliteStore>) -> Result<(
                     println!(
                         "{:<36}  {:<12}  {:<6}  {:<8.2}  {:<8}  {}",
                         ep.id,
-                        if ep.agent_id.len() > 12 { &ep.agent_id[..12] } else { &ep.agent_id },
+                        if ep.agent_id.len() > 12 {
+                            &ep.agent_id[..12]
+                        } else {
+                            &ep.agent_id
+                        },
                         ep.event_trace.len(),
                         ep.salience_score,
                         status,
@@ -254,8 +275,8 @@ pub async fn run_episode(args: EpisodeArgs, store: Arc<SqliteStore>) -> Result<(
         }
 
         EpisodeCommand::Replay { id, json } => {
-            let uuid = Uuid::parse_str(&id)
-                .with_context(|| format!("Invalid episode UUID: '{id}'"))?;
+            let uuid =
+                Uuid::parse_str(&id).with_context(|| format!("Invalid episode UUID: '{id}'"))?;
 
             let replay = store
                 .replay_episode(&uuid)
@@ -312,7 +333,10 @@ pub async fn run_episode(args: EpisodeArgs, store: Arc<SqliteStore>) -> Result<(
                 println!("Semantic Facts Created:   {}", result.facts_consolidated);
                 println!("Promoted to Core Tier:    {}", result.promoted_to_core);
                 println!("Anti-Patterns Learned:    {}", result.anti_patterns_learned);
-                println!("Contradictions Resolved:  {}", result.contradictions_resolved);
+                println!(
+                    "Contradictions Resolved:  {}",
+                    result.contradictions_resolved
+                );
             }
         }
 
@@ -412,8 +436,9 @@ pub async fn run_episode(args: EpisodeArgs, store: Arc<SqliteStore>) -> Result<(
             limit,
             json,
         } => {
-            let rollups = EpisodicPyramidEngine::zoom_out(store.as_ref(), session.as_deref(), limit)
-                .map_err(|e| anyhow::anyhow!("Failed to zoom out rollups: {e}"))?;
+            let rollups =
+                EpisodicPyramidEngine::zoom_out(store.as_ref(), session.as_deref(), limit)
+                    .map_err(|e| anyhow::anyhow!("Failed to zoom out rollups: {e}"))?;
 
             let mut trees = Vec::new();
             for r in &rollups {
@@ -430,8 +455,13 @@ pub async fn run_episode(args: EpisodeArgs, store: Arc<SqliteStore>) -> Result<(
                 if trees.is_empty() {
                     println!("No Tier 2 rollups found.");
                 } else {
-                    println!("\n🌲 [Strata Episodic Memory Pyramid Trees ({} rollups)]", trees.len());
-                    println!("═══════════════════════════════════════════════════════════════════════");
+                    println!(
+                        "\n🌲 [Strata Episodic Memory Pyramid Trees ({} rollups)]",
+                        trees.len()
+                    );
+                    println!(
+                        "═══════════════════════════════════════════════════════════════════════"
+                    );
                     for tree in &trees {
                         print!("{}", tree.render_ascii());
                     }

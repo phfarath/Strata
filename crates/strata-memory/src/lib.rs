@@ -53,8 +53,8 @@ pub use call_graph::{
 pub use clustering::{SpatialCluster, SpatialClusterer, VectorPoint};
 pub use community::{
     ArchitectureCluster, ArchitectureGraphSummary, ClusterAssignmentCache, ClusterDependency,
-    ClusterMember, ClusterMigrationPlan, ClusteringConfig, CommunityDetector, CommunityMemoryRouter,
-    CommunityScopedRecallResult, MemberType,
+    ClusterMember, ClusterMigrationPlan, ClusteringConfig, CommunityDetector,
+    CommunityMemoryRouter, CommunityScopedRecallResult, MemberType,
 };
 pub use compiler::{
     estimate_tokens, glob_to_slug, matches_path_glob, CoreRule, HostCompileResult,
@@ -70,14 +70,17 @@ pub use context_rot::{
     MemoryInjectionRecord,
 };
 pub use decay::{DecayCalculator, PruneReport};
-pub use futility::{record_shadow_failure, record_shadow_success, FutilityAccumulator, FutilityTraceRow, Signal as FutilitySignal, Verdict as FutilityVerdict};
-pub use gating::{should_recall, IntentKind, RecallDecision, RecallGatingClassifier, TaskType};
 pub use embedding::{
     are_embedding_models_compatible, bytes_to_embedding, cosine_similarity, embedding_to_bytes,
     is_embedding_compatible_with_query, EmbeddingProvider, EmbeddingProviderFactory,
     EmbeddingProviderKind, FastEmbedProvider, MockEmbeddingProvider, ResolvedEmbeddingProvider,
 };
 pub use enricher::{AsyncLlmEnricher, CanonicalTemplateEnricher, MemoryEnricher};
+pub use futility::{
+    record_shadow_failure, record_shadow_success, FutilityAccumulator, FutilityTraceRow,
+    Signal as FutilitySignal, Verdict as FutilityVerdict,
+};
+pub use gating::{should_recall, IntentKind, RecallDecision, RecallGatingClassifier, TaskType};
 pub use ipc::{
     endpoint_for_workspace, read_bounded_line, IpcBrokerManager, IpcClient, IpcServer,
     MAX_FRAME_LENGTH,
@@ -89,14 +92,14 @@ pub use metaplasticity::{
     calculate_adapted_prune_threshold, MetaplasticityConfig, MetaplasticityState,
 };
 pub use pipeline::{
-    compute_minhash_signature, minhash_jaccard_similarity, AudnConfig, AudnDecision,
-    AudnOperation, AudnPipeline, ConsolidationPipeline, ConsolidationResult, PipelineConfig,
+    compute_minhash_signature, minhash_jaccard_similarity, AudnConfig, AudnDecision, AudnOperation,
+    AudnPipeline, ConsolidationPipeline, ConsolidationResult, PipelineConfig,
 };
 pub use procedural_mining::TrajectoryMiner;
 pub use pyramid::{
     DrillDownTree, EpisodicPyramidEngine, EpisodicPyramidStore, PyramidConfig,
-    PyramidDrillDownReport, PyramidFilter, RollupSummary, SlmBridgeConfig,
-    SlmInferenceResult, SlmPyramidBridge,
+    PyramidDrillDownReport, PyramidFilter, RollupSummary, SlmBridgeConfig, SlmInferenceResult,
+    SlmPyramidBridge,
 };
 pub use retrieval::{
     import_distance_decay_factor, HybridRanker, HybridRankerConfig, ProximityBiasConfig,
@@ -109,14 +112,14 @@ pub use spreading_activation::{
 pub use store::{
     MemoryEdgeRecord, ModelVectorCount, ReindexReport, SqliteStore, VectorConsistencyStats,
 };
-pub use strata_reasoning::{
-    ProceduralOptimizerConfig, ProceduralRule, ProceduralRuleVersion, ProceduralSelfEditor,
-    TextGradientFeedback,
-};
 pub use strata_core::schemas::{
     CodeAnchor, ContextBudgetConfig, ExportFormat, FeedbackEvent, FeedbackRating, HostTargetConfig,
     ImplicitSignal, KtoSample, MemoryFeedback, PreferencePair, SemanticFact, SftSample, SignalKind,
     SymbolType, TransferFilter, TransferReport,
+};
+pub use strata_reasoning::{
+    ProceduralOptimizerConfig, ProceduralRule, ProceduralRuleVersion, ProceduralSelfEditor,
+    TextGradientFeedback,
 };
 pub use subconscious::{GatingDecision, SubconsciousBuffer, SubconsciousConfig};
 pub use sync::{calculate_exponential_backoff, compute_version_hash, SyncEngine};
@@ -314,7 +317,8 @@ impl SqliteMemoryEngine {
         id: &Uuid,
         approval: HumanApprovalRecord,
     ) -> Result<MemoryRecord, StrataError> {
-        self.store.promote_memory_to_core_with_approval(id, approval)
+        self.store
+            .promote_memory_to_core_with_approval(id, approval)
     }
 
     /// Promotes a memory record to Core Tier with explicit human approval.
@@ -334,7 +338,8 @@ impl SqliteMemoryEngine {
         id: &Uuid,
         approval: HumanApprovalRecord,
     ) -> Result<SemanticFact, StrataError> {
-        self.store.promote_semantic_fact_to_core_with_approval(id, approval)
+        self.store
+            .promote_semantic_fact_to_core_with_approval(id, approval)
     }
 
     /// Promotes a semantic fact to Core Tier with explicit human approval.
@@ -417,7 +422,8 @@ impl SqliteMemoryEngine {
             if let Ok(emb) = self.embedding_provider.embed_text(&record.content).await {
                 record.embedding = Some(emb);
                 record.embedding_model = Some(self.embedding_provider.model_name().to_string());
-                record.embedding_version = Some(self.embedding_provider.model_version().to_string());
+                record.embedding_version =
+                    Some(self.embedding_provider.model_version().to_string());
             }
         }
 
@@ -482,11 +488,19 @@ impl SqliteMemoryEngine {
         expected_entity_id: &Uuid,
         expected_content_hash: &str,
     ) -> Result<HumanApprovalRecord, StrataError> {
-        match self.store.verify_and_consume_approval_token(token_str, expected_entity_id, expected_content_hash) {
+        match self.store.verify_and_consume_approval_token(
+            token_str,
+            expected_entity_id,
+            expected_content_hash,
+        ) {
             Ok(rec) => Ok(rec),
             Err(e) => {
                 if let Some(ref global) = self.global_store {
-                    global.verify_and_consume_approval_token(token_str, expected_entity_id, expected_content_hash)
+                    global.verify_and_consume_approval_token(
+                        token_str,
+                        expected_entity_id,
+                        expected_content_hash,
+                    )
                 } else {
                     Err(e)
                 }
@@ -710,7 +724,8 @@ impl MemoryEngine for SqliteMemoryEngine {
         scope: Option<&Scope>,
         limit: usize,
     ) -> Result<Vec<MemoryRecord>, StrataError> {
-        self.search_as_of(query, scope, None, None, None, limit).await
+        self.search_as_of(query, scope, None, None, None, limit)
+            .await
     }
 
     async fn search_as_of(
@@ -774,7 +789,10 @@ impl MemoryEngine for SqliteMemoryEngine {
         as_of_commit: Option<&str>,
         as_of_branch: Option<&str>,
     ) -> Result<Option<MemoryRecord>, StrataError> {
-        if let Some(mut memory) = self.store.get_memory_as_of(id, as_of_time, as_of_commit, as_of_branch)? {
+        if let Some(mut memory) =
+            self.store
+                .get_memory_as_of(id, as_of_time, as_of_commit, as_of_branch)?
+        {
             memory.mark_accessed();
             let now = memory.last_accessed_at.unwrap_or_else(Utc::now);
             let _ = self.store.update_access_metrics(&memory.id, now);
@@ -782,7 +800,9 @@ impl MemoryEngine for SqliteMemoryEngine {
         }
 
         if let Some(ref global) = self.global_store {
-            if let Some(mut memory) = global.get_memory_as_of(id, as_of_time, as_of_commit, as_of_branch)? {
+            if let Some(mut memory) =
+                global.get_memory_as_of(id, as_of_time, as_of_commit, as_of_branch)?
+            {
                 memory.mark_accessed();
                 let now = memory.last_accessed_at.unwrap_or_else(Utc::now);
                 let _ = global.update_access_metrics(&memory.id, now);
@@ -824,9 +844,7 @@ impl MemoryEngine for SqliteMemoryEngine {
                 let rec = decision.record.as_ref().unwrap_or(record);
                 Ok(rec.to_handle(Some(rec.importance)))
             }
-            AudnOperation::Delete { .. } => {
-                Ok(record.to_handle(Some(record.importance)))
-            }
+            AudnOperation::Delete { .. } => Ok(record.to_handle(Some(record.importance))),
         }
     }
 

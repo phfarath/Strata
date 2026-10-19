@@ -71,12 +71,18 @@ pub struct ArchitectureCluster {
 impl ArchitectureCluster {
     /// Returns members that have outgoing connections to other clusters (bridge nodes).
     pub fn bridge_members(&self) -> Vec<&ClusterMember> {
-        self.members.iter().filter(|m| m.external_degree > 0).collect()
+        self.members
+            .iter()
+            .filter(|m| m.external_degree > 0)
+            .collect()
     }
 
     /// Returns list of target cluster IDs this cluster depends on.
     pub fn target_cluster_ids(&self) -> Vec<&str> {
-        self.dependencies.iter().map(|d| d.target_cluster_id.as_str()).collect()
+        self.dependencies
+            .iter()
+            .map(|d| d.target_cluster_id.as_str())
+            .collect()
     }
 }
 
@@ -1153,8 +1159,11 @@ impl CommunityMemoryRouter {
         let mut vector_results: Vec<(MemoryRecord, f32)> = Vec::new();
         if let Some(embedder) = embedding_provider {
             if let Ok(query_embedding) = embedder.embed_text(query).await {
-                let scoped_candidates =
-                    store.get_memories_by_scopes(&allowed_scopes, memory_types, candidate_limit * 2)?;
+                let scoped_candidates = store.get_memories_by_scopes(
+                    &allowed_scopes,
+                    memory_types,
+                    candidate_limit * 2,
+                )?;
                 for memory in scoped_candidates {
                     if !crate::embedding::is_embedding_compatible_with_query(
                         embedder.model_name(),
@@ -1220,7 +1229,9 @@ impl CommunityMemoryRouter {
                 let recs = store.get_memories_by_scopes(&allowed_scopes, memory_types, limit)?;
                 let count = recs.len();
                 let reduction = if total_store_memories > 0 {
-                    ((total_store_memories.saturating_sub(count)) as f64 / total_store_memories as f64) * 100.0
+                    ((total_store_memories.saturating_sub(count)) as f64
+                        / total_store_memories as f64)
+                        * 100.0
                 } else {
                     0.0
                 };
@@ -1474,7 +1485,8 @@ pub fn f() { d(); }
 
         assert!(!cache.entity_to_cluster.is_empty());
 
-        let cluster_jwt = summary.find_cluster_for_file_or_symbol("src/auth/jwt.rs", Some("verify_token"));
+        let cluster_jwt =
+            summary.find_cluster_for_file_or_symbol("src/auth/jwt.rs", Some("verify_token"));
         assert!(cluster_jwt.is_some());
 
         let cluster_db = summary.find_cluster_for_file_or_symbol("src/db/store.rs", None);
@@ -1485,11 +1497,24 @@ pub fn f() { d(); }
     fn test_cluster_migration_plan_and_memory_reassignment() {
         let store = SqliteStore::open_in_memory().unwrap();
 
-        let edge1 = CallEdge::new("src/auth/jwt.rs", "generate_jwt", "sign_token", 5, CallType::FunctionCall);
-        let edge2 = CallEdge::new("src/auth/login.rs", "handle_login", "generate_jwt", 10, CallType::FunctionCall);
+        let edge1 = CallEdge::new(
+            "src/auth/jwt.rs",
+            "generate_jwt",
+            "sign_token",
+            5,
+            CallType::FunctionCall,
+        );
+        let edge2 = CallEdge::new(
+            "src/auth/login.rs",
+            "handle_login",
+            "generate_jwt",
+            10,
+            CallType::FunctionCall,
+        );
 
         let detector = CommunityDetector::default();
-        let summary_v1 = detector.detect_from_edges(&[edge1.clone(), edge2.clone()], "migration-workspace");
+        let summary_v1 =
+            detector.detect_from_edges(&[edge1.clone(), edge2.clone()], "migration-workspace");
         let old_cluster_id = summary_v1.clusters[0].id.clone();
 
         // Create active memory scoped to old cluster
@@ -1501,7 +1526,13 @@ pub fn f() { d(); }
         store.insert_or_update_memory(&mem).unwrap();
 
         // Simulate re-clustering after adding new edge
-        let edge3 = CallEdge::new("src/auth/token.rs", "refresh_jwt", "generate_jwt", 15, CallType::FunctionCall);
+        let edge3 = CallEdge::new(
+            "src/auth/token.rs",
+            "refresh_jwt",
+            "generate_jwt",
+            15,
+            CallType::FunctionCall,
+        );
         let summary_v2 = detector.detect_from_edges(&[edge1, edge2, edge3], "migration-workspace");
 
         let plan = detector.compute_migration_plan(&summary_v1, &summary_v2);
@@ -1628,8 +1659,14 @@ pub fn f() { d(); }
             .unwrap();
 
         // Transparent fallback triggered
-        assert!(result.fallback_to_global, "Cold start cluster must trigger fallback");
-        assert!(!result.memories.is_empty(), "Should return memories from global fallback");
+        assert!(
+            result.fallback_to_global,
+            "Cold start cluster must trigger fallback"
+        );
+        assert!(
+            !result.memories.is_empty(),
+            "Should return memories from global fallback"
+        );
     }
 
     #[tokio::test]
@@ -1712,8 +1749,12 @@ pub fn f() { d(); }
             .unwrap();
 
         assert!(!result.fallback_to_global);
-        assert!(result.allowed_scopes.contains(&Scope::Community("cluster-auth".to_string())));
-        assert!(result.allowed_scopes.contains(&Scope::Community("cluster-db".to_string())));
+        assert!(result
+            .allowed_scopes
+            .contains(&Scope::Community("cluster-auth".to_string())));
+        assert!(result
+            .allowed_scopes
+            .contains(&Scope::Community("cluster-db".to_string())));
         assert!(!result.memories.is_empty());
     }
 }

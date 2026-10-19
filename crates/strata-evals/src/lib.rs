@@ -245,7 +245,9 @@ mod tests {
 
     #[tokio::test]
     async fn test_eval_long_mem_eval_coding_agents() {
-        let report = LongMemEvalSuite::run_suite("coding-agents").await.expect("LongMemEval failed");
+        let report = LongMemEvalSuite::run_suite("coding-agents")
+            .await
+            .expect("LongMemEval failed");
         assert!(report.metrics_10_cycles.recall_accuracy >= 0.90);
         assert!(report.metrics_100_cycles.recall_accuracy >= 0.85);
         assert!(report.metrics_1000_cycles.recall_accuracy >= 0.80);
@@ -260,4 +262,3 @@ mod tests {
         assert!(err.is_err());
     }
 }
-

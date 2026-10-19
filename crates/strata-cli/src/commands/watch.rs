@@ -1,11 +1,11 @@
-use std::collections::{HashMap, HashSet};
-use std::path::{Path, PathBuf};
-use std::sync::Arc;
-use std::time::Duration;
 use anyhow::{Context, Result};
 use clap::Args;
 use notify::{Config, Event, RecommendedWatcher, RecursiveMode, Watcher};
 use serde::{Deserialize, Serialize};
+use std::collections::{HashMap, HashSet};
+use std::path::{Path, PathBuf};
+use std::sync::Arc;
+use std::time::Duration;
 use tracing::{debug, info, warn};
 use uuid::Uuid;
 
@@ -181,9 +181,7 @@ pub async fn run_watch(args: WatchArgs, store: Arc<SqliteStore>) -> Result<()> {
     } else {
         args.workspace.clone()
     };
-    let workspace_root = workspace_root
-        .canonicalize()
-        .unwrap_or(workspace_root);
+    let workspace_root = workspace_root.canonicalize().unwrap_or(workspace_root);
 
     if !workspace_root.exists() {
         anyhow::bail!(
@@ -196,13 +194,8 @@ pub async fn run_watch(args: WatchArgs, store: Arc<SqliteStore>) -> Result<()> {
     let _ = world_model.index_workspace(&workspace_root).await;
 
     // Run initial drift sweep
-    let initial_report = check_and_reconcile_drift(
-        &workspace_root,
-        store.as_ref(),
-        &world_model,
-        args.json,
-    )
-    .await?;
+    let initial_report =
+        check_and_reconcile_drift(&workspace_root, store.as_ref(), &world_model, args.json).await?;
 
     if args.once {
         if !args.json && initial_report.events.is_empty() {
@@ -230,7 +223,12 @@ pub async fn run_watch(args: WatchArgs, store: Arc<SqliteStore>) -> Result<()> {
 
     watcher
         .watch(&workspace_root, RecursiveMode::Recursive)
-        .with_context(|| format!("Failed to watch workspace root: {}", workspace_root.display()))?;
+        .with_context(|| {
+            format!(
+                "Failed to watch workspace root: {}",
+                workspace_root.display()
+            )
+        })?;
 
     let debounce_duration = Duration::from_millis(args.debounce_ms);
     let mut pending_paths: HashSet<PathBuf> = HashSet::new();

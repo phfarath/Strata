@@ -27,9 +27,9 @@ pub mod sync_hosts;
 pub mod task;
 pub mod train;
 pub mod transfer;
+pub mod watch;
 pub mod worker;
 pub mod workspace;
-pub mod watch;
 
 pub use a2a::*;
 pub use architecture::*;

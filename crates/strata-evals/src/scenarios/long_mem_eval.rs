@@ -43,11 +43,18 @@ impl LongMemEvalReport {
     pub fn format_ascii_report(&self) -> String {
         let mut out = String::new();
         out.push_str("\n========================================================================================\n");
-        out.push_str(&format!("📊 LONGMEMEVAL-CODE BENCHMARK REPORT — SUITE: {}\n", self.suite_name));
+        out.push_str(&format!(
+            "📊 LONGMEMEVAL-CODE BENCHMARK REPORT — SUITE: {}\n",
+            self.suite_name
+        ));
         out.push_str("========================================================================================\n");
         out.push_str("Horizon (Cycles) | Queries | Correct | Recall Accuracy | Contradiction Res | Latency (ms)\n");
         out.push_str("-----------------+---------+---------+-----------------+-------------------+-------------\n");
-        for m in [&self.metrics_10_cycles, &self.metrics_100_cycles, &self.metrics_1000_cycles] {
+        for m in [
+            &self.metrics_10_cycles,
+            &self.metrics_100_cycles,
+            &self.metrics_1000_cycles,
+        ] {
             out.push_str(&format!(
                 "{:<16} | {:^7} | {:^7} | {:>14.1}% | {:>16.1}% | {:>9.2} ms\n",
                 format!("{} Cycles", m.cycle),
@@ -61,16 +68,28 @@ impl LongMemEvalReport {
         out.push_str("-----------------+---------+---------+-----------------+-------------------+-------------\n");
         out.push_str(&format!(
             "Cross-Agent Context Transfer : {}\n",
-            if self.cross_agent_transfer_passed { "PASSED" } else { "FAILED" }
+            if self.cross_agent_transfer_passed {
+                "PASSED"
+            } else {
+                "FAILED"
+            }
         ));
         out.push_str(&format!(
             "Contradiction Resolution    : {}\n",
-            if self.contradiction_resolution_passed { "PASSED" } else { "FAILED" }
+            if self.contradiction_resolution_passed {
+                "PASSED"
+            } else {
+                "FAILED"
+            }
         ));
         out.push_str(&format!(
             "Overall Benchmark Score      : {:.1}% ({})\n",
             self.overall_score * 100.0,
-            if self.overall_score >= 0.80 { "PASSED" } else { "FAILED" }
+            if self.overall_score >= 0.80 {
+                "PASSED"
+            } else {
+                "FAILED"
+            }
         ));
         out.push_str("========================================================================================\n");
         out
@@ -192,21 +211,18 @@ async fn evaluate_cycle_horizon(
 
     // 1. Ingest target code rules with reinforcement access logs
     for rule in rules {
-        let mut mem = MemoryRecord::new(
-            MemoryType::Semantic,
-            rule.content,
-            scope.clone(),
-        )
-        .with_summary(rule.title)
-        .with_importance(0.95)
-        .with_confidence(1.0)
-        .with_tags(vec![rule.category.to_string()]);
+        let mut mem = MemoryRecord::new(MemoryType::Semantic, rule.content, scope.clone())
+            .with_summary(rule.title)
+            .with_importance(0.95)
+            .with_confidence(1.0)
+            .with_tags(vec![rule.category.to_string()]);
 
         // Simulate reinforcement access logs across interaction cycles
         let access_count = cycles.min(25);
         let mut access_times = Vec::with_capacity(access_count);
         for k in 0..access_count {
-            access_times.push(Utc::now() - chrono::Duration::hours(((access_count - k) * 2) as i64));
+            access_times
+                .push(Utc::now() - chrono::Duration::hours(((access_count - k) * 2) as i64));
         }
         mem.access_count = access_count as u64;
 
@@ -220,7 +236,10 @@ async fn evaluate_cycle_horizon(
             Utc::now(),
         );
         if decay_metrics.is_expired {
-            bail!("Target rule '{}' decayed prematurely under ACT-R model", rule.title);
+            bail!(
+                "Target rule '{}' decayed prematurely under ACT-R model",
+                rule.title
+            );
         }
         if decay_metrics.retention < 0.80 {
             bail!(
@@ -247,13 +266,10 @@ async fn evaluate_cycle_horizon(
             8 => format!("Session #{i}: Read terminal environment variable DEBUG=1"),
             _ => format!("Session #{i}: Closed ephemeral task socket connection"),
         };
-        let mut distractor = MemoryRecord::new(
-            MemoryType::Episodic,
-            distractor_text,
-            scope.clone(),
-        )
-        .with_importance(0.20)
-        .with_confidence(0.50);
+        let mut distractor =
+            MemoryRecord::new(MemoryType::Episodic, distractor_text, scope.clone())
+                .with_importance(0.20)
+                .with_confidence(0.50);
         distractor.created_at = Utc::now() - chrono::Duration::hours((cycles - i) as i64);
 
         store.insert_or_update_memory(&distractor)?;
@@ -358,19 +374,16 @@ async fn evaluate_cross_agent_transfer() -> Result<bool> {
     prov_1.client = Some("antigravity".to_string());
 
     let specialized_content = "To handle streaming chunk responses in crate strata-memory, always use the FramedRead buffer adapter with 64KB chunk limit.";
-    let mut mem_agent_1 = MemoryRecord::new(
-        MemoryType::Semantic,
-        specialized_content,
-        scope.clone(),
-    )
-    .with_summary("Streaming Chunk FramedRead Buffer Adapter")
-    .with_importance(0.95)
-    .with_confidence(1.0)
-    .with_tags(vec![
-        "streaming".to_string(),
-        "framed_read".to_string(),
-        "buffer".to_string(),
-    ]);
+    let mut mem_agent_1 =
+        MemoryRecord::new(MemoryType::Semantic, specialized_content, scope.clone())
+            .with_summary("Streaming Chunk FramedRead Buffer Adapter")
+            .with_importance(0.95)
+            .with_confidence(1.0)
+            .with_tags(vec![
+                "streaming".to_string(),
+                "framed_read".to_string(),
+                "buffer".to_string(),
+            ]);
 
     let mut metadata = serde_json::Map::new();
     metadata.insert("author_agent".to_string(), serde_json::json!(agent_1));
@@ -380,7 +393,8 @@ async fn evaluate_cross_agent_transfer() -> Result<bool> {
     engine.write(&mem_agent_1).await?;
 
     // Agent 2: Queries for streaming chunk response handling in a subsequent session
-    let agent_2_query = "What buffer adapter should be used for streaming chunk responses in strata-memory?";
+    let agent_2_query =
+        "What buffer adapter should be used for streaming chunk responses in strata-memory?";
     let retrieved = engine.search(agent_2_query, Some(&scope), 3).await?;
 
     if retrieved.is_empty() {
@@ -403,7 +417,9 @@ async fn evaluate_cross_agent_transfer() -> Result<bool> {
 
 /// Executes the complete LongMemEval-Code evaluation scenario.
 pub async fn run_long_mem_eval_scenario() -> Result<LongMemEvalReport> {
-    println!("\n▶ Running Eval Scenario: LongMemEval-Code (Automated Evaluation for Coding Agents)");
+    println!(
+        "\n▶ Running Eval Scenario: LongMemEval-Code (Automated Evaluation for Coding Agents)"
+    );
 
     let rules = get_target_code_rules();
 
@@ -429,8 +445,16 @@ pub async fn run_long_mem_eval_scenario() -> Result<LongMemEvalReport> {
     let overall_score = metrics_10.recall_accuracy * 0.25
         + metrics_100.recall_accuracy * 0.25
         + metrics_1000.recall_accuracy * 0.25
-        + (if contradiction_resolution_passed { 1.0 } else { 0.0 }) * 0.15
-        + (if cross_agent_transfer_passed { 1.0 } else { 0.0 }) * 0.10;
+        + (if contradiction_resolution_passed {
+            1.0
+        } else {
+            0.0
+        }) * 0.15
+        + (if cross_agent_transfer_passed {
+            1.0
+        } else {
+            0.0
+        }) * 0.10;
 
     if metrics_10.recall_accuracy < 0.90 {
         bail!(

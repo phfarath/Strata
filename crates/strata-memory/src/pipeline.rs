@@ -626,11 +626,7 @@ impl Default for AudnConfig {
 }
 
 impl AudnConfig {
-    pub fn new(
-        cosine_noop_threshold: f32,
-        minhash_noop_threshold: f32,
-        num_hashes: usize,
-    ) -> Self {
+    pub fn new(cosine_noop_threshold: f32, minhash_noop_threshold: f32, num_hashes: usize) -> Self {
         Self {
             cosine_noop_threshold: cosine_noop_threshold.clamp(0.0, 1.0),
             minhash_noop_threshold: minhash_noop_threshold.clamp(0.0, 1.0),
@@ -773,11 +769,52 @@ fn extract_audn_shingles(text: &str) -> std::collections::HashSet<String> {
 
 fn tokenize_audn_meaningful_words(text: &str) -> std::collections::HashSet<String> {
     const STOPWORDS: &[&str] = &[
-        "the", "a", "an", "is", "are", "was", "were", "to", "for", "in", "of", "on", "with",
-        "and", "or", "by", "at", "from", "as", "be", "this", "that", "it", "we", "our", "use",
-        "uses", "using", "used", "now", "new", "old", "retract", "retracted", "delete", "deleted",
-        "obsolete", "remove", "removed", "drop", "dropped", "rule", "requirement", "valid",
-        "longer", "no",
+        "the",
+        "a",
+        "an",
+        "is",
+        "are",
+        "was",
+        "were",
+        "to",
+        "for",
+        "in",
+        "of",
+        "on",
+        "with",
+        "and",
+        "or",
+        "by",
+        "at",
+        "from",
+        "as",
+        "be",
+        "this",
+        "that",
+        "it",
+        "we",
+        "our",
+        "use",
+        "uses",
+        "using",
+        "used",
+        "now",
+        "new",
+        "old",
+        "retract",
+        "retracted",
+        "delete",
+        "deleted",
+        "obsolete",
+        "remove",
+        "removed",
+        "drop",
+        "dropped",
+        "rule",
+        "requirement",
+        "valid",
+        "longer",
+        "no",
     ];
     normalize_audn_text(text)
         .split_whitespace()
@@ -1019,7 +1056,10 @@ impl AudnPipeline {
             return None;
         }
 
-        if self.jtms.is_orthogonal_coexistence(existing_text, candidate_text) {
+        if self
+            .jtms
+            .is_orthogonal_coexistence(existing_text, candidate_text)
+        {
             return None;
         }
 
@@ -1140,9 +1180,15 @@ impl AudnPipeline {
         match (cand_emb, ex_emb) {
             (Some(ca), Some(ex)) => {
                 let compatible = match (cand_model, ex_model) {
-                    (Some(cm), Some(em)) => crate::embedding::are_embedding_models_compatible(cm, em),
-                    (Some(cm), None) => crate::embedding::is_embedding_compatible_with_query(cm, None),
-                    (None, Some(em)) => crate::embedding::is_embedding_compatible_with_query(em, None),
+                    (Some(cm), Some(em)) => {
+                        crate::embedding::are_embedding_models_compatible(cm, em)
+                    }
+                    (Some(cm), None) => {
+                        crate::embedding::is_embedding_compatible_with_query(cm, None)
+                    }
+                    (None, Some(em)) => {
+                        crate::embedding::is_embedding_compatible_with_query(em, None)
+                    }
                     (None, None) => true,
                 };
                 if compatible {
@@ -1169,8 +1215,7 @@ impl AudnPipeline {
                 && audn_scopes_compatible(&r.scope, &candidate.scope)
         });
 
-        let is_delete =
-            is_explicit_delete_directive(&candidate.content, Some(&candidate.metadata));
+        let is_delete = is_explicit_delete_directive(&candidate.content, Some(&candidate.metadata));
         let cleaned_candidate_text = if is_delete {
             strip_delete_directive_prefix(&candidate.content)
         } else {
@@ -1181,11 +1226,7 @@ impl AudnPipeline {
         let cand_norm = canonical_audn_words(&cleaned_candidate_text).join(" ");
 
         // Explicit target_id override in metadata
-        if let Some(target_str) = candidate
-            .metadata
-            .get("target_id")
-            .and_then(|v| v.as_str())
-        {
+        if let Some(target_str) = candidate.metadata.get("target_id").and_then(|v| v.as_str()) {
             if let Ok(target_uuid) = uuid::Uuid::parse_str(target_str) {
                 if let Some(existing) = existing_records.iter().find(|r| r.id == target_uuid) {
                     let ex_sig =
@@ -1202,10 +1243,7 @@ impl AudnPipeline {
                             operation: AudnOperation::Delete {
                                 target_id: existing.id,
                             },
-                            reason: format!(
-                                "Explicit deletion of target memory {}",
-                                existing.id
-                            ),
+                            reason: format!("Explicit deletion of target memory {}", existing.id),
                             cosine_similarity: cos_sim,
                             minhash_similarity: mh_sim,
                             record: None,
@@ -1314,7 +1352,10 @@ impl AudnPipeline {
                 ) {
                     let lex_sim = audn_lexical_jaccard(&existing.content, &candidate.content);
                     let score = mh_sim.max(cos_sim).max(lex_sim);
-                    if best_update.as_ref().map_or(true, |(_, _, _, _, b)| score > *b) {
+                    if best_update
+                        .as_ref()
+                        .map_or(true, |(_, _, _, _, b)| score > *b)
+                    {
                         best_update = Some((existing, update_reason, cos_sim, mh_sim, score));
                     }
                     continue;
@@ -1646,7 +1687,10 @@ impl AudnPipeline {
                 ) {
                     let lex_sim = audn_lexical_jaccard(&existing.statement, &candidate.statement);
                     let score = mh_sim.max(cos_sim).max(lex_sim);
-                    if best_update.as_ref().map_or(true, |(_, _, _, _, b)| score > *b) {
+                    if best_update
+                        .as_ref()
+                        .map_or(true, |(_, _, _, _, b)| score > *b)
+                    {
                         best_update = Some((existing, update_reason, cos_sim, mh_sim, score));
                     }
                     continue;
@@ -1658,7 +1702,10 @@ impl AudnPipeline {
                 || cos_sim > self.config.cosine_noop_threshold
             {
                 let reason = if norm_equal {
-                    format!("Normalized lexical match with existing fact {}", existing.id)
+                    format!(
+                        "Normalized lexical match with existing fact {}",
+                        existing.id
+                    )
                 } else if cos_sim > self.config.cosine_noop_threshold {
                     format!(
                         "Embedding cosine similarity {:.3} > {:.3} threshold with fact {}",
@@ -1776,9 +1823,11 @@ mod audn_tests {
 
     #[test]
     fn test_minhash_signature_determinism_and_near_duplicate_similarity() {
-        let text_a = "The authentication service uses Ed25519 signatures for verifying agent tokens.";
+        let text_a =
+            "The authentication service uses Ed25519 signatures for verifying agent tokens.";
         let text_b = "Authentication service uses Ed25519 signatures for verifying agent tokens!";
-        let text_c = "Frontend UI components use Tailwind CSS utility classes for responsive layout.";
+        let text_c =
+            "Frontend UI components use Tailwind CSS utility classes for responsive layout.";
 
         let sig_a1 = compute_minhash_signature(text_a, 64);
         let sig_a2 = compute_minhash_signature(text_a, 64);
@@ -1831,12 +1880,7 @@ mod audn_tests {
             .ingest_memory(&store, Some(&embedder), &m2_exact)
             .await
             .expect("ingest m2_exact");
-        assert_eq!(
-            dec2.operation,
-            AudnOperation::Noop {
-                existing_id: m1.id
-            }
-        );
+        assert_eq!(dec2.operation, AudnOperation::Noop { existing_id: m1.id });
         assert_eq!(
             store.get_all_memories(None, None, 100).unwrap().len(),
             1,
@@ -1853,12 +1897,7 @@ mod audn_tests {
             .ingest_memory(&store, None, &m3_minhash)
             .await
             .expect("ingest m3_minhash");
-        assert_eq!(
-            dec3.operation,
-            AudnOperation::Noop {
-                existing_id: m1.id
-            }
-        );
+        assert_eq!(dec3.operation, AudnOperation::Noop { existing_id: m1.id });
         assert!(dec3.minhash_similarity >= 0.85);
         assert_eq!(
             store.get_all_memories(None, None, 100).unwrap().len(),
@@ -1996,7 +2035,10 @@ mod audn_tests {
             }
         );
         let loaded_pool = store.get_memory(&m_pool_v1.id).unwrap().unwrap();
-        assert_eq!(loaded_pool.content, "Database connection pool max size is 50");
+        assert_eq!(
+            loaded_pool.content,
+            "Database connection pool max size is 50"
+        );
         assert_eq!(
             loaded_pool.metadata.get("version").and_then(|v| v.as_u64()),
             Some(2)
@@ -2077,12 +2119,7 @@ mod audn_tests {
             .ingest_fact(&store, Some(&embedder), &f1_dup)
             .await
             .expect("noop f1_dup");
-        assert_eq!(
-            d2.operation,
-            AudnOperation::Noop {
-                existing_id: f1.id
-            }
-        );
+        assert_eq!(d2.operation, AudnOperation::Noop { existing_id: f1.id });
         assert_eq!(
             store
                 .get_all_semantic_facts(None, Some(FactStatus::Active), 100)
@@ -2101,12 +2138,7 @@ mod audn_tests {
             .ingest_fact(&store, Some(&embedder), &f1_upd)
             .await
             .expect("update f1");
-        assert_eq!(
-            d3.operation,
-            AudnOperation::Update {
-                target_id: f1.id
-            }
-        );
+        assert_eq!(d3.operation, AudnOperation::Update { target_id: f1.id });
         let updated_fact = store.get_semantic_fact(&f1.id).unwrap().unwrap();
         assert_eq!(
             updated_fact.statement,
@@ -2124,12 +2156,7 @@ mod audn_tests {
             .ingest_fact(&store, Some(&embedder), &f1_del)
             .await
             .expect("delete f1");
-        assert_eq!(
-            d4.operation,
-            AudnOperation::Delete {
-                target_id: f1.id
-            }
-        );
+        assert_eq!(d4.operation, AudnOperation::Delete { target_id: f1.id });
         assert_eq!(
             store
                 .get_all_semantic_facts(None, Some(FactStatus::Active), 100)
@@ -2160,7 +2187,11 @@ mod audn_tests {
         let dec1 = engine.ingest_audn(&m1).await.expect("ingest m1");
         assert_eq!(dec1.operation, AudnOperation::Add);
         assert_eq!(
-            engine.store().get_all_memories(None, None, 100).unwrap().len(),
+            engine
+                .store()
+                .get_all_memories(None, None, 100)
+                .unwrap()
+                .len(),
             1
         );
 
@@ -2173,12 +2204,14 @@ mod audn_tests {
         let dec_noop = engine.ingest_audn(&m1_dup).await.expect("ingest m1_dup");
         assert_eq!(
             dec_noop.operation,
-            AudnOperation::Noop {
-                existing_id: m1.id
-            }
+            AudnOperation::Noop { existing_id: m1.id }
         );
         assert_eq!(
-            engine.store().get_all_memories(None, None, 100).unwrap().len(),
+            engine
+                .store()
+                .get_all_memories(None, None, 100)
+                .unwrap()
+                .len(),
             1
         );
 
@@ -2192,9 +2225,7 @@ mod audn_tests {
         let dec_upd = engine.ingest_audn(&m1_upd).await.expect("ingest m1_upd");
         assert_eq!(
             dec_upd.operation,
-            AudnOperation::Update {
-                target_id: m1.id
-            }
+            AudnOperation::Update { target_id: m1.id }
         );
         let stored = engine.store().get_memory(&m1.id).unwrap().unwrap();
         assert_eq!(stored.content, "Cache layer uses Memcached");
@@ -2208,15 +2239,15 @@ mod audn_tests {
         let dec_del = engine.ingest_audn(&m1_del).await.expect("ingest m1_del");
         assert_eq!(
             dec_del.operation,
-            AudnOperation::Delete {
-                target_id: m1.id
-            }
+            AudnOperation::Delete { target_id: m1.id }
         );
         assert_eq!(
-            engine.store().get_all_memories(None, None, 100).unwrap().len(),
+            engine
+                .store()
+                .get_all_memories(None, None, 100)
+                .unwrap()
+                .len(),
             0
         );
     }
 }
-
-

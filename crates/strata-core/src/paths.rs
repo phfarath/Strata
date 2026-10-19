@@ -27,7 +27,12 @@ pub fn canonical_resource_id_with_root(raw: &str, workspace_root: Option<&Path>)
         stripped.trim()
     } else if let Some((scheme, _rest)) = trimmed.split_once(':') {
         // Windows drive letter check: e.g. "C:\" or "c:/" has scheme.len() == 1
-        if scheme.len() == 1 && scheme.chars().next().is_some_and(|c| c.is_ascii_alphabetic()) {
+        if scheme.len() == 1
+            && scheme
+                .chars()
+                .next()
+                .is_some_and(|c| c.is_ascii_alphabetic())
+        {
             trimmed
         } else {
             // Non-file URI scheme: preserve as-is
@@ -51,7 +56,10 @@ pub fn canonical_resource_id_with_root(raw: &str, workspace_root: Option<&Path>)
     // If it starts with multiple slashes before a Windows drive letter: ///C:/...
     let trimmed_leading = p.trim_start_matches('/');
     if trimmed_leading.len() >= 2
-        && trimmed_leading.chars().next().is_some_and(|c| c.is_ascii_alphabetic())
+        && trimmed_leading
+            .chars()
+            .next()
+            .is_some_and(|c| c.is_ascii_alphabetic())
         && trimmed_leading.chars().nth(1) == Some(':')
     {
         p = trimmed_leading.to_string();
@@ -139,22 +147,10 @@ mod tests {
 
     #[test]
     fn test_canonical_resource_id_relative_files() {
-        assert_eq!(
-            canonical_resource_id("src/lib.rs"),
-            "file:src/lib.rs"
-        );
-        assert_eq!(
-            canonical_resource_id("./src/lib.rs"),
-            "file:src/lib.rs"
-        );
-        assert_eq!(
-            canonical_resource_id(r".\src\lib.rs"),
-            "file:src/lib.rs"
-        );
-        assert_eq!(
-            canonical_resource_id("file:src/lib.rs"),
-            "file:src/lib.rs"
-        );
+        assert_eq!(canonical_resource_id("src/lib.rs"), "file:src/lib.rs");
+        assert_eq!(canonical_resource_id("./src/lib.rs"), "file:src/lib.rs");
+        assert_eq!(canonical_resource_id(r".\src\lib.rs"), "file:src/lib.rs");
+        assert_eq!(canonical_resource_id("file:src/lib.rs"), "file:src/lib.rs");
         assert_eq!(
             canonical_resource_id("file:./src/lib.rs"),
             "file:src/lib.rs"
@@ -173,7 +169,10 @@ mod tests {
             "file:src/auth.rs"
         );
         assert_eq!(
-            canonical_resource_id_with_root("file:C:/Dev/mem-research/crates/strata-cli/src/main.rs", Some(root)),
+            canonical_resource_id_with_root(
+                "file:C:/Dev/mem-research/crates/strata-cli/src/main.rs",
+                Some(root)
+            ),
             "file:crates/strata-cli/src/main.rs"
         );
         // Case-insensitivity on Windows

@@ -101,7 +101,14 @@ impl Tool for MemorySearchTool {
 
         let results = self
             .engine
-            .search_as_of(query, scope.as_ref(), as_of_time, as_of_commit, as_of_branch, limit)
+            .search_as_of(
+                query,
+                scope.as_ref(),
+                as_of_time,
+                as_of_commit,
+                as_of_branch,
+                limit,
+            )
             .await?;
 
         Ok(json!(results))
@@ -1573,7 +1580,10 @@ impl Tool for SymbolGuardTool {
         let limit = params.get("limit").and_then(|v| v.as_u64()).unwrap_or(3) as usize;
 
         let start = Instant::now();
-        let anti_patterns = self.engine.get_symbol_anti_patterns(file, symbol, limit).await?;
+        let anti_patterns = self
+            .engine
+            .get_symbol_anti_patterns(file, symbol, limit)
+            .await?;
         let duration_us = start.elapsed().as_micros();
 
         let advisory_guardrails: Vec<String> = anti_patterns
@@ -1593,4 +1603,3 @@ impl Tool for SymbolGuardTool {
         }))
     }
 }
-

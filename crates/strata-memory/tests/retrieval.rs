@@ -59,7 +59,14 @@ async fn test_retrieval_does_not_prematurely_cut_off_old_memories_with_100_distr
         ..HybridRankerConfig::default()
     });
     let vec_results = vector_only_ranker
-        .retrieve(&store, Some(&embedder), query, Some(&Scope::Global), None, 5)
+        .retrieve(
+            &store,
+            Some(&embedder),
+            query,
+            Some(&Scope::Global),
+            None,
+            5,
+        )
         .await
         .expect("retrieve");
     assert!(
@@ -70,7 +77,14 @@ async fn test_retrieval_does_not_prematurely_cut_off_old_memories_with_100_distr
 
     // 5. Test hybrid retrieval with default ranker
     let results = ranker
-        .retrieve(&store, Some(&embedder), query, Some(&Scope::Global), None, 5)
+        .retrieve(
+            &store,
+            Some(&embedder),
+            query,
+            Some(&Scope::Global),
+            None,
+            5,
+        )
         .await
         .expect("retrieve");
 
@@ -80,7 +94,10 @@ async fn test_retrieval_does_not_prematurely_cut_off_old_memories_with_100_distr
     assert!(
         found_old_memory,
         "Old relevant memory must appear in top 3 despite 120 recent distractors, got: {:?}",
-        results.iter().map(|m| (&m.id, &m.summary)).collect::<Vec<_>>()
+        results
+            .iter()
+            .map(|m| (&m.id, &m.summary))
+            .collect::<Vec<_>>()
     );
 }
 
@@ -128,7 +145,14 @@ async fn test_continuous_recency_weighting_balances_semantic_and_temporal_decay(
     // 1. With continuous recency weighting (default recency_weight > 0.0)
     let ranker_with_recency = HybridRanker::with_default_config();
     let results = ranker_with_recency
-        .retrieve(&store, Some(&embedder), query, Some(&Scope::Global), None, 5)
+        .retrieve(
+            &store,
+            Some(&embedder),
+            query,
+            Some(&Scope::Global),
+            None,
+            5,
+        )
         .await
         .expect("retrieve");
 

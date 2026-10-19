@@ -41,9 +41,7 @@ impl AntiPatternParser {
                 .to_string(),
         };
 
-        let err = pattern
-            .error_class()
-            .unwrap_or(&pattern.error_type);
+        let err = pattern.error_class().unwrap_or(&pattern.error_type);
 
         let action = if let Some(corr) = pattern.verified_correction() {
             format!("Verified Correction: {corr}")
@@ -78,13 +76,19 @@ impl AntiPatternParser {
                             error_class = Some(format!("TS{code}"));
                         }
                     }
-                } else if trimmed.contains("panicked at") || trimmed.contains("assertion `left == right` failed") {
+                } else if trimmed.contains("panicked at")
+                    || trimmed.contains("assertion `left == right` failed")
+                {
                     error_class = Some("AssertionFailure".to_string());
                 } else if let Some(py_err) = extract_python_error_class(trimmed) {
                     error_class = Some(py_err);
-                } else if trimmed.contains("MODULE_NOT_FOUND") || trimmed.contains("Cannot find module") {
+                } else if trimmed.contains("MODULE_NOT_FOUND")
+                    || trimmed.contains("Cannot find module")
+                {
                     error_class = Some("MODULE_NOT_FOUND".to_string());
-                } else if trimmed.contains("EADDRINUSE") || trimmed.contains("Address already in use") {
+                } else if trimmed.contains("EADDRINUSE")
+                    || trimmed.contains("Address already in use")
+                {
                     error_class = Some("EADDRINUSE".to_string());
                 }
             }
@@ -129,7 +133,11 @@ impl AntiPatternParser {
                             }
                         }
                     }
-                } else if trimmed.contains(".ts") || trimmed.contains(".js") || trimmed.contains(".tsx") || trimmed.contains(".jsx") {
+                } else if trimmed.contains(".ts")
+                    || trimmed.contains(".js")
+                    || trimmed.contains(".tsx")
+                    || trimmed.contains(".jsx")
+                {
                     if let Some(f) = extract_js_ts_file(trimmed) {
                         file = Some(normalize_file_path(&f));
                     }
@@ -149,7 +157,11 @@ impl AntiPatternParser {
                             symbol = Some(clean_sym);
                         }
                     }
-                } else if trimmed.contains("::") && (trimmed.contains(".py::") || trimmed.contains("FAILED") || trimmed.contains("test ")) {
+                } else if trimmed.contains("::")
+                    && (trimmed.contains(".py::")
+                        || trimmed.contains("FAILED")
+                        || trimmed.contains("test "))
+                {
                     if let Some(colons) = trimmed.find("::") {
                         let after = &trimmed[colons + 2..];
                         let sym: String = after
@@ -174,7 +186,8 @@ impl AntiPatternParser {
                             symbol = Some(sub[..end].to_string());
                         }
                     }
-                } else if trimmed.contains("no method named `") && trimmed.contains("` found for ") {
+                } else if trimmed.contains("no method named `") && trimmed.contains("` found for ")
+                {
                     let m_start = trimmed.find("no method named `").unwrap() + 17;
                     if let Some(m_end) = trimmed[m_start..].find('`') {
                         let method = &trimmed[m_start..m_start + m_end];
@@ -199,7 +212,9 @@ impl AntiPatternParser {
                 } else if trimmed.starts_with("at ") {
                     if let Some(open_p) = trimmed.find('(') {
                         let func_part = trimmed[3..open_p].trim();
-                        let clean = func_part.trim_start_matches("async ").trim_start_matches("Object.");
+                        let clean = func_part
+                            .trim_start_matches("async ")
+                            .trim_start_matches("Object.");
                         if !clean.is_empty() && !clean.contains('/') && !clean.contains('\\') {
                             symbol = Some(clean.to_string());
                         }
@@ -212,7 +227,10 @@ impl AntiPatternParser {
     }
 
     /// Suggests verified correction for known error classes (Dual-Polarity).
-    pub fn suggest_verified_correction(error_class_or_type: &str, signature: &str) -> Option<&'static str> {
+    pub fn suggest_verified_correction(
+        error_class_or_type: &str,
+        signature: &str,
+    ) -> Option<&'static str> {
         let key = error_class_or_type.to_uppercase();
         if key.contains("E0502") || key.contains("BORROW") {
             Some("Clone reference or narrow mutable borrow scope before await")
@@ -230,7 +248,10 @@ impl AntiPatternParser {
             Some("Install missing package in workspace or virtual environment")
         } else if key.contains("EADDRINUSE") || key.contains("PORT") {
             Some("Bind dynamically to PORT environment variable instead of static port")
-        } else if key.contains("ASSERTION") || signature.contains("test_failure") || signature.contains("pytest") {
+        } else if key.contains("ASSERTION")
+            || signature.contains("test_failure")
+            || signature.contains("pytest")
+        {
             Some("Align test assertion with actual returned value")
         } else {
             None
@@ -272,7 +293,9 @@ impl AntiPatternParser {
         }
 
         if parsed_pattern.is_none()
-            && (cmd_lower.contains("pytest") || cmd_lower.contains("python") || cmd_lower.contains("py"))
+            && (cmd_lower.contains("pytest")
+                || cmd_lower.contains("python")
+                || cmd_lower.contains("py"))
         {
             parsed_pattern = Self::parse_python_error(command, &combined, context, scope.clone());
         }
@@ -300,7 +323,9 @@ impl AntiPatternParser {
 
         let mut pattern = match parsed_pattern {
             Some(p) => p,
-            None => Self::parse_generic_error(command, &combined, exit_code, context, scope.clone())?,
+            None => {
+                Self::parse_generic_error(command, &combined, exit_code, context, scope.clone())?
+            }
         };
 
         // Extract and anchor to symbol/file
@@ -812,7 +837,9 @@ fn truncate_surgical_guardrail(text: &str, max_tokens: usize) -> String {
 }
 
 fn normalize_file_path(p: &str) -> String {
-    let cleaned = p.trim().trim_matches(|c| c == '\'' || c == '\"' || c == '(' || c == ')' || c == ':');
+    let cleaned = p
+        .trim()
+        .trim_matches(|c| c == '\'' || c == '\"' || c == '(' || c == ')' || c == ':');
     let replaced = cleaned.replace('\\', "/");
     replaced.trim_start_matches("./").to_string()
 }
@@ -852,11 +879,12 @@ fn extract_js_ts_file(line: &str) -> Option<String> {
                 .map(|p| p + 1)
                 .unwrap_or(0);
             let path = &line[start..after_ext];
-            if !path.is_empty() && (path.contains('/') || path.contains('\\') || path.ends_with(ext)) {
+            if !path.is_empty()
+                && (path.contains('/') || path.contains('\\') || path.ends_with(ext))
+            {
                 return Some(path.to_string());
             }
         }
     }
     None
 }
-

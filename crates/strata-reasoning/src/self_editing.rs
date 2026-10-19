@@ -1,10 +1,10 @@
-use std::sync::Arc;
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
+use std::sync::Arc;
 use uuid::Uuid;
 
-use strata_core::errors::StrataError;
 use crate::engine::{ChatMessage, PromptContext, ReasoningEngine};
+use strata_core::errors::StrataError;
 
 /// Text gradient feedback capturing criticism, optional developer guidance,
 /// execution traces, and scalar evaluation scores.
@@ -151,7 +151,8 @@ pub struct ProceduralOptimizerConfig {
 impl Default for ProceduralOptimizerConfig {
     fn default() -> Self {
         Self {
-            learning_rate_guidance: "conservative incremental edits preserving core semantics and structure".to_string(),
+            learning_rate_guidance:
+                "conservative incremental edits preserving core semantics and structure".to_string(),
             max_versions: 50,
             temperature: 0.2,
         }
@@ -321,10 +322,7 @@ You MUST respond strictly with a valid JSON object matching this schema:
                 feedback.criticism, corr
             )
         } else {
-            format!(
-                "Refined rule to address critique: {}",
-                feedback.criticism
-            )
+            format!("Refined rule to address critique: {}", feedback.criticism)
         };
 
         (revised_content, rationale)
@@ -419,14 +417,19 @@ mod tests {
         .with_id("rule-tdd-1")
         .with_category("engineering");
 
-        let feedback = TextGradientFeedback::new("Timing violation: production code written before test failed")
-            .with_correction("Enforce Red phase verification before any implementation")
-            .with_trace("Execution trace: src/lib.rs modified prior to test creation")
-            .with_score(0.2);
+        let feedback = TextGradientFeedback::new(
+            "Timing violation: production code written before test failed",
+        )
+        .with_correction("Enforce Red phase verification before any implementation")
+        .with_trace("Execution trace: src/lib.rs modified prior to test creation")
+        .with_score(0.2);
 
         let ctx = ProceduralSelfEditor::build_optimization_prompt(&rule, &feedback);
 
-        assert!(ctx.system_prompt.is_some(), "System prompt should be present");
+        assert!(
+            ctx.system_prompt.is_some(),
+            "System prompt should be present"
+        );
         let sys = ctx.system_prompt.unwrap();
         assert!(sys.contains("text gradient") || sys.contains("optimizer"));
 
@@ -450,34 +453,48 @@ mod tests {
         assert_eq!(rule.versions.len(), 1);
 
         // Round 1: Strict TDD timing
-        let round1 = TextGradientFeedback::new("Agent wrote implementation before verifying test failure")
-            .with_correction("Strict TDD timing: Write failing test first and execute it");
+        let round1 =
+            TextGradientFeedback::new("Agent wrote implementation before verifying test failure")
+                .with_correction("Strict TDD timing: Write failing test first and execute it");
         let v2 = editor.optimize_rule(&mut rule, round1).await.unwrap();
 
         assert_eq!(rule.current_version, 2);
         assert_eq!(v2.version, 2);
         assert!(rule.current_content.contains("Strict TDD timing"));
-        assert!(v2.rationale.contains("Strict TDD timing") || v2.rationale.contains("Agent wrote implementation"));
+        assert!(
+            v2.rationale.contains("Strict TDD timing")
+                || v2.rationale.contains("Agent wrote implementation")
+        );
 
         // Round 2: Check failure reason in Red phase
-        let round2 = TextGradientFeedback::new("Test failed due to syntax error instead of expected assertion")
-            .with_correction("Verify Red phase failure reason matches expected assertion failure");
+        let round2 = TextGradientFeedback::new(
+            "Test failed due to syntax error instead of expected assertion",
+        )
+        .with_correction("Verify Red phase failure reason matches expected assertion failure");
         let v3 = editor.optimize_rule(&mut rule, round2).await.unwrap();
 
         assert_eq!(rule.current_version, 3);
         assert_eq!(v3.version, 3);
-        assert!(rule.current_content.contains("Verify Red phase failure reason"));
+        assert!(rule
+            .current_content
+            .contains("Verify Red phase failure reason"));
         assert!(rule.current_content.contains("Strict TDD timing"));
 
         // Round 3: Mock all network/disk I/O
-        let round3 = TextGradientFeedback::new("Test executed actual network I/O causing non-deterministic flakiness")
-            .with_correction("Mock all network and disk I/O in unit test suites");
+        let round3 = TextGradientFeedback::new(
+            "Test executed actual network I/O causing non-deterministic flakiness",
+        )
+        .with_correction("Mock all network and disk I/O in unit test suites");
         let v4 = editor.optimize_rule(&mut rule, round3).await.unwrap();
 
         assert_eq!(rule.current_version, 4);
         assert_eq!(v4.version, 4);
-        assert!(rule.current_content.contains("Mock all network and disk I/O"));
-        assert!(rule.current_content.contains("Verify Red phase failure reason"));
+        assert!(rule
+            .current_content
+            .contains("Mock all network and disk I/O"));
+        assert!(rule
+            .current_content
+            .contains("Verify Red phase failure reason"));
         assert!(rule.current_content.contains("Strict TDD timing"));
 
         assert_eq!(rule.versions.len(), 4);
@@ -507,7 +524,10 @@ mod tests {
         assert_eq!(rule.current_version, 2);
         assert_eq!(v2.version, 2);
         assert!(rule.current_content.contains("Verify failure reason"));
-        assert_eq!(v2.rationale, "Incorporated test failure verification step into TDD protocol");
+        assert_eq!(
+            v2.rationale,
+            "Incorporated test failure verification step into TDD protocol"
+        );
 
         mock.assert_called_times(1).await;
     }
@@ -541,10 +561,8 @@ mod tests {
     async fn test_refine_prompt_text_helper() {
         let editor = ProceduralSelfEditor::new();
         let prompt = "System: Analyze code.";
-        let feedback = vec![
-            TextGradientFeedback::new("Need security emphasis")
-                .with_correction("Check for memory leaks and race conditions"),
-        ];
+        let feedback = vec![TextGradientFeedback::new("Need security emphasis")
+            .with_correction("Check for memory leaks and race conditions")];
 
         let refined = editor.refine_prompt_text(prompt, &feedback).await.unwrap();
         assert!(refined.contains("Check for memory leaks and race conditions"));

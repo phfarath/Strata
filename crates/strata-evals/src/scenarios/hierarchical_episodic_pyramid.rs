@@ -78,9 +78,7 @@ type EpisodeDef = (
 /// 1. "Auth JWT Migration" (task_id: "task-auth-jwt", 6 episodes)
 /// 2. "Database SQLite Pooling" (task_id: "task-sqlite-pool", 6 episodes, contains failure step)
 /// 3. "CDC Outbox Worker" (task_id: "task-cdc-outbox", 6 episodes)
-pub fn build_synthetic_pyramid_episodes(
-    session_id: &str,
-) -> (Vec<EpisodeRecord>, Uuid, u32) {
+pub fn build_synthetic_pyramid_episodes(session_id: &str) -> (Vec<EpisodeRecord>, Uuid, u32) {
     let base_time: i64 = 1700000000;
     let mut episodes = Vec::with_capacity(18);
 
@@ -95,7 +93,10 @@ pub fn build_synthetic_pyramid_episodes(
         (
             "Generate RSA-256 Keypair for JWT Signing",
             0.85f32,
-            vec!["RSA keypair generated in PEM format", "Keys securely stored in vault"],
+            vec![
+                "RSA keypair generated in PEM format",
+                "Keys securely stored in vault",
+            ],
             vec![
                 (
                     "Execute openssl genrsa to generate private key in src/auth/jwt_private.pem",
@@ -135,7 +136,10 @@ pub fn build_synthetic_pyramid_episodes(
         (
             "Implement Token Minting and Claims Validation",
             0.90f32,
-            vec!["JWT claim structure standardized", "Issuer and audience validated"],
+            vec![
+                "JWT claim structure standardized",
+                "Issuer and audience validated",
+            ],
             vec![
                 (
                     "Define Claims struct in src/auth/claims.rs with sub, exp, iss, aud",
@@ -176,7 +180,10 @@ pub fn build_synthetic_pyramid_episodes(
         (
             "Add JWKS Endpoint for Asymmetric Key Rotation",
             0.80f32,
-            vec!["JWKS endpoint exposed at /.well-known/jwks.json", "Key ID kid added to header"],
+            vec![
+                "JWKS endpoint exposed at /.well-known/jwks.json",
+                "Key ID kid added to header",
+            ],
             vec![
                 (
                     "Create JWKS response serializer in src/auth/jwks.rs",
@@ -251,7 +258,10 @@ pub fn build_synthetic_pyramid_episodes(
         (
             "Migrate Refresh Token Revocation Storage to Redis",
             0.85f32,
-            vec!["Redis cluster store connected for blacklist", "Instant token revocation operational"],
+            vec![
+                "Redis cluster store connected for blacklist",
+                "Instant token revocation operational",
+            ],
             vec![
                 (
                     "Implement Redis connection pool in src/storage/redis.rs",
@@ -283,7 +293,10 @@ pub fn build_synthetic_pyramid_episodes(
         (
             "Add Middleware for Bearer Token Extraction and Rate Limiting",
             0.80f32,
-            vec!["Axum auth middleware attached", "Rate limit 100 req/s per user"],
+            vec![
+                "Axum auth middleware attached",
+                "Rate limit 100 req/s per user",
+            ],
             vec![
                 (
                     "Create BearerAuth layer in src/middleware/auth.rs",
@@ -571,7 +584,10 @@ pub fn build_synthetic_pyramid_episodes(
         (
             "Create Outbox Events Table with Sequence Number",
             0.80f32,
-            vec!["Table outbox_events created with BIGSERIAL id", "Payload stored as JSONB"],
+            vec![
+                "Table outbox_events created with BIGSERIAL id",
+                "Payload stored as JSONB",
+            ],
             vec![
                 (
                     "Apply migration in migrations/003_outbox.sql",
@@ -600,7 +616,10 @@ pub fn build_synthetic_pyramid_episodes(
         (
             "Implement Transactional Outbox Event Publisher",
             0.85f32,
-            vec!["Domain events committed atomically with entity state", "Publisher helper unit-tested"],
+            vec![
+                "Domain events committed atomically with entity state",
+                "Publisher helper unit-tested",
+            ],
             vec![
                 (
                     "Implement publish_event in src/cdc/publisher.rs",
@@ -630,7 +649,10 @@ pub fn build_synthetic_pyramid_episodes(
         (
             "Implement Polling CDC Engine with Batch Fetch",
             0.80f32,
-            vec!["Poll loop fetches 50 pending events per tick", "Row-level locking with SKIP LOCKED"],
+            vec![
+                "Poll loop fetches 50 pending events per tick",
+                "Row-level locking with SKIP LOCKED",
+            ],
             vec![
                 (
                     "Implement batch query in src/cdc/poller.rs with SELECT FOR UPDATE SKIP LOCKED",
@@ -661,7 +683,10 @@ pub fn build_synthetic_pyramid_episodes(
         (
             "Add Idempotent Kafka Delivery with Ack Receipts",
             0.90f32,
-            vec!["Kafka producer configured with acks=all", "Deduplication key set to event UUID"],
+            vec![
+                "Kafka producer configured with acks=all",
+                "Deduplication key set to event UUID",
+            ],
             vec![
                 (
                     "Configure rdkafka producer in src/cdc/kafka.rs",
@@ -696,7 +721,10 @@ pub fn build_synthetic_pyramid_episodes(
         (
             "Implement Dead Letter Queue for Poison Pill Events",
             0.85f32,
-            vec!["DLQ routing active after 3 failed retries", "Poison pill isolation confirmed"],
+            vec![
+                "DLQ routing active after 3 failed retries",
+                "Poison pill isolation confirmed",
+            ],
             vec![
                 (
                     "Add retry counter and max_retries check in src/cdc/retry.rs",
@@ -727,7 +755,10 @@ pub fn build_synthetic_pyramid_episodes(
         (
             "Add Graceful Shutdown and Checkpointing on SIGTERM",
             0.75f32,
-            vec!["Worker drains in-flight batches before exit", "Zero message loss verified on kill"],
+            vec![
+                "Worker drains in-flight batches before exit",
+                "Zero message loss verified on kill",
+            ],
             vec![
                 (
                     "Listen for tokio::signal::ctrl_c in src/cdc/worker.rs",
@@ -809,7 +840,10 @@ pub async fn run_hierarchical_episodic_pyramid_eval() -> Result<HierarchicalPyra
     let total_episodes = episodes.len();
     let total_steps: usize = episodes.iter().map(|e| e.event_trace.len()).sum();
 
-    println!("▶ Total Synthetic Episodes: {} across 3 clusters", total_episodes);
+    println!(
+        "▶ Total Synthetic Episodes: {} across 3 clusters",
+        total_episodes
+    );
     println!("▶ Total Raw Event Trace Steps: {}", total_steps);
 
     // Compute raw Tier 1 tokens across all steps
@@ -819,7 +853,10 @@ pub async fn run_hierarchical_episodic_pyramid_eval() -> Result<HierarchicalPyra
         .map(estimate_step_tokens)
         .sum();
 
-    println!("▶ Raw Tier 1 Event Trace Token Footprint: ~{} tokens", raw_tier1_tokens);
+    println!(
+        "▶ Raw Tier 1 Event Trace Token Footprint: ~{} tokens",
+        raw_tier1_tokens
+    );
 
     // 2. Open Store 1 and write episodes
     let store1 = Arc::new(SqliteStore::open_in_memory()?);
@@ -834,12 +871,8 @@ pub async fn run_hierarchical_episodic_pyramid_eval() -> Result<HierarchicalPyra
 
     // 3. Run Aggregation on Store 1
     let t0 = Instant::now();
-    let rollups1 = EpisodicPyramidEngine::aggregate_session_rollups(
-        &store1,
-        Some(session_id),
-        &config,
-        None,
-    )?;
+    let rollups1 =
+        EpisodicPyramidEngine::aggregate_session_rollups(&store1, Some(session_id), &config, None)?;
     let latency_ms = t0.elapsed().as_secs_f64() * 1000.0;
 
     println!("▶ Generated Tier 2 Milestone Rollups: {}", rollups1.len());
@@ -860,9 +893,18 @@ pub async fn run_hierarchical_episodic_pyramid_eval() -> Result<HierarchicalPyra
     let compression_pct = compression_ratio * 100.0;
 
     println!("\n📊 [Assertion 1: Memory Compression]");
-    println!("  • Raw Tier 1 Steps Tokens:    ~{} tokens", raw_tier1_tokens);
-    println!("  • Tier 2 Rollups Tokens:      ~{} tokens", rollup_tier2_tokens);
-    println!("  • Memory Compression Ratio:   {:.1}% (Target: >= 85.0%)", compression_pct);
+    println!(
+        "  • Raw Tier 1 Steps Tokens:    ~{} tokens",
+        raw_tier1_tokens
+    );
+    println!(
+        "  • Tier 2 Rollups Tokens:      ~{} tokens",
+        rollup_tier2_tokens
+    );
+    println!(
+        "  • Memory Compression Ratio:   {:.1}% (Target: >= 85.0%)",
+        compression_pct
+    );
 
     if compression_pct < 85.0 {
         bail!(
@@ -870,7 +912,10 @@ pub async fn run_hierarchical_episodic_pyramid_eval() -> Result<HierarchicalPyra
             compression_pct
         );
     }
-    println!("  ✓ Memory compression assertion PASSED ({:.1}% >= 85%)", compression_pct);
+    println!(
+        "  ✓ Memory compression assertion PASSED ({:.1}% >= 85%)",
+        compression_pct
+    );
 
     // -------------------------------------------------------------------------
     // Assertion 2: Drill-Down Accuracy (100% Precision)
@@ -883,12 +928,19 @@ pub async fn run_hierarchical_episodic_pyramid_eval() -> Result<HierarchicalPyra
         .find(|r| r.task_id.as_deref() == Some("task-sqlite-pool"))
         .ok_or_else(|| anyhow::anyhow!("SQLite pool rollup not found"))?;
 
-    println!("  • Inspecting Rollup: ID {} ({})", pool_rollup.id, pool_rollup.summary);
+    println!(
+        "  • Inspecting Rollup: ID {} ({})",
+        pool_rollup.id, pool_rollup.summary
+    );
 
     let tree = EpisodicPyramidEngine::drill_down(&store1, &pool_rollup.id)?
         .ok_or_else(|| anyhow::anyhow!("DrillDownTree not found for rollup {}", pool_rollup.id))?;
 
-    println!("  • DrillDownTree: {} leaves, {} total steps", tree.leaves.len(), tree.total_steps);
+    println!(
+        "  • DrillDownTree: {} leaves, {} total steps",
+        tree.leaves.len(),
+        tree.total_steps
+    );
 
     // Filter tree leaves for failures
     let failing_leaves: Vec<&EpisodeRecord> = tree
@@ -943,8 +995,14 @@ pub async fn run_hierarchical_episodic_pyramid_eval() -> Result<HierarchicalPyra
     }
 
     let drill_down_accuracy = 1.0f64;
-    println!("  • Pinpointed Failure Episode: {} ({})", found_fail_ep.id, found_fail_ep.summary);
-    println!("  • Pinpointed Step Index:      Step {} -> {}", found_fail_step.step_index, found_fail_step.action);
+    println!(
+        "  • Pinpointed Failure Episode: {} ({})",
+        found_fail_ep.id, found_fail_ep.summary
+    );
+    println!(
+        "  • Pinpointed Step Index:      Step {} -> {}",
+        found_fail_step.step_index, found_fail_step.action
+    );
     println!("  • Error Identified:           {}", err_msg);
     println!("  ✓ Drill-down accuracy assertion PASSED (100.0% precision)");
 
@@ -958,12 +1016,8 @@ pub async fn run_hierarchical_episodic_pyramid_eval() -> Result<HierarchicalPyra
         store2.write_episode(ep)?;
     }
 
-    let rollups2 = EpisodicPyramidEngine::aggregate_session_rollups(
-        &store2,
-        Some(session_id),
-        &config,
-        None,
-    )?;
+    let rollups2 =
+        EpisodicPyramidEngine::aggregate_session_rollups(&store2, Some(session_id), &config, None)?;
 
     if rollups1.len() != rollups2.len() {
         bail!(
@@ -975,7 +1029,11 @@ pub async fn run_hierarchical_episodic_pyramid_eval() -> Result<HierarchicalPyra
 
     for (i, (r1, r2)) in rollups1.iter().zip(&rollups2).enumerate() {
         if r1.id != r2.id {
-            bail!("Determinism mismatch on rollup {i} ID: {} vs {}", r1.id, r2.id);
+            bail!(
+                "Determinism mismatch on rollup {i} ID: {} vs {}",
+                r1.id,
+                r2.id
+            );
         }
         if r1.summary != r2.summary {
             bail!(
@@ -1007,7 +1065,13 @@ pub async fn run_hierarchical_episodic_pyramid_eval() -> Result<HierarchicalPyra
 
     println!("  • Store 1 and Store 2 generated IDENTICAL rollups:");
     for r in &rollups1 {
-        println!("    - ID: {} | Salience: {:.2} | Children: {} | Summary: {}", r.id, r.salience_score, r.child_ids.len(), r.summary);
+        println!(
+            "    - ID: {} | Salience: {:.2} | Children: {} | Summary: {}",
+            r.id,
+            r.salience_score,
+            r.child_ids.len(),
+            r.summary
+        );
     }
     println!("  ✓ Determinism assertion PASSED (100% identical outputs)");
 
@@ -1026,15 +1090,24 @@ pub async fn run_hierarchical_episodic_pyramid_eval() -> Result<HierarchicalPyra
         bail!("Expected compact report to have expanded = false");
     }
     if compact_report.rollups_count != 3 {
-        bail!("Expected 3 rollups in compact report, got {}", compact_report.rollups_count);
+        bail!(
+            "Expected 3 rollups in compact report, got {}",
+            compact_report.rollups_count
+        );
     }
     if compact_report.total_steps != 0 {
-        bail!("Expected zero execution steps emitted in compact report, got {}", compact_report.total_steps);
+        bail!(
+            "Expected zero execution steps emitted in compact report, got {}",
+            compact_report.total_steps
+        );
     }
     if !compact_report.trees.is_empty() {
         bail!("Expected empty trees in compact report");
     }
-    println!("  • Compact Tier 2 View: 3 rollups, 0 raw steps emitted (Tokens preserved: {:.1}%)", compression_pct);
+    println!(
+        "  • Compact Tier 2 View: 3 rollups, 0 raw steps emitted (Tokens preserved: {:.1}%)",
+        compression_pct
+    );
 
     // 4b. On-demand expansion: expand_episodes = true for task-sqlite-pool
     let expand_filter = PyramidFilter::new()
@@ -1046,10 +1119,16 @@ pub async fn run_hierarchical_episodic_pyramid_eval() -> Result<HierarchicalPyra
         bail!("Expected expanded report to have expanded = true");
     }
     if expanded_report.rollups_count != 1 {
-        bail!("Expected 1 rollup for task-sqlite-pool, got {}", expanded_report.rollups_count);
+        bail!(
+            "Expected 1 rollup for task-sqlite-pool, got {}",
+            expanded_report.rollups_count
+        );
     }
     if expanded_report.trees.len() != 1 {
-        bail!("Expected 1 tree for task-sqlite-pool, got {}", expanded_report.trees.len());
+        bail!(
+            "Expected 1 tree for task-sqlite-pool, got {}",
+            expanded_report.trees.len()
+        );
     }
 
     let sqlite_tree = &expanded_report.trees[0];
@@ -1060,15 +1139,30 @@ pub async fn run_hierarchical_episodic_pyramid_eval() -> Result<HierarchicalPyra
         .collect();
 
     if failing_leaves_exp.len() != 1 {
-        bail!("Expected exactly 1 failing leaf in on-demand expansion, got {}", failing_leaves_exp.len());
+        bail!(
+            "Expected exactly 1 failing leaf in on-demand expansion, got {}",
+            failing_leaves_exp.len()
+        );
     }
     let fail_ep = failing_leaves_exp[0];
     if fail_ep.id != expected_fail_ep_id {
-        bail!("On-demand expansion failed to pinpoint expected failure episode: {} vs {}", fail_ep.id, expected_fail_ep_id);
+        bail!(
+            "On-demand expansion failed to pinpoint expected failure episode: {} vs {}",
+            fail_ep.id,
+            expected_fail_ep_id
+        );
     }
-    let fail_step = fail_ep.event_trace.iter().find(|s| s.error.is_some()).unwrap();
+    let fail_step = fail_ep
+        .event_trace
+        .iter()
+        .find(|s| s.error.is_some())
+        .unwrap();
     if fail_step.step_index != expected_fail_step_idx {
-        bail!("On-demand expansion failed to pinpoint step index: {} vs {}", fail_step.step_index, expected_fail_step_idx);
+        bail!(
+            "On-demand expansion failed to pinpoint step index: {} vs {}",
+            fail_step.step_index,
+            expected_fail_step_idx
+        );
     }
     println!("  • On-demand Progressive Expansion: Pinpointed failing episode {} (Step {}) with 100% precision", fail_ep.id, fail_step.step_index);
 
@@ -1080,12 +1174,21 @@ pub async fn run_hierarchical_episodic_pyramid_eval() -> Result<HierarchicalPyra
         .with_end_time(1700000000 + 1600);
     let time_report = pyramid_store.drill_down_progressive(&time_filter, false)?;
     if time_report.rollups_count != 1 {
-        bail!("Expected temporal filter to isolate exactly 1 rollup (SQLite pool), got {}", time_report.rollups_count);
+        bail!(
+            "Expected temporal filter to isolate exactly 1 rollup (SQLite pool), got {}",
+            time_report.rollups_count
+        );
     }
     if time_report.summaries[0].task_id.as_deref() != Some("task-sqlite-pool") {
-        bail!("Expected isolated rollup to be task-sqlite-pool, got {:?}", time_report.summaries[0].task_id);
+        bail!(
+            "Expected isolated rollup to be task-sqlite-pool, got {:?}",
+            time_report.summaries[0].task_id
+        );
     }
-    println!("  • Temporal Interval Filtering: Accurately isolated cluster '{}' across timestamp window", time_report.summaries[0].task_id.as_deref().unwrap_or(""));
+    println!(
+        "  • Temporal Interval Filtering: Accurately isolated cluster '{}' across timestamp window",
+        time_report.summaries[0].task_id.as_deref().unwrap_or("")
+    );
 
     println!("  ✓ Progressive drill-down and temporal filtering assertion PASSED (100% precision)");
 
@@ -1130,7 +1233,10 @@ mod tests {
             report.drill_down_accuracy, 1.0,
             "Drill down accuracy must be 1.0 (100%)"
         );
-        assert!(report.is_deterministic, "Pyramid aggregation must be deterministic");
+        assert!(
+            report.is_deterministic,
+            "Pyramid aggregation must be deterministic"
+        );
         assert_eq!(report.clusters_count, 3, "Expected 3 milestone clusters");
     }
 }

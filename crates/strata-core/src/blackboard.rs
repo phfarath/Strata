@@ -185,7 +185,9 @@ impl TaskRecord {
     }
 
     pub fn is_ready(&self, completed_tasks: &[String]) -> bool {
-        self.dependencies.iter().all(|dep| completed_tasks.contains(dep))
+        self.dependencies
+            .iter()
+            .all(|dep| completed_tasks.contains(dep))
     }
 
     /// Resolves the effective task payload, prioritizing explicit `payload`,
@@ -298,8 +300,14 @@ mod tests {
     #[test]
     fn test_task_status_string_conversion() {
         assert_eq!(TaskStatus::Pending.as_str(), "pending");
-        assert_eq!("pending".parse::<TaskStatus>().unwrap(), TaskStatus::Pending);
-        assert_eq!("completed".parse::<TaskStatus>().unwrap(), TaskStatus::Completed);
+        assert_eq!(
+            "pending".parse::<TaskStatus>().unwrap(),
+            TaskStatus::Pending
+        );
+        assert_eq!(
+            "completed".parse::<TaskStatus>().unwrap(),
+            TaskStatus::Completed
+        );
         assert!("invalid".parse::<TaskStatus>().is_err());
     }
 
@@ -338,8 +346,8 @@ mod tests {
     #[test]
     fn test_task_payload_types_and_resolution() {
         // 1. Explicit ShellCommand payload
-        let cmd_task = TaskRecord::new("t-1", "Run unit tests")
-            .with_payload(TaskPayload::ShellCommand {
+        let cmd_task =
+            TaskRecord::new("t-1", "Run unit tests").with_payload(TaskPayload::ShellCommand {
                 command: "cargo test --workspace".to_string(),
                 cwd: Some("/workspace".to_string()),
                 timeout_secs: Some(120),
@@ -348,8 +356,8 @@ mod tests {
         assert!(cmd_task.is_executable_by_worker());
 
         // 2. Explicit AgentPrompt payload
-        let prompt_task = TaskRecord::new("t-2", "Design auth flow")
-            .with_payload(TaskPayload::AgentPrompt {
+        let prompt_task =
+            TaskRecord::new("t-2", "Design auth flow").with_payload(TaskPayload::AgentPrompt {
                 prompt: "Implement JWT refresh flow".to_string(),
                 context_files: vec!["src/auth.rs".to_string()],
                 expected_artifacts: vec!["src/token.rs".to_string()],
@@ -358,8 +366,8 @@ mod tests {
         assert!(!prompt_task.is_executable_by_worker());
 
         // 3. Explicit ManualVerification payload
-        let verify_task = TaskRecord::new("t-3", "QA Signoff")
-            .with_payload(TaskPayload::ManualVerification {
+        let verify_task =
+            TaskRecord::new("t-3", "QA Signoff").with_payload(TaskPayload::ManualVerification {
                 instructions: "Verify login screen on mobile device".to_string(),
                 checklist: vec!["Check error banner".to_string()],
             });
@@ -378,8 +386,8 @@ mod tests {
         }
 
         // 5. Backward-compatible heuristic: '$ ' prefix in description
-        let dollar_cmd_task = TaskRecord::new("t-5", "Check linter")
-            .with_description("$ cargo clippy --all-targets");
+        let dollar_cmd_task =
+            TaskRecord::new("t-5", "Check linter").with_description("$ cargo clippy --all-targets");
         assert_eq!(dollar_cmd_task.payload_type(), "shell_command");
         assert!(dollar_cmd_task.is_executable_by_worker());
 

@@ -68,11 +68,17 @@ pub async fn run_sync(args: SyncArgs, store: Arc<SqliteStore>) -> Result<()> {
             println!("Memories Merged:          {}", report.memories_merged);
             println!("Semantic Facts Merged:    {}", report.semantic_facts_merged);
             println!("Events Merged:            {}", report.events_merged);
-            println!("Episodic Memories Merged: {}", report.episodic_memories_merged);
+            println!(
+                "Episodic Memories Merged: {}",
+                report.episodic_memories_merged
+            );
             println!("Episodes Merged:          {}", report.episodes_merged);
             println!("─────────────────────────────────────────");
             println!("Total Records Promoted:   {}", report.total_merged());
-            println!("✓ Successfully unified memories into '{}'.", report.target_branch);
+            println!(
+                "✓ Successfully unified memories into '{}'.",
+                report.target_branch
+            );
         }
         return Ok(());
     }

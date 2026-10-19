@@ -124,34 +124,44 @@ async fn generate_token_flow(
     args: &PromoteArgs,
     engine: Arc<SqliteMemoryEngine>,
 ) -> Result<()> {
-    let is_fact = args.entity_type.to_lowercase() == "fact" || args.entity_type.to_lowercase() == "semantic";
+    let is_fact =
+        args.entity_type.to_lowercase() == "fact" || args.entity_type.to_lowercase() == "semantic";
     let (content_hash, entity_desc) = if is_fact {
-        let fact = engine.store().get_semantic_fact(id)?
+        let fact = engine
+            .store()
+            .get_semantic_fact(id)?
             .with_context(|| format!("Semantic fact with ID '{}' not found", id))?;
         (
             blake3::hash(fact.statement.as_bytes()).to_hex().to_string(),
             format!("Semantic Fact: \"{}\"", fact.statement),
         )
     } else {
-        let mem = engine.store().get_memory(id)?
+        let mem = engine
+            .store()
+            .get_memory(id)?
             .with_context(|| format!("Memory record with ID '{}' not found", id))?;
         (
             blake3::hash(mem.content.as_bytes()).to_hex().to_string(),
-            format!("Memory: \"{}\"", mem.summary.as_deref().unwrap_or(&mem.content)),
+            format!(
+                "Memory: \"{}\"",
+                mem.summary.as_deref().unwrap_or(&mem.content)
+            ),
         )
     };
 
     let approver = detect_human_user(args.approver.as_deref());
     let ttl_seconds = 3600u64;
 
-    let token = engine.generate_approval_token(
-        id,
-        if is_fact { "fact" } else { "memory" },
-        &content_hash,
-        &approver,
-        ttl_seconds,
-        args.reason.as_deref(),
-    ).with_context(|| "Failed to generate verifiable approval token")?;
+    let token = engine
+        .generate_approval_token(
+            id,
+            if is_fact { "fact" } else { "memory" },
+            &content_hash,
+            &approver,
+            ttl_seconds,
+            args.reason.as_deref(),
+        )
+        .with_context(|| "Failed to generate verifiable approval token")?;
 
     if args.json {
         let res = serde_json::json!({
@@ -280,7 +290,8 @@ async fn promote_memory_record(
         .await
         .with_context(|| format!("Failed to promote memory '{}' to Core Tier", id))?;
 
-    let provenance = promoted.build_provenance(Some("Promoted to Core Tier with verified human approval"));
+    let provenance =
+        promoted.build_provenance(Some("Promoted to Core Tier with verified human approval"));
 
     if args.json {
         let res = serde_json::json!({
@@ -392,7 +403,9 @@ async fn promote_to_global_store(
         .await
         .with_context(|| format!("Failed to promote memory '{}' to Global Store", id))?;
 
-    let provenance = promoted.build_provenance(Some("Promoted to Global Store with verified human approval"));
+    let provenance = promoted.build_provenance(Some(
+        "Promoted to Global Store with verified human approval",
+    ));
 
     if args.json {
         let res = serde_json::json!({
@@ -512,7 +525,8 @@ async fn promote_semantic_fact(
         .await
         .with_context(|| format!("Failed to promote semantic fact '{}' to Core Tier", id))?;
 
-    let provenance = promoted.build_provenance(Some("Promoted to Core Tier with verified human approval"));
+    let provenance =
+        promoted.build_provenance(Some("Promoted to Core Tier with verified human approval"));
 
     if args.json {
         let res = serde_json::json!({
@@ -656,7 +670,14 @@ mod tests {
         // Retrieve token directly using engine's store to get the exact token string
         let hash = blake3::hash(mem.content.as_bytes()).to_hex().to_string();
         let token = engine
-            .generate_approval_token(&mem.id, "memory", &hash, "alice", 3600, Some("Arch review approval"))
+            .generate_approval_token(
+                &mem.id,
+                "memory",
+                &hash,
+                "alice",
+                3600,
+                Some("Arch review approval"),
+            )
             .unwrap();
 
         // 2. Consume token to promote
@@ -672,7 +693,9 @@ mod tests {
             json: true,
         };
 
-        run_promote(promote_args, Arc::clone(&engine)).await.unwrap();
+        run_promote(promote_args, Arc::clone(&engine))
+            .await
+            .unwrap();
 
         let promoted = engine.store().get_memory(&mem.id).unwrap().unwrap();
         assert_eq!(promoted.tier, MemoryTier::Core);
@@ -684,7 +707,9 @@ mod tests {
 
         // Reusing same token must fail directly and via promote
         assert!(
-            engine.verify_and_consume_approval_token(&token, &mem.id, &hash).is_err(),
+            engine
+                .verify_and_consume_approval_token(&token, &mem.id, &hash)
+                .is_err(),
             "Direct reuse of consumed token must fail"
         );
 
@@ -759,11 +784,21 @@ mod tests {
         )
         .with_tier(MemoryTier::Working);
 
-        engine.store().insert_or_update_semantic_fact(&fact).unwrap();
+        engine
+            .store()
+            .insert_or_update_semantic_fact(&fact)
+            .unwrap();
 
         let hash = blake3::hash(fact.statement.as_bytes()).to_hex().to_string();
         let token = engine
-            .generate_approval_token(&fact.id, "fact", &hash, "security-lead", 1800, Some("RFC-011"))
+            .generate_approval_token(
+                &fact.id,
+                "fact",
+                &hash,
+                "security-lead",
+                1800,
+                Some("RFC-011"),
+            )
             .unwrap();
 
         let args = PromoteArgs {

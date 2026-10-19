@@ -120,8 +120,14 @@ async fn test_lifecycle_criterion_2_deprecated_and_expired_exclusion_in_retrieva
     )
     .with_summary("Expired Redis cache");
     let mut exp_meta = serde_json::Map::new();
-    exp_meta.insert("valid_from".to_string(), serde_json::json!((now - Duration::days(60)).to_rfc3339()));
-    exp_meta.insert("valid_until".to_string(), serde_json::json!((now - Duration::days(1)).to_rfc3339()));
+    exp_meta.insert(
+        "valid_from".to_string(),
+        serde_json::json!((now - Duration::days(60)).to_rfc3339()),
+    );
+    exp_meta.insert(
+        "valid_until".to_string(),
+        serde_json::json!((now - Duration::days(1)).to_rfc3339()),
+    );
     mem_expired.metadata = serde_json::Value::Object(exp_meta);
     store.insert_or_update_memory(&mem_expired).unwrap();
 
@@ -145,23 +151,37 @@ async fn test_lifecycle_criterion_2_deprecated_and_expired_exclusion_in_retrieva
     )
     .with_summary("Active DragonFly cache");
     let mut act_meta = serde_json::Map::new();
-    act_meta.insert("valid_from".to_string(), serde_json::json!((now - Duration::days(5)).to_rfc3339()));
-    act_meta.insert("valid_until".to_string(), serde_json::json!((now + Duration::days(365)).to_rfc3339()));
+    act_meta.insert(
+        "valid_from".to_string(),
+        serde_json::json!((now - Duration::days(5)).to_rfc3339()),
+    );
+    act_meta.insert(
+        "valid_until".to_string(),
+        serde_json::json!((now + Duration::days(365)).to_rfc3339()),
+    );
     mem_active.metadata = serde_json::Value::Object(act_meta);
     store.insert_or_update_memory(&mem_active).unwrap();
 
     // 4. Deprecated SemanticFact
     let mut fact_deprecated = SemanticFact::new("Memcached is deprecated", "cache", Scope::Global);
     fact_deprecated.status = FactStatus::Deprecated;
-    store.insert_or_update_semantic_fact(&fact_deprecated).unwrap();
+    store
+        .insert_or_update_semantic_fact(&fact_deprecated)
+        .unwrap();
 
     // 5. Active SemanticFact
-    let mut fact_active = SemanticFact::new("DragonFly is the active cache engine", "cache", Scope::Global);
+    let mut fact_active = SemanticFact::new(
+        "DragonFly is the active cache engine",
+        "cache",
+        Scope::Global,
+    );
     fact_active.status = FactStatus::Active;
     store.insert_or_update_semantic_fact(&fact_active).unwrap();
 
     // A. Verify store.search_fts_as_of excludes expired and deprecated when as_of_time is None
-    let fts_results = store.search_fts_as_of("cache connection", None, None, None, None, 10).unwrap();
+    let fts_results = store
+        .search_fts_as_of("cache connection", None, None, None, None, 10)
+        .unwrap();
     assert!(
         !fts_results.iter().any(|(m, _)| m.id == mem_expired.id),
         "Expired memory must be excluded by search_fts_as_of"
@@ -193,7 +213,9 @@ async fn test_lifecycle_criterion_2_deprecated_and_expired_exclusion_in_retrieva
     );
 
     // C. Verify store.get_all_memories_as_of excludes expired and deprecated
-    let all_memories = store.get_all_memories_as_of(None, None, None, None, None, 10).unwrap();
+    let all_memories = store
+        .get_all_memories_as_of(None, None, None, None, None, 10)
+        .unwrap();
     assert!(
         !all_memories.iter().any(|m| m.id == mem_expired.id),
         "Expired memory must be excluded by get_all_memories_as_of"
@@ -204,7 +226,9 @@ async fn test_lifecycle_criterion_2_deprecated_and_expired_exclusion_in_retrieva
     );
 
     // D. Verify store.search_semantic_facts_as_of excludes deprecated facts
-    let fact_results = store.search_semantic_facts_as_of("cache", None, None, None, 10).unwrap();
+    let fact_results = store
+        .search_semantic_facts_as_of("cache", None, None, None, 10)
+        .unwrap();
     assert!(
         !fact_results.iter().any(|(f, _)| f.id == fact_deprecated.id),
         "Deprecated fact must be excluded by search_semantic_facts_as_of"
@@ -215,7 +239,10 @@ async fn test_lifecycle_criterion_2_deprecated_and_expired_exclusion_in_retrieva
     );
 
     // E. Verify MemoryEngine::search excludes expired and deprecated
-    let engine_results = engine.search("cache", None, 10).await.expect("engine search");
+    let engine_results = engine
+        .search("cache", None, 10)
+        .await
+        .expect("engine search");
     assert!(
         !engine_results.iter().any(|m| m.id == mem_expired.id),
         "Engine search must filter out expired memories"
@@ -267,7 +294,10 @@ fn test_lifecycle_criterion_3_atomic_replacement_of_fact_dependencies() {
     assert_eq!(deps_after.len(), 2);
     assert!(deps_after.contains(&dep_a));
     assert!(deps_after.contains(&dep_c));
-    assert!(!deps_after.contains(&dep_b), "Orphan dependency dep_b must be removed after depends_on update!");
+    assert!(
+        !deps_after.contains(&dep_b),
+        "Orphan dependency dep_b must be removed after depends_on update!"
+    );
 }
 
 // ============================================================================
@@ -309,7 +339,8 @@ async fn test_lifecycle_criterion_4_memory_write_routed_through_audn_pipeline() 
 
     let all_memories_after = store.get_all_memories(None, None, 10).unwrap();
     assert_eq!(
-        all_memories_after.len(), 1,
+        all_memories_after.len(),
+        1,
         "AUDN pipeline must deduplicate identical writes as Noop, preventing redundant rows!"
     );
 }
@@ -335,22 +366,16 @@ async fn test_lifecycle_criterion_5_context_rot_quarantine_and_decay_on_feedback
     store.insert_or_update_memory(&poisoned_mem).unwrap();
 
     // 1. Simulate agent retrieval exposing memory to context (1 search injection)
-    let inj_search = MemoryInjectionRecord::new(
-        poisoned_mem.id,
-        "sess-rot",
-        InjectionOutcome::Success,
-    )
-    .with_command("cargo check");
+    let inj_search =
+        MemoryInjectionRecord::new(poisoned_mem.id, "sess-rot", InjectionOutcome::Success)
+            .with_command("cargo check");
     store.record_injection_outcome(&inj_search).unwrap();
 
     // 2. Simulate 3 consecutive negative feedback events / command execution failures
     for i in 1..=3 {
-        let inj_fail = MemoryInjectionRecord::new(
-            poisoned_mem.id,
-            "sess-rot",
-            InjectionOutcome::Failure,
-        )
-        .with_command(format!("python2 run_mocks.py attempt {i}"));
+        let inj_fail =
+            MemoryInjectionRecord::new(poisoned_mem.id, "sess-rot", InjectionOutcome::Failure)
+                .with_command(format!("python2 run_mocks.py attempt {i}"));
         store.record_injection_outcome(&inj_fail).unwrap();
     }
 
@@ -361,7 +386,10 @@ async fn test_lifecycle_criterion_5_context_rot_quarantine_and_decay_on_feedback
         .expect("evaluate");
     assert_eq!(efficacy.total_injections, 4);
     assert_eq!(efficacy.failure_count, 3);
-    assert!(efficacy.is_poisoned, "Memory with 75% failure rate must be classified as poisoned");
+    assert!(
+        efficacy.is_poisoned,
+        "Memory with 75% failure rate must be classified as poisoned"
+    );
 
     // Run apply_penalty_decay (as performed by daemon / feedback / dream cycle)
     let decayed_count = detector.apply_penalty_decay(store).expect("apply decay");

@@ -247,8 +247,12 @@ mod tests {
     #[test]
     fn test_app_tab_cycling() {
         let engine = Arc::new(SqliteMemoryEngine::open_in_memory(None).expect("engine"));
-        let mut app = App::new(engine, PathBuf::from("test.db"), "TestWorkspace".to_string())
-            .expect("app new");
+        let mut app = App::new(
+            engine,
+            PathBuf::from("test.db"),
+            "TestWorkspace".to_string(),
+        )
+        .expect("app new");
 
         assert_eq!(app.active_tab, AppTab::Overview);
         app.next_tab();
@@ -269,8 +273,12 @@ mod tests {
     #[test]
     fn test_app_swarm_row_navigation() {
         let engine = Arc::new(SqliteMemoryEngine::open_in_memory(None).expect("engine"));
-        let mut app = App::new(engine, PathBuf::from("test.db"), "TestWorkspace".to_string())
-            .expect("app new");
+        let mut app = App::new(
+            engine,
+            PathBuf::from("test.db"),
+            "TestWorkspace".to_string(),
+        )
+        .expect("app new");
 
         assert!(app.tasks.is_empty());
         assert_eq!(app.selected_task(), None);

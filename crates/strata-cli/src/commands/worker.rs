@@ -29,11 +29,19 @@ pub struct WorkerArgs {
     pub plan: Option<String>,
 
     /// Polling interval in seconds when blackboard is idle
-    #[arg(long, default_value_t = 2, help = "Polling interval in seconds when idle")]
+    #[arg(
+        long,
+        default_value_t = 2,
+        help = "Polling interval in seconds when idle"
+    )]
     pub poll_interval: u64,
 
     /// Progress heartbeat interval in seconds while executing
-    #[arg(long, default_value_t = 5, help = "Progress heartbeat interval in seconds")]
+    #[arg(
+        long,
+        default_value_t = 5,
+        help = "Progress heartbeat interval in seconds"
+    )]
     pub heartbeat_interval: u64,
 
     /// Lease TTL in seconds when claiming resources
@@ -41,11 +49,19 @@ pub struct WorkerArgs {
     pub lease_ttl: i64,
 
     /// Stale timeout threshold in seconds to auto-reclaim orphaned tasks
-    #[arg(long, default_value_t = 600, help = "Stale timeout threshold in seconds for reclaim")]
+    #[arg(
+        long,
+        default_value_t = 600,
+        help = "Stale timeout threshold in seconds for reclaim"
+    )]
     pub stale_timeout: i64,
 
     /// Automatically run stale orphan reclamation check periodically
-    #[arg(long, default_value_t = true, help = "Automatically reclaim stale orphaned tasks")]
+    #[arg(
+        long,
+        default_value_t = true,
+        help = "Automatically reclaim stale orphaned tasks"
+    )]
     pub auto_reclaim: bool,
 
     /// Maximum number of tasks to execute before stopping (omit to run indefinitely)
@@ -57,7 +73,10 @@ pub struct WorkerArgs {
     pub exit_when_idle: bool,
 
     /// Execute command dry-run (simulation mode without running subprocesses)
-    #[arg(long, help = "Simulate task execution without running shell subprocesses")]
+    #[arg(
+        long,
+        help = "Simulate task execution without running shell subprocesses"
+    )]
     pub dry_run: bool,
 
     /// Comma-separated list of supported task payload types to claim (defaults to "shell_command")
@@ -82,7 +101,10 @@ pub struct WorkerStats {
     pub agent_id: String,
 }
 
-pub async fn run_worker(args: WorkerArgs, coordinator: StigmergyCoordinator) -> Result<WorkerStats> {
+pub async fn run_worker(
+    args: WorkerArgs,
+    coordinator: StigmergyCoordinator,
+) -> Result<WorkerStats> {
     let agent_id = resolve_agent_id(args.agent.as_deref());
     let host = resolve_agent_host(args.host.as_deref());
 
@@ -139,7 +161,10 @@ pub async fn run_worker(args: WorkerArgs, coordinator: StigmergyCoordinator) -> 
                 if !reclaimed.is_empty() {
                     stats.orphans_reclaimed += reclaimed.len();
                     if !args.json {
-                        println!("♻️ Reclaimed {} orphaned tasks back to pool", reclaimed.len());
+                        println!(
+                            "♻️ Reclaimed {} orphaned tasks back to pool",
+                            reclaimed.len()
+                        );
                     } else {
                         println!(
                             "{}",
@@ -218,12 +243,14 @@ pub async fn run_worker(args: WorkerArgs, coordinator: StigmergyCoordinator) -> 
                         }
 
                         // Renew task leases and check ownership/fencing token
-                        let renewed = coord_hb.renew_task_leases_with_generation(
-                            &tid_hb,
-                            &aid_hb,
-                            lease_ttl,
-                            Some(task_gen),
-                        ).unwrap_or(false);
+                        let renewed = coord_hb
+                            .renew_task_leases_with_generation(
+                                &tid_hb,
+                                &aid_hb,
+                                lease_ttl,
+                                Some(task_gen),
+                            )
+                            .unwrap_or(false);
 
                         if !renewed {
                             lease_lost_clone.store(true, Ordering::SeqCst);
@@ -296,13 +323,15 @@ pub async fn run_worker(args: WorkerArgs, coordinator: StigmergyCoordinator) -> 
                             &artifact_content,
                         );
 
-                        let completed = coordinator.complete_task_with_generation(
-                            &task_id,
-                            &agent_id,
-                            Some(&format!("Task '{}' executed successfully", title)),
-                            Some(&artifact),
-                            Some(task.claim_generation),
-                        ).unwrap_or(false);
+                        let completed = coordinator
+                            .complete_task_with_generation(
+                                &task_id,
+                                &agent_id,
+                                Some(&format!("Task '{}' executed successfully", title)),
+                                Some(&artifact),
+                                Some(task.claim_generation),
+                            )
+                            .unwrap_or(false);
 
                         if !completed {
                             stats.tasks_succeeded -= 1;
@@ -378,12 +407,12 @@ pub async fn run_worker(args: WorkerArgs, coordinator: StigmergyCoordinator) -> 
                         ..Default::default()
                     };
                     let all_tasks = coordinator.list_tasks(&active_filter).unwrap_or_default();
-                    let has_in_progress = all_tasks.iter().any(|t| {
-                        matches!(t.status, TaskStatus::Claimed | TaskStatus::Running)
-                    });
-                    let has_uncompleted = all_tasks.iter().any(|t| {
-                        matches!(t.status, TaskStatus::Pending | TaskStatus::Blocked)
-                    });
+                    let has_in_progress = all_tasks
+                        .iter()
+                        .any(|t| matches!(t.status, TaskStatus::Claimed | TaskStatus::Running));
+                    let has_uncompleted = all_tasks
+                        .iter()
+                        .any(|t| matches!(t.status, TaskStatus::Pending | TaskStatus::Blocked));
 
                     if has_in_progress && has_uncompleted {
                         // Peer workers are executing tasks that might unblock pending/blocked tasks
@@ -427,10 +456,16 @@ pub async fn run_worker(args: WorkerArgs, coordinator: StigmergyCoordinator) -> 
 /// Executes the payload associated with a task.
 /// Strictly executes supported payloads (e.g. ShellCommand), and returns an error with
 /// 'incompatible_runner' for descriptive or unexecutable tasks to prevent false-positive completions.
-async fn execute_task_payload(task: &strata_core::blackboard::TaskRecord, dry_run: bool) -> Result<String> {
+async fn execute_task_payload(
+    task: &strata_core::blackboard::TaskRecord,
+    dry_run: bool,
+) -> Result<String> {
     if dry_run {
         sleep(Duration::from_millis(50)).await;
-        return Ok(format!("Simulated dry-run execution of task '{}'", task.title));
+        return Ok(format!(
+            "Simulated dry-run execution of task '{}'",
+            task.title
+        ));
     }
 
     let payload = task.resolve_payload();
@@ -463,7 +498,12 @@ async fn execute_task_payload(task: &strata_core::blackboard::TaskRecord, dry_ru
 
             let output = tokio::time::timeout(timeout_duration, fut)
                 .await
-                .map_err(|_| anyhow::anyhow!("Command timed out after {}s: {command}", timeout_duration.as_secs()))??;
+                .map_err(|_| {
+                    anyhow::anyhow!(
+                        "Command timed out after {}s: {command}",
+                        timeout_duration.as_secs()
+                    )
+                })??;
 
             if !output.status.success() {
                 let stderr = String::from_utf8_lossy(&output.stderr);
@@ -481,13 +521,17 @@ async fn execute_task_payload(task: &strata_core::blackboard::TaskRecord, dry_ru
             };
 
             if result_str.trim().is_empty() {
-                Ok(format!("Command '{command}' executed successfully with exit status 0 (no output)"))
+                Ok(format!(
+                    "Command '{command}' executed successfully with exit status 0 (no output)"
+                ))
             } else {
                 Ok(format!("Command '{command}' succeeded:\n{result_str}"))
             }
         }
         TaskPayload::AgentPrompt { .. } => {
-            anyhow::bail!("incompatible_runner: task requires LLM agent runner (payload: AgentPrompt)")
+            anyhow::bail!(
+                "incompatible_runner: task requires LLM agent runner (payload: AgentPrompt)"
+            )
         }
         TaskPayload::ManualVerification { .. } => {
             anyhow::bail!("incompatible_runner: task requires manual verification (payload: ManualVerification)")
@@ -520,12 +564,13 @@ mod tests {
 
     #[tokio::test]
     async fn test_execute_task_payload_rejects_agent_prompt() {
-        let task = TaskRecord::new("t-prompt", "Implement OAuth2")
-            .with_payload(TaskPayload::AgentPrompt {
+        let task = TaskRecord::new("t-prompt", "Implement OAuth2").with_payload(
+            TaskPayload::AgentPrompt {
                 prompt: "Please write auth provider for GitHub OAuth2".to_string(),
                 context_files: vec![],
                 expected_artifacts: vec![],
-            });
+            },
+        );
         let result = execute_task_payload(&task, false).await;
         assert!(result.is_err());
         let err_str = result.unwrap_err().to_string();
@@ -537,11 +582,12 @@ mod tests {
 
     #[tokio::test]
     async fn test_execute_task_payload_rejects_manual_verification() {
-        let task = TaskRecord::new("t-manual", "Review deployment")
-            .with_payload(TaskPayload::ManualVerification {
+        let task = TaskRecord::new("t-manual", "Review deployment").with_payload(
+            TaskPayload::ManualVerification {
                 instructions: "Verify staging site is up".to_string(),
                 checklist: vec!["Site loads".to_string()],
-            });
+            },
+        );
         let result = execute_task_payload(&task, false).await;
         assert!(result.is_err());
         let err_str = result.unwrap_err().to_string();
@@ -558,12 +604,11 @@ mod tests {
         #[cfg(not(target_os = "windows"))]
         let cmd = "echo 'worker-ok-123'";
 
-        let task = TaskRecord::new("t-cmd", "Echo test")
-            .with_payload(TaskPayload::ShellCommand {
-                command: cmd.to_string(),
-                cwd: None,
-                timeout_secs: Some(30),
-            });
+        let task = TaskRecord::new("t-cmd", "Echo test").with_payload(TaskPayload::ShellCommand {
+            command: cmd.to_string(),
+            cwd: None,
+            timeout_secs: Some(30),
+        });
         let result = execute_task_payload(&task, false).await;
         assert!(result.is_ok());
         let out = result.unwrap();
@@ -577,8 +622,8 @@ mod tests {
         #[cfg(not(target_os = "windows"))]
         let cmd = "sh -c 'exit 42'";
 
-        let task = TaskRecord::new("t-fail", "Failing command")
-            .with_payload(TaskPayload::ShellCommand {
+        let task =
+            TaskRecord::new("t-fail", "Failing command").with_payload(TaskPayload::ShellCommand {
                 command: cmd.to_string(),
                 cwd: None,
                 timeout_secs: Some(30),
@@ -603,12 +648,13 @@ mod tests {
         #[cfg(not(target_os = "windows"))]
         let cmd = "echo 'task-executed-successfully'";
 
-        let shell_task = TaskRecord::new("task-sh", "Execute unit test")
-            .with_payload(TaskPayload::ShellCommand {
+        let shell_task = TaskRecord::new("task-sh", "Execute unit test").with_payload(
+            TaskPayload::ShellCommand {
                 command: cmd.to_string(),
                 cwd: None,
                 timeout_secs: Some(30),
-            });
+            },
+        );
         coordinator.create_task(&shell_task).unwrap();
 
         let args = WorkerArgs {

@@ -108,7 +108,11 @@ pub enum A2aAction {
         #[arg(long, help = "Sender agent identifier")]
         agent: Option<String>,
 
-        #[arg(long, default_value = "direct", help = "Message kind (direct, handoff, question, blocker)")]
+        #[arg(
+            long,
+            default_value = "direct",
+            help = "Message kind (direct, handoff, question, blocker)"
+        )]
         kind: String,
 
         #[arg(long)]
@@ -156,7 +160,11 @@ pub enum A2aAction {
         #[arg(long, help = "Filter by sender agent ID")]
         from: Option<String>,
 
-        #[arg(long, default_value_t = 30, help = "Timeout in seconds before exiting (default: 30s)")]
+        #[arg(
+            long,
+            default_value_t = 30,
+            help = "Timeout in seconds before exiting (default: 30s)"
+        )]
         timeout: u64,
 
         #[arg(long)]
@@ -177,10 +185,16 @@ pub enum A2aAction {
         #[arg(long, help = "Agent identifier (defaults to STRATA_AGENT_ID)")]
         agent: Option<String>,
 
-        #[arg(long, help = "Agent host runner (defaults to STRATA_AGENT_HOST or auto-detected)")]
+        #[arg(
+            long,
+            help = "Agent host runner (defaults to STRATA_AGENT_HOST or auto-detected)"
+        )]
         host: Option<String>,
 
-        #[arg(long, help = "Comma-separated domains or code partitions (e.g. 'crates/strata-memory,db')")]
+        #[arg(
+            long,
+            help = "Comma-separated domains or code partitions (e.g. 'crates/strata-memory,db')"
+        )]
         domains: Option<String>,
 
         #[arg(long, default_value_t = 1.0, help = "Confidence score (0.0 - 1.0)")]
@@ -201,7 +215,11 @@ pub enum A2aAction {
         #[arg(long, help = "Sender agent identifier")]
         agent: Option<String>,
 
-        #[arg(long, default_value_t = 0, help = "Synchronous wait timeout in ms (0 for async)")]
+        #[arg(
+            long,
+            default_value_t = 0,
+            help = "Synchronous wait timeout in ms (0 for async)"
+        )]
         timeout_ms: u64,
 
         #[arg(long)]
@@ -515,7 +533,8 @@ pub async fn run_a2a(args: A2aArgs, coordinator: StigmergyCoordinator) -> Result
             let task_id = resolve_task_id(task.as_deref());
             let message_id = format!("msg-{}", &Uuid::new_v4().simple().to_string()[..12]);
 
-            let mut msg = A2aMessage::direct(&message_id, &from_agent, &to, &content).with_kind(kind);
+            let mut msg =
+                A2aMessage::direct(&message_id, &from_agent, &to, &content).with_kind(kind);
             if let Some(t) = &task_id {
                 msg = msg.with_task_id(t);
             }
@@ -541,7 +560,10 @@ pub async fn run_a2a(args: A2aArgs, coordinator: StigmergyCoordinator) -> Result
             if json_mode {
                 println!("{}", serde_json::to_string_pretty(&msg)?);
             } else {
-                println!("✓ Message '{}' sent to '{}' by '{}'.", message_id, to, from_agent);
+                println!(
+                    "✓ Message '{}' sent to '{}' by '{}'.",
+                    message_id, to, from_agent
+                );
             }
         }
 
@@ -557,7 +579,8 @@ pub async fn run_a2a(args: A2aArgs, coordinator: StigmergyCoordinator) -> Result
             let task_id = resolve_task_id(task.as_deref());
             let message_id = format!("msg-{}", &Uuid::new_v4().simple().to_string()[..12]);
 
-            let mut msg = A2aMessage::broadcast(&message_id, &from_agent, &content).with_kind(kind.clone());
+            let mut msg =
+                A2aMessage::broadcast(&message_id, &from_agent, &content).with_kind(kind.clone());
             if let Some(t) = &task_id {
                 msg = msg.with_task_id(t);
             }
@@ -583,7 +606,10 @@ pub async fn run_a2a(args: A2aArgs, coordinator: StigmergyCoordinator) -> Result
             if json_mode {
                 println!("{}", serde_json::to_string_pretty(&msg)?);
             } else {
-                println!("✓ Broadcast message '{}' dispatched by '{}'.", message_id, from_agent);
+                println!(
+                    "✓ Broadcast message '{}' dispatched by '{}'.",
+                    message_id, from_agent
+                );
             }
         }
 
@@ -611,7 +637,11 @@ pub async fn run_a2a(args: A2aArgs, coordinator: StigmergyCoordinator) -> Result
                     println!("  (Inbox is empty)");
                 } else {
                     for m in &messages {
-                        let read_str = if m.read_at.is_some() { "read" } else { "UNREAD" };
+                        let read_str = if m.read_at.is_some() {
+                            "read"
+                        } else {
+                            "UNREAD"
+                        };
                         let task_str = m.task_id.as_deref().unwrap_or("-");
                         println!(
                             "  • [{:<6}] from={:<14} task={:<12} kind={:<10} content='{}'",
@@ -645,49 +675,57 @@ pub async fn run_a2a(args: A2aArgs, coordinator: StigmergyCoordinator) -> Result
 
             let event_opt = client
                 .wait_for_event(
-                    move |event| {
-                        match event {
-                            IpcEvent::DirectMessage { from_agent, task_id, .. } => {
-                                if let Some(expected_from) = &filter_from {
-                                    if from_agent != expected_from {
-                                        return false;
-                                    }
+                    move |event| match event {
+                        IpcEvent::DirectMessage {
+                            from_agent,
+                            task_id,
+                            ..
+                        } => {
+                            if let Some(expected_from) = &filter_from {
+                                if from_agent != expected_from {
+                                    return false;
                                 }
-                                if let Some(expected_task) = &filter_task {
-                                    if task_id.as_deref() != Some(expected_task.as_str()) {
-                                        return false;
-                                    }
-                                }
-                                true
                             }
-                            IpcEvent::TaskBroadcast { from_agent, task_id, .. } => {
-                                if let Some(expected_from) = &filter_from {
-                                    if from_agent != expected_from {
-                                        return false;
-                                    }
+                            if let Some(expected_task) = &filter_task {
+                                if task_id.as_deref() != Some(expected_task.as_str()) {
+                                    return false;
                                 }
-                                if let Some(expected_task) = &filter_task {
-                                    if task_id.as_deref() != Some(expected_task.as_str()) {
-                                        return false;
-                                    }
-                                }
-                                true
                             }
-                            IpcEvent::TaskStateChanged { task_id, agent_id, .. } => {
-                                if let Some(expected_task) = &filter_task {
-                                    if task_id != expected_task {
-                                        return false;
-                                    }
-                                }
-                                if let Some(expected_from) = &filter_from {
-                                    if agent_id.as_deref() != Some(expected_from.as_str()) {
-                                        return false;
-                                    }
-                                }
-                                true
-                            }
-                            _ => false,
+                            true
                         }
+                        IpcEvent::TaskBroadcast {
+                            from_agent,
+                            task_id,
+                            ..
+                        } => {
+                            if let Some(expected_from) = &filter_from {
+                                if from_agent != expected_from {
+                                    return false;
+                                }
+                            }
+                            if let Some(expected_task) = &filter_task {
+                                if task_id.as_deref() != Some(expected_task.as_str()) {
+                                    return false;
+                                }
+                            }
+                            true
+                        }
+                        IpcEvent::TaskStateChanged {
+                            task_id, agent_id, ..
+                        } => {
+                            if let Some(expected_task) = &filter_task {
+                                if task_id != expected_task {
+                                    return false;
+                                }
+                            }
+                            if let Some(expected_from) = &filter_from {
+                                if agent_id.as_deref() != Some(expected_from.as_str()) {
+                                    return false;
+                                }
+                            }
+                            true
+                        }
+                        _ => false,
                     },
                     Duration::from_secs(timeout),
                 )
@@ -696,14 +734,20 @@ pub async fn run_a2a(args: A2aArgs, coordinator: StigmergyCoordinator) -> Result
             match event_opt {
                 Some(event) => {
                     if json_mode {
-                        println!("{}", serde_json::json!({ "status": "event_received", "event": event }));
+                        println!(
+                            "{}",
+                            serde_json::json!({ "status": "event_received", "event": event })
+                        );
                     } else {
                         println!("✓ Event received: {:?}", event);
                     }
                 }
                 None => {
                     if json_mode {
-                        println!("{}", serde_json::json!({ "status": "timeout", "waited_seconds": timeout }));
+                        println!(
+                            "{}",
+                            serde_json::json!({ "status": "timeout", "waited_seconds": timeout })
+                        );
                     } else {
                         println!("⏱️ Timeout reached ({}s) without matching event.", timeout);
                     }
@@ -725,7 +769,14 @@ pub async fn run_a2a(args: A2aArgs, coordinator: StigmergyCoordinator) -> Result
                             println!("  Specialist Agent : {}", auth.authoritative_agent);
                             println!("  Matched Domain   : {}", auth.domain);
                             println!("  Confidence Score : {:.2}", auth.confidence_score);
-                            println!("  Active Lease     : {}", if auth.lease_held { "YES (exclusive lock)" } else { "no" });
+                            println!(
+                                "  Active Lease     : {}",
+                                if auth.lease_held {
+                                    "YES (exclusive lock)"
+                                } else {
+                                    "no"
+                                }
+                            );
                             println!("  Active Tasks     : {}", auth.active_tasks_count);
                         }
                         None => {
@@ -738,10 +789,13 @@ pub async fn run_a2a(args: A2aArgs, coordinator: StigmergyCoordinator) -> Result
                 let agents = coordinator.list_agent_cards()?;
                 let authorities = coordinator.list_domain_authorities()?;
                 if json_mode {
-                    println!("{}", serde_json::to_string_pretty(&serde_json::json!({
-                        "agents": agents,
-                        "authorities": authorities,
-                    }))?);
+                    println!(
+                        "{}",
+                        serde_json::to_string_pretty(&serde_json::json!({
+                            "agents": agents,
+                            "authorities": authorities,
+                        }))?
+                    );
                 } else {
                     println!("\n📚 [Transactive Memory Directory]");
                     println!("═════════════════════════════════════════════════════════════");
@@ -755,7 +809,10 @@ pub async fn run_a2a(args: A2aArgs, coordinator: StigmergyCoordinator) -> Result
                             } else {
                                 a.domain_scopes.join(", ")
                             };
-                            println!("  • {:<16} host={:<12} confidence={:.2} domains=[{}]", a.agent_id, a.host, a.confidence_score, domains_str);
+                            println!(
+                                "  • {:<16} host={:<12} confidence={:.2} domains=[{}]",
+                                a.agent_id, a.host, a.confidence_score, domains_str
+                            );
                         }
                     }
 
@@ -765,7 +822,13 @@ pub async fn run_a2a(args: A2aArgs, coordinator: StigmergyCoordinator) -> Result
                     } else {
                         for auth in &authorities {
                             let lease_str = if auth.lease_held { " [LEASE HELD]" } else { "" };
-                            println!("  • {:<28} -> {:<16} (conf: {:.2}){}", auth.domain, auth.authoritative_agent, auth.confidence_score, lease_str);
+                            println!(
+                                "  • {:<28} -> {:<16} (conf: {:.2}){}",
+                                auth.domain,
+                                auth.authoritative_agent,
+                                auth.confidence_score,
+                                lease_str
+                            );
                         }
                     }
                     println!();
@@ -829,15 +892,25 @@ pub async fn run_a2a(args: A2aArgs, coordinator: StigmergyCoordinator) -> Result
             }
 
             if json_mode {
-                println!("{}", serde_json::to_string_pretty(&serde_json::json!({
-                    "status": "announced",
-                    "agent_card": card,
-                    "authorities": registered,
-                }))?);
+                println!(
+                    "{}",
+                    serde_json::to_string_pretty(&serde_json::json!({
+                        "status": "announced",
+                        "agent_card": card,
+                        "authorities": registered,
+                    }))?
+                );
             } else {
-                println!("✓ Agent '{}' announced capability card with {} domain authorities.", agent_id, registered.len());
+                println!(
+                    "✓ Agent '{}' announced capability card with {} domain authorities.",
+                    agent_id,
+                    registered.len()
+                );
                 for a in &registered {
-                    println!("  • Domain: {:<24} (conf: {:.2})", a.domain, a.confidence_score);
+                    println!(
+                        "  • Domain: {:<24} (conf: {:.2})",
+                        a.domain, a.confidence_score
+                    );
                 }
             }
         }
@@ -864,8 +937,10 @@ pub async fn run_a2a(args: A2aArgs, coordinator: StigmergyCoordinator) -> Result
             // Persist as A2A message in inbox
             let message_id = format!("msg-{}", &Uuid::new_v4().simple().to_string()[..12]);
             let a2a_msg = match &target_agent {
-                Some(to) => A2aMessage::direct(&message_id, &from_agent, to, &question).with_kind("transactive_query"),
-                None => A2aMessage::broadcast(&message_id, &from_agent, &question).with_kind("transactive_query"),
+                Some(to) => A2aMessage::direct(&message_id, &from_agent, to, &question)
+                    .with_kind("transactive_query"),
+                None => A2aMessage::broadcast(&message_id, &from_agent, &question)
+                    .with_kind("transactive_query"),
             };
             coordinator.save_a2a_message(&a2a_msg)?;
 
@@ -891,27 +966,33 @@ pub async fn run_a2a(args: A2aArgs, coordinator: StigmergyCoordinator) -> Result
                     let event_opt = ipc
                         .wait_for_event(
                             move |event| match event {
-                                IpcEvent::TransactiveResponseReturned { response, .. } => response.query_id == expected_query_id,
+                                IpcEvent::TransactiveResponseReturned { response, .. } => {
+                                    response.query_id == expected_query_id
+                                }
                                 _ => false,
                             },
                             Duration::from_millis(timeout_ms),
                         )
                         .await?;
 
-                    if let Some(IpcEvent::TransactiveResponseReturned { response, .. }) = event_opt {
+                    if let Some(IpcEvent::TransactiveResponseReturned { response, .. }) = event_opt
+                    {
                         response_received = Some(response);
                     }
                 }
             }
 
             if json_mode {
-                println!("{}", serde_json::to_string_pretty(&serde_json::json!({
-                    "query_id": query_id,
-                    "domain": domain,
-                    "target_agent": target_agent,
-                    "authority": best_auth,
-                    "response": response_received,
-                }))?);
+                println!(
+                    "{}",
+                    serde_json::to_string_pretty(&serde_json::json!({
+                        "query_id": query_id,
+                        "domain": domain,
+                        "target_agent": target_agent,
+                        "authority": best_auth,
+                        "response": response_received,
+                    }))?
+                );
             } else {
                 println!("\n📬 [Transactive Query Routed]");
                 println!("═════════════════════════════════════════════════════════════");
@@ -922,9 +1003,15 @@ pub async fn run_a2a(args: A2aArgs, coordinator: StigmergyCoordinator) -> Result
                     None => println!("  Routed To    : (Broadcast - No specialist registered)"),
                 }
                 if let Some(resp) = response_received {
-                    println!("  Response     : {} (from: {}, confidence: {:.2})", resp.answer, resp.responder_agent, resp.confidence_score);
+                    println!(
+                        "  Response     : {} (from: {}, confidence: {:.2})",
+                        resp.answer, resp.responder_agent, resp.confidence_score
+                    );
                 } else if timeout_ms > 0 {
-                    println!("  Response     : Timed out waiting for response ({} ms)", timeout_ms);
+                    println!(
+                        "  Response     : Timed out waiting for response ({} ms)",
+                        timeout_ms
+                    );
                 } else {
                     println!("  Status       : Routed asynchronously. Target agent notified.");
                 }

@@ -681,7 +681,11 @@ impl CrossFileResolver {
 
         // Also check if candidate matches without parent_dir if import was from workspace root
         if !parent_dir.is_empty() {
-            let direct_base = Self::normalize_path(import_source.trim_start_matches("./").trim_start_matches("../"));
+            let direct_base = Self::normalize_path(
+                import_source
+                    .trim_start_matches("./")
+                    .trim_start_matches("../"),
+            );
             for ext in extensions {
                 let candidate = format!("{}{}", direct_base, ext);
                 if self.workspace_files.contains(&candidate) {
@@ -813,7 +817,12 @@ impl CrossFileResolver {
     }
 
     /// Extracts imported symbols and specifiers from source code into `self.file_imports`
-    pub fn extract_import_bindings(&mut self, file_path: &str, source_code: &str, lang: LanguageKind) {
+    pub fn extract_import_bindings(
+        &mut self,
+        file_path: &str,
+        source_code: &str,
+        lang: LanguageKind,
+    ) {
         let caller_norm = Self::normalize_path(file_path);
 
         match lang {
@@ -827,9 +836,12 @@ impl CrossFileResolver {
                                 .trim_matches(|c| c == '\'' || c == '"' || c == ';')
                                 .trim();
 
-                            if let Some(resolved) = self.resolve_ts_import(&caller_norm, import_src) {
-                                self.file_imports
-                                    .insert((caller_norm.clone(), import_src.to_string()), resolved.clone());
+                            if let Some(resolved) = self.resolve_ts_import(&caller_norm, import_src)
+                            {
+                                self.file_imports.insert(
+                                    (caller_norm.clone(), import_src.to_string()),
+                                    resolved.clone(),
+                                );
 
                                 let between = trimmed[6..src_idx].trim();
                                 if between.starts_with('{') && between.contains('}') {
@@ -856,7 +868,8 @@ impl CrossFileResolver {
                                         );
                                     }
                                 } else {
-                                    let def_ident = between.split(',').next().unwrap_or(between).trim();
+                                    let def_ident =
+                                        between.split(',').next().unwrap_or(between).trim();
                                     if !def_ident.is_empty() {
                                         self.file_imports.insert(
                                             (caller_norm.clone(), def_ident.to_string()),
@@ -865,7 +878,9 @@ impl CrossFileResolver {
                                     }
                                 }
                             }
-                        } else if trimmed.starts_with("import '") || trimmed.starts_with("import \"") {
+                        } else if trimmed.starts_with("import '")
+                            || trimmed.starts_with("import \"")
+                        {
                             let src = trimmed
                                 .trim_start_matches("import")
                                 .trim()
@@ -881,9 +896,13 @@ impl CrossFileResolver {
                             if let Some(end) = rest.find(')') {
                                 let src = rest[..end].trim_matches(|c| c == '\'' || c == '"');
                                 if let Some(resolved) = self.resolve_ts_import(&caller_norm, src) {
-                                    self.file_imports
-                                        .insert((caller_norm.clone(), src.to_string()), resolved.clone());
-                                    if trimmed.starts_with("const {") || trimmed.starts_with("let {") {
+                                    self.file_imports.insert(
+                                        (caller_norm.clone(), src.to_string()),
+                                        resolved.clone(),
+                                    );
+                                    if trimmed.starts_with("const {")
+                                        || trimmed.starts_with("let {")
+                                    {
                                         if let Some(close_brace) = trimmed.find('}') {
                                             let inner = &trimmed[7..close_brace];
                                             for part in inner.split(',') {
@@ -907,7 +926,10 @@ impl CrossFileResolver {
                 for line in source_code.lines() {
                     let trimmed = line.trim();
                     if trimmed.starts_with("use ") {
-                        let clean = trimmed.trim_start_matches("use ").trim_end_matches(';').trim();
+                        let clean = trimmed
+                            .trim_start_matches("use ")
+                            .trim_end_matches(';')
+                            .trim();
                         if let Some(resolved) = self.resolve_rust_import(&caller_norm, clean) {
                             self.file_imports
                                 .insert((caller_norm.clone(), clean.to_string()), resolved.clone());
@@ -937,10 +959,15 @@ impl CrossFileResolver {
                             }
                         }
                     } else if trimmed.starts_with("mod ") && trimmed.ends_with(';') {
-                        let mod_name = trimmed.trim_start_matches("mod ").trim_end_matches(';').trim();
+                        let mod_name = trimmed
+                            .trim_start_matches("mod ")
+                            .trim_end_matches(';')
+                            .trim();
                         if let Some(resolved) = self.resolve_rust_import(&caller_norm, mod_name) {
-                            self.file_imports
-                                .insert((caller_norm.clone(), format!("mod {mod_name}")), resolved.clone());
+                            self.file_imports.insert(
+                                (caller_norm.clone(), format!("mod {mod_name}")),
+                                resolved.clone(),
+                            );
                             self.file_imports
                                 .insert((caller_norm.clone(), mod_name.to_string()), resolved);
                         }
@@ -956,11 +983,17 @@ impl CrossFileResolver {
                             let mod_part = parts[0].trim_start_matches("from ").trim();
                             let idents_part = parts[1].trim();
 
-                            if let Some(resolved) = self.resolve_python_import(&caller_norm, mod_part) {
-                                self.file_imports
-                                    .insert((caller_norm.clone(), trimmed.to_string()), resolved.clone());
-                                self.file_imports
-                                    .insert((caller_norm.clone(), mod_part.to_string()), resolved.clone());
+                            if let Some(resolved) =
+                                self.resolve_python_import(&caller_norm, mod_part)
+                            {
+                                self.file_imports.insert(
+                                    (caller_norm.clone(), trimmed.to_string()),
+                                    resolved.clone(),
+                                );
+                                self.file_imports.insert(
+                                    (caller_norm.clone(), mod_part.to_string()),
+                                    resolved.clone(),
+                                );
 
                                 for part in idents_part.split(',') {
                                     let sym = part.split(" as ").last().unwrap_or(part).trim();
@@ -978,9 +1011,13 @@ impl CrossFileResolver {
                         for part in mods.split(',') {
                             let mod_name = part.split(" as ").next().unwrap_or(part).trim();
                             let alias = part.split(" as ").last().unwrap_or(part).trim();
-                            if let Some(resolved) = self.resolve_python_import(&caller_norm, mod_name) {
-                                self.file_imports
-                                    .insert((caller_norm.clone(), mod_name.to_string()), resolved.clone());
+                            if let Some(resolved) =
+                                self.resolve_python_import(&caller_norm, mod_name)
+                            {
+                                self.file_imports.insert(
+                                    (caller_norm.clone(), mod_name.to_string()),
+                                    resolved.clone(),
+                                );
                                 self.file_imports
                                     .insert((caller_norm.clone(), alias.to_string()), resolved);
                             }
@@ -998,7 +1035,10 @@ impl CrossFileResolver {
             let caller_norm = Self::normalize_path(&edge.caller_file);
 
             if edge.call_type == CallType::Import {
-                if let Some(target) = self.file_imports.get(&(caller_norm.clone(), edge.callee_symbol.clone())) {
+                if let Some(target) = self
+                    .file_imports
+                    .get(&(caller_norm.clone(), edge.callee_symbol.clone()))
+                {
                     edge.callee_file_hint = Some(target.clone());
                 } else {
                     let lang = LanguageKind::from_file_path(&caller_norm);
@@ -1033,7 +1073,10 @@ impl CrossFileResolver {
                 }
             } else {
                 // Direct symbol lookup in file_imports
-                if let Some(target) = self.file_imports.get(&(caller_norm.clone(), edge.callee_symbol.clone())) {
+                if let Some(target) = self
+                    .file_imports
+                    .get(&(caller_norm.clone(), edge.callee_symbol.clone()))
+                {
                     edge.callee_file_hint = Some(target.clone());
                     continue;
                 }
@@ -1042,12 +1085,17 @@ impl CrossFileResolver {
                 if edge.callee_symbol.contains("::") {
                     let parts: Vec<&str> = edge.callee_symbol.split("::").collect();
                     let prefix = parts[0];
-                    if let Some(target) = self.file_imports.get(&(caller_norm.clone(), prefix.to_string())) {
+                    if let Some(target) = self
+                        .file_imports
+                        .get(&(caller_norm.clone(), prefix.to_string()))
+                    {
                         edge.callee_file_hint = Some(target.clone());
                         continue;
                     }
                     if edge.callee_symbol.starts_with("crate::") {
-                        if let Some(target) = self.resolve_rust_import(&caller_norm, &edge.callee_symbol) {
+                        if let Some(target) =
+                            self.resolve_rust_import(&caller_norm, &edge.callee_symbol)
+                        {
                             edge.callee_file_hint = Some(target);
                             continue;
                         }
@@ -1057,14 +1105,20 @@ impl CrossFileResolver {
                 // Member expression (e.g. obj.method)
                 if edge.callee_symbol.contains('.') {
                     let prefix = edge.callee_symbol.split('.').next().unwrap_or("");
-                    if let Some(target) = self.file_imports.get(&(caller_norm.clone(), prefix.to_string())) {
+                    if let Some(target) = self
+                        .file_imports
+                        .get(&(caller_norm.clone(), prefix.to_string()))
+                    {
                         edge.callee_file_hint = Some(target.clone());
                         continue;
                     }
                 }
 
                 // Check local definition in caller's file
-                if self.file_symbols.contains_key(&(caller_norm.clone(), edge.callee_symbol.clone())) {
+                if self
+                    .file_symbols
+                    .contains_key(&(caller_norm.clone(), edge.callee_symbol.clone()))
+                {
                     edge.callee_file_hint = Some(caller_norm.clone());
                     continue;
                 }
@@ -1074,7 +1128,10 @@ impl CrossFileResolver {
                     if files.len() == 1 {
                         edge.callee_file_hint = Some(files[0].clone());
                     } else if !files.is_empty() {
-                        let caller_dir = caller_norm.rfind('/').map(|i| &caller_norm[..i]).unwrap_or("");
+                        let caller_dir = caller_norm
+                            .rfind('/')
+                            .map(|i| &caller_norm[..i])
+                            .unwrap_or("");
                         let same_dir = files.iter().find(|f| {
                             let f_dir = f.rfind('/').map(|i| &f[..i]).unwrap_or("");
                             f_dir == caller_dir
@@ -1172,7 +1229,9 @@ impl HeuristicIndexer {
 
         // Pass 1a: Register workspace file paths
         for &(path, _) in files {
-            resolver.workspace_files.insert(CrossFileResolver::normalize_path(path));
+            resolver
+                .workspace_files
+                .insert(CrossFileResolver::normalize_path(path));
         }
 
         // Pass 1b: Parse symbols and extract import bindings
@@ -1219,7 +1278,8 @@ impl HeuristicIndexer {
         for edge in &all_edges {
             if let Some(ref callee_file) = edge.callee_file_hint {
                 if edge.call_type != CallType::Import {
-                    let caller_sym_node = format!("sym:{}::{}", edge.caller_file, edge.caller_symbol);
+                    let caller_sym_node =
+                        format!("sym:{}::{}", edge.caller_file, edge.caller_symbol);
                     let callee_sym_node = format!("sym:{}::{}", callee_file, edge.callee_symbol);
                     let caller_file_node = format!("file:{}", edge.caller_file);
                     let callee_file_node = format!("file:{}", callee_file);
@@ -1684,10 +1744,7 @@ export function login() {
             .find(|e| e.caller_file == "src/index.ts" && e.call_type == CallType::Import)
             .expect("Import edge missing");
         assert_eq!(import_edge.callee_symbol, "./auth");
-        assert_eq!(
-            import_edge.callee_file_hint.as_deref(),
-            Some("src/auth.ts")
-        );
+        assert_eq!(import_edge.callee_file_hint.as_deref(), Some("src/auth.ts"));
 
         // Verify function call resolution
         let call_edge = edges
@@ -1829,7 +1886,10 @@ export function login() {
                 && e.target_id == "sym:src/auth.ts::auth"
                 && e.edge_kind == "Calls"
         });
-        assert!(calls_edge.is_some(), "Calls edge must be present in SQLite memory_edges");
+        assert!(
+            calls_edge.is_some(),
+            "Calls edge must be present in SQLite memory_edges"
+        );
         assert_eq!(calls_edge.unwrap().weight, 0.75);
 
         // Check file:src/index.ts -> sym:src/index.ts::login with weight 0.85
@@ -1892,8 +1952,14 @@ pub fn execute() -> i32 {
         let call_count_2 = store.get_call_edges_count().unwrap();
         let memory_edge_count_2 = store.get_memory_edges_count().unwrap();
 
-        assert_eq!(report1, report2, "Reports from identical index runs must match");
-        assert_eq!(call_count_1, call_count_2, "Call edges count must remain identical on re-index");
+        assert_eq!(
+            report1, report2,
+            "Reports from identical index runs must match"
+        );
+        assert_eq!(
+            call_count_1, call_count_2,
+            "Call edges count must remain identical on re-index"
+        );
         assert_eq!(
             memory_edge_count_1, memory_edge_count_2,
             "Memory edges count must remain identical on re-index"

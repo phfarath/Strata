@@ -1202,9 +1202,9 @@ pub fn parse_dream_duration(raw: &str) -> Result<std::time::Duration, StrataErro
         (trimmed.as_str(), 1_000.0_f64)
     };
 
-    let value: f64 = num_str.parse().map_err(|_| {
-        StrataError::Validation(format!("Invalid duration value in '{raw}'"))
-    })?;
+    let value: f64 = num_str
+        .parse()
+        .map_err(|_| StrataError::Validation(format!("Invalid duration value in '{raw}'")))?;
 
     if !value.is_finite() || value < 0.0 {
         return Err(StrataError::Validation(format!(
@@ -1582,7 +1582,11 @@ impl DreamEngine {
     fn consolidate_memory_records(&self) -> Result<(usize, usize), StrataError> {
         let mut records = self.store.get_all_memories(None, None, 10_000)?;
         records.retain(|r| !is_memory_deprecated(r));
-        records.sort_by(|a, b| a.created_at.cmp(&b.created_at).then_with(|| a.id.cmp(&b.id)));
+        records.sort_by(|a, b| {
+            a.created_at
+                .cmp(&b.created_at)
+                .then_with(|| a.id.cmp(&b.id))
+        });
 
         let mut merged_count = 0;
         let mut contradictions_count = 0;
@@ -1620,18 +1624,18 @@ impl DreamEngine {
                     let sim = lexical_jaccard_similarity(text_a, text_b);
                     let emb_sim = match (&records[i].embedding, &records[j].embedding) {
                         (Some(ea), Some(eb)) => {
-                            let compatible = match (
-                                &records[i].embedding_model,
-                                &records[j].embedding_model,
-                            ) {
-                                (Some(ma), Some(mb)) => {
-                                    crate::embedding::are_embedding_models_compatible(ma, mb)
-                                }
-                                (Some(m), None) | (None, Some(m)) => {
-                                    crate::embedding::is_embedding_compatible_with_query(m, None)
-                                }
-                                (None, None) => true,
-                            };
+                            let compatible =
+                                match (&records[i].embedding_model, &records[j].embedding_model) {
+                                    (Some(ma), Some(mb)) => {
+                                        crate::embedding::are_embedding_models_compatible(ma, mb)
+                                    }
+                                    (Some(m), None) | (None, Some(m)) => {
+                                        crate::embedding::is_embedding_compatible_with_query(
+                                            m, None,
+                                        )
+                                    }
+                                    (None, None) => true,
+                                };
                             if compatible {
                                 crate::embedding::cosine_similarity(ea, eb)
                             } else {
@@ -1756,7 +1760,11 @@ impl DreamEngine {
             Some(strata_core::schemas::FactStatus::Active),
             10_000,
         )?;
-        facts.sort_by(|a, b| a.created_at.cmp(&b.created_at).then_with(|| a.id.cmp(&b.id)));
+        facts.sort_by(|a, b| {
+            a.created_at
+                .cmp(&b.created_at)
+                .then_with(|| a.id.cmp(&b.id))
+        });
 
         let mut merged_count = 0;
         let mut contradictions_count = 0;
@@ -2004,8 +2012,14 @@ mod dream_tests {
             parse_dream_duration("500ms").unwrap(),
             Duration::from_millis(500)
         );
-        assert_eq!(parse_dream_duration("30s").unwrap(), Duration::from_secs(30));
-        assert_eq!(parse_dream_duration("5m").unwrap(), Duration::from_secs(300));
+        assert_eq!(
+            parse_dream_duration("30s").unwrap(),
+            Duration::from_secs(30)
+        );
+        assert_eq!(
+            parse_dream_duration("5m").unwrap(),
+            Duration::from_secs(300)
+        );
         assert_eq!(
             parse_dream_duration("2h").unwrap(),
             Duration::from_secs(7200)
@@ -2133,7 +2147,10 @@ mod dream_tests {
         // Old MemoryRecord must be marked Deprecated and replaced_by new_mem
         let old_mem_loaded = store.get_memory(&old_mem.id).unwrap().unwrap();
         assert_eq!(
-            old_mem_loaded.metadata.get("status").and_then(|v| v.as_str()),
+            old_mem_loaded
+                .metadata
+                .get("status")
+                .and_then(|v| v.as_str()),
             Some("Deprecated")
         );
         assert_eq!(
@@ -2188,7 +2205,9 @@ mod dream_tests {
         store.insert_or_update_memory(&m1).unwrap();
 
         // Before idle timeout (10s < 30s) and only 1 session (< 3): should not dream
-        let early = dream.dream_if_needed(t0 + chrono::Duration::seconds(10)).unwrap();
+        let early = dream
+            .dream_if_needed(t0 + chrono::Duration::seconds(10))
+            .unwrap();
         assert!(early.is_none());
 
         // After idle timeout (35s >= 30s): triggers IdleTimeout dream!
@@ -2234,4 +2253,3 @@ mod dream_tests {
         );
     }
 }
-

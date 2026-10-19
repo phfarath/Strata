@@ -566,7 +566,11 @@ impl IpcClient {
     /// Awaits the first event matching `filter_fn` or times out after `timeout`.
     ///
     /// Provides a synchronous blocking wait primitive with zero CPU polling overhead.
-    pub async fn wait_for_event<F>(&self, filter_fn: F, timeout: Duration) -> Result<Option<IpcEvent>, StrataError>
+    pub async fn wait_for_event<F>(
+        &self,
+        filter_fn: F,
+        timeout: Duration,
+    ) -> Result<Option<IpcEvent>, StrataError>
     where
         F: Fn(&IpcEvent) -> bool,
     {

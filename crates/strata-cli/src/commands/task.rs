@@ -23,7 +23,10 @@ pub enum TaskAction {
         #[arg(long, help = "Filter by plan ID")]
         plan: Option<String>,
 
-        #[arg(long, help = "Filter by status: pending, claimed, running, blocked, completed, failed")]
+        #[arg(
+            long,
+            help = "Filter by status: pending, claimed, running, blocked, completed, failed"
+        )]
         status: Option<String>,
 
         #[arg(long, help = "Filter by assigned agent ID")]
@@ -56,13 +59,19 @@ pub enum TaskAction {
         #[arg(long, help = "Agent prompt for this task")]
         prompt: Option<String>,
 
-        #[arg(long, help = "Explicit task payload type (shell_command, agent_prompt, manual_verification, descriptive)")]
+        #[arg(
+            long,
+            help = "Explicit task payload type (shell_command, agent_prompt, manual_verification, descriptive)"
+        )]
         r#type: Option<String>,
 
         #[arg(long, help = "Comma-separated list of prerequisite task IDs")]
         dependencies: Option<String>,
 
-        #[arg(long, help = "Comma-separated list of required resource locks (e.g. 'file:src/lib.rs')")]
+        #[arg(
+            long,
+            help = "Comma-separated list of required resource locks (e.g. 'file:src/lib.rs')"
+        )]
         resources: Option<String>,
 
         #[arg(long, help = "Output as raw JSON")]
@@ -74,16 +83,29 @@ pub enum TaskAction {
         #[arg(help = "Specific task ID to claim")]
         task: Option<String>,
 
-        #[arg(long, help = "Work-stealing mode: claim the next ready, unblocked task in the plan")]
+        #[arg(
+            long,
+            help = "Work-stealing mode: claim the next ready, unblocked task in the plan"
+        )]
         next: bool,
 
-        #[arg(long, help = "Agent ID claiming the task (defaults to STRATA_AGENT_ID or host-pid)")]
+        #[arg(
+            long,
+            help = "Agent ID claiming the task (defaults to STRATA_AGENT_ID or host-pid)"
+        )]
         agent: Option<String>,
 
-        #[arg(long, default_value_t = 180, help = "Lease TTL in seconds for locked resources (default: 180s)")]
+        #[arg(
+            long,
+            default_value_t = 180,
+            help = "Lease TTL in seconds for locked resources (default: 180s)"
+        )]
         ttl: i64,
 
-        #[arg(long, help = "Comma-separated list of supported task payload types (e.g. 'shell_command')")]
+        #[arg(
+            long,
+            help = "Comma-separated list of supported task payload types (e.g. 'shell_command')"
+        )]
         types: Option<String>,
 
         #[arg(long, help = "Output as raw JSON")]
@@ -161,7 +183,11 @@ pub enum TaskAction {
 
     /// Return orphaned tasks (claimed/running, no progress heartbeat) to the pool
     Reclaim {
-        #[arg(long, default_value_t = 600, help = "Seconds without progress before a task is considered orphaned")]
+        #[arg(
+            long,
+            default_value_t = 600,
+            help = "Seconds without progress before a task is considered orphaned"
+        )]
         stale_after: i64,
 
         #[arg(long, help = "Output as raw JSON")]
@@ -211,7 +237,9 @@ pub async fn run_task(args: TaskArgs, coordinator: StigmergyCoordinator) -> Resu
                 println!("{}", serde_json::to_string_pretty(&tasks)?);
             } else {
                 println!("\n📋 [Strata Multi-Agent Blackboard Tasks]");
-                println!("═════════════════════════════════════════════════════════════════════════════");
+                println!(
+                    "═════════════════════════════════════════════════════════════════════════════"
+                );
                 if tasks.is_empty() {
                     println!("  (No tasks found matching filter)");
                 } else {
@@ -249,14 +277,25 @@ pub async fn run_task(args: TaskArgs, coordinator: StigmergyCoordinator) -> Resu
             json,
         } => {
             let json_mode = is_json_mode(json);
-            let task_id = id.unwrap_or_else(|| format!("task-{}", &Uuid::new_v4().simple().to_string()[..12]));
+            let task_id = id
+                .unwrap_or_else(|| format!("task-{}", &Uuid::new_v4().simple().to_string()[..12]));
 
             let deps: Vec<String> = dependencies
-                .map(|d| d.split(',').map(|s| s.trim().to_string()).filter(|s| !s.is_empty()).collect())
+                .map(|d| {
+                    d.split(',')
+                        .map(|s| s.trim().to_string())
+                        .filter(|s| !s.is_empty())
+                        .collect()
+                })
                 .unwrap_or_default();
 
             let res: Vec<String> = resources
-                .map(|r| r.split(',').map(|s| s.trim().to_string()).filter(|s| !s.is_empty()).collect())
+                .map(|r| {
+                    r.split(',')
+                        .map(|s| s.trim().to_string())
+                        .filter(|s| !s.is_empty())
+                        .collect()
+                })
                 .unwrap_or_default();
 
             let status = if deps.is_empty() {
@@ -323,7 +362,10 @@ pub async fn run_task(args: TaskArgs, coordinator: StigmergyCoordinator) -> Resu
             if json_mode {
                 println!("{}", serde_json::to_string_pretty(&task)?);
             } else {
-                println!("✓ Task '{}' created with status '{}'.", task.task_id, task.status);
+                println!(
+                    "✓ Task '{}' created with status '{}'.",
+                    task.task_id, task.status
+                );
             }
         }
 
@@ -344,7 +386,10 @@ pub async fn run_task(args: TaskArgs, coordinator: StigmergyCoordinator) -> Resu
             };
 
             let supported_types: Option<Vec<&str>> = types.as_ref().map(|s| {
-                s.split(',').map(|t| t.trim()).filter(|t| !t.is_empty()).collect()
+                s.split(',')
+                    .map(|t| t.trim())
+                    .filter(|t| !t.is_empty())
+                    .collect()
             });
 
             let claimed_opt = coordinator.claim_task_atomic_typed(
@@ -405,7 +450,10 @@ pub async fn run_task(args: TaskArgs, coordinator: StigmergyCoordinator) -> Resu
                             }
                         );
                         if !upstream_artifacts.is_empty() {
-                            println!("\n📦 Attached Upstream Artifacts ({}):", upstream_artifacts.len());
+                            println!(
+                                "\n📦 Attached Upstream Artifacts ({}):",
+                                upstream_artifacts.len()
+                            );
                             for a in &upstream_artifacts {
                                 println!("  • [{}] from task {}: {}", a.kind, a.task_id, a.payload);
                             }
@@ -419,7 +467,10 @@ pub async fn run_task(args: TaskArgs, coordinator: StigmergyCoordinator) -> Resu
                             status: "none_available",
                             task: None,
                             upstream_artifacts: vec![],
-                            message: Some("No eligible pending tasks are currently available for claiming.".to_string()),
+                            message: Some(
+                                "No eligible pending tasks are currently available for claiming."
+                                    .to_string(),
+                            ),
                         };
                         println!("{}", serde_json::to_string_pretty(&resp)?);
                     } else {
@@ -441,13 +492,17 @@ pub async fn run_task(args: TaskArgs, coordinator: StigmergyCoordinator) -> Resu
             let task_id = resolve_task_id(task.as_deref())
                 .context("Task ID is required. Pass --task <id> or set STRATA_TASK_ID.")?;
 
-            let ok = coordinator.update_task_progress_with_generation(&task_id, &agent_id, &message, generation)?;
+            let ok = coordinator
+                .update_task_progress_with_generation(&task_id, &agent_id, &message, generation)?;
             if !ok {
                 bail!("Could not update progress: task '{}' not found, not active, assigned to another agent, or invalid claim generation.", task_id);
             }
 
             if json_mode {
-                println!("{}", serde_json::json!({ "status": "ok", "task_id": task_id, "agent": agent_id }));
+                println!(
+                    "{}",
+                    serde_json::json!({ "status": "ok", "task_id": task_id, "agent": agent_id })
+                );
             } else {
                 println!("✓ Task '{}' progress updated: '{}'", task_id, message);
             }
@@ -514,12 +569,15 @@ pub async fn run_task(args: TaskArgs, coordinator: StigmergyCoordinator) -> Resu
             }
 
             if json_mode {
-                println!("{}", serde_json::json!({
-                    "status": "completed",
-                    "task_id": task_id,
-                    "agent": agent_id,
-                    "artifact_recorded": task_artifact.is_some()
-                }));
+                println!(
+                    "{}",
+                    serde_json::json!({
+                        "status": "completed",
+                        "task_id": task_id,
+                        "agent": agent_id,
+                        "artifact_recorded": task_artifact.is_some()
+                    })
+                );
             } else {
                 println!("✓ Task '{}' completed by '{}'. Resource leases released and downstream tasks unblocked.", task_id, agent_id);
             }
@@ -537,7 +595,8 @@ pub async fn run_task(args: TaskArgs, coordinator: StigmergyCoordinator) -> Resu
             let task_id = resolve_task_id(task.as_deref())
                 .context("Task ID is required. Pass --task <id> or set STRATA_TASK_ID.")?;
 
-            let failed = coordinator.fail_task_with_generation(&task_id, &agent_id, &error, generation)?;
+            let failed =
+                coordinator.fail_task_with_generation(&task_id, &agent_id, &error, generation)?;
             if !failed {
                 bail!("Could not mark task as failed: task '{}' was not found, not active, assigned to another agent, or invalid claim generation.", task_id);
             }
@@ -559,14 +618,20 @@ pub async fn run_task(args: TaskArgs, coordinator: StigmergyCoordinator) -> Resu
             }
 
             if json_mode {
-                println!("{}", serde_json::json!({
-                    "status": "failed",
-                    "task_id": task_id,
-                    "agent": agent_id,
-                    "error": error
-                }));
+                println!(
+                    "{}",
+                    serde_json::json!({
+                        "status": "failed",
+                        "task_id": task_id,
+                        "agent": agent_id,
+                        "error": error
+                    })
+                );
             } else {
-                println!("✗ Task '{}' marked as failed by '{}'. Locks released.", task_id, agent_id);
+                println!(
+                    "✗ Task '{}' marked as failed by '{}'. Locks released.",
+                    task_id, agent_id
+                );
             }
         }
 
@@ -578,19 +643,45 @@ pub async fn run_task(args: TaskArgs, coordinator: StigmergyCoordinator) -> Resu
             let artifacts = coordinator.get_task_artifacts(&task)?;
 
             if json_mode {
-                println!("{}", serde_json::to_string_pretty(&serde_json::json!({
-                    "task": task_record,
-                    "artifacts": artifacts
-                }))?);
+                println!(
+                    "{}",
+                    serde_json::to_string_pretty(&serde_json::json!({
+                        "task": task_record,
+                        "artifacts": artifacts
+                    }))?
+                );
             } else {
                 println!("\n🔍 [Task Inspection: {}]", task_record.task_id);
                 println!("═════════════════════════════════════════════════════════════");
                 println!("Title:       {}", task_record.title);
                 println!("Status:      {}", task_record.status);
-                println!("Plan ID:     {}", task_record.plan_id.as_deref().unwrap_or("-"));
-                println!("Agent:       {}", task_record.assigned_agent.as_deref().unwrap_or("unassigned"));
-                println!("Prereqs:     {}", if task_record.dependencies.is_empty() { "-".to_string() } else { task_record.dependencies.join(", ") });
-                println!("Resources:   {}", if task_record.required_resources.is_empty() { "-".to_string() } else { task_record.required_resources.join(", ") });
+                println!(
+                    "Plan ID:     {}",
+                    task_record.plan_id.as_deref().unwrap_or("-")
+                );
+                println!(
+                    "Agent:       {}",
+                    task_record
+                        .assigned_agent
+                        .as_deref()
+                        .unwrap_or("unassigned")
+                );
+                println!(
+                    "Prereqs:     {}",
+                    if task_record.dependencies.is_empty() {
+                        "-".to_string()
+                    } else {
+                        task_record.dependencies.join(", ")
+                    }
+                );
+                println!(
+                    "Resources:   {}",
+                    if task_record.required_resources.is_empty() {
+                        "-".to_string()
+                    } else {
+                        task_record.required_resources.join(", ")
+                    }
+                );
                 if let Some(outputs) = &task_record.outputs {
                     println!("Outputs:     {}", outputs);
                 }
@@ -628,7 +719,11 @@ pub async fn run_task(args: TaskArgs, coordinator: StigmergyCoordinator) -> Resu
             } else if reclaimed.is_empty() {
                 println!("✓ No orphaned tasks (none silent for more than {stale_after}s).");
             } else {
-                println!("♻ Reclaimed {} orphaned task(s): {}", reclaimed.len(), reclaimed.join(", "));
+                println!(
+                    "♻ Reclaimed {} orphaned task(s): {}",
+                    reclaimed.len(),
+                    reclaimed.join(", ")
+                );
             }
         }
 

@@ -9,7 +9,6 @@ pub mod state;
 pub mod traits;
 
 // Re-exports for convenience
-pub use paths::{canonical_resource_id, canonical_resource_id_with_root};
 pub use a2a::{
     A2aMessage, AgentCard, AgentPresence, DomainAuthority, IpcEvent, IpcMessage,
     LeaseAcquireResult, ResourceLease, TransactiveQuery, TransactiveResponse,
@@ -22,6 +21,7 @@ pub use events::{
     MemoryConsolidated, MemoryWritten, ObservationReceived, Provenance, RetentionPolicy,
     SessionEnded, SessionStarted, TaskCompleted, TaskStarted, ToolInvoked, ToolResultReceived,
 };
+pub use paths::{canonical_resource_id, canonical_resource_id_with_root};
 pub use schemas::{
     BranchMergeReport, CodeAnchor, ContextBudgetConfig, DecayConfig, DecayMetrics, EpisodeRecord,
     EpisodeReplay, EpisodeStep, EpisodicMemory, EvidenceRef, ExportFormat, FactDependency,
@@ -359,7 +359,8 @@ mod tests {
             candidate_anti_patterns: vec![],
         };
         let replay_json = serde_json::to_string(&replay).expect("serialize replay");
-        let de_replay: EpisodeReplay = serde_json::from_str(&replay_json).expect("deserialize replay");
+        let de_replay: EpisodeReplay =
+            serde_json::from_str(&replay_json).expect("deserialize replay");
         assert_eq!(replay.episode_id, de_replay.episode_id);
         assert_eq!(de_replay.simulated_reward, 0.9);
     }
@@ -401,7 +402,8 @@ mod tests {
 
         // 4. Serde roundtrip for rollup
         let rollup_json = serde_json::to_string(&rollup_with_parent).expect("serialize rollup");
-        let de_rollup: EpisodeRecord = serde_json::from_str(&rollup_json).expect("deserialize rollup");
+        let de_rollup: EpisodeRecord =
+            serde_json::from_str(&rollup_json).expect("deserialize rollup");
         assert_eq!(de_rollup.tier, 2);
         assert_eq!(de_rollup.parent_id, Some(epoch_id));
         assert_eq!(de_rollup.child_ids, vec![leaf1.id, leaf2.id]);
@@ -420,9 +422,11 @@ mod tests {
             "causal_provenance": null,
             "consolidated": false,
             "created_at": 1700000000
-        }).to_string();
+        })
+        .to_string();
 
-        let de_legacy: EpisodeRecord = serde_json::from_str(&legacy_json).expect("deserialize legacy episode");
+        let de_legacy: EpisodeRecord =
+            serde_json::from_str(&legacy_json).expect("deserialize legacy episode");
         assert_eq!(de_legacy.tier, 1);
         assert!(de_legacy.is_leaf());
         assert_eq!(de_legacy.parent_id, None);
