@@ -634,6 +634,17 @@ impl MemoryEngine for SqliteMemoryEngine {
         as_of_branch: Option<&str>,
         limit: usize,
     ) -> Result<Vec<MemoryRecord>, StrataError> {
+        let detected_branch = if as_of_branch.is_none() {
+            if let Ok(curr) = std::env::current_dir() {
+                crate::workspace::detect_git_branch(&curr)
+            } else {
+                None
+            }
+        } else {
+            None
+        };
+        let effective_branch = as_of_branch.or(detected_branch.as_deref());
+
         let mut results = self
             .ranker
             .retrieve_federated_as_of(
@@ -645,7 +656,7 @@ impl MemoryEngine for SqliteMemoryEngine {
                 None,
                 as_of_time,
                 as_of_commit,
-                as_of_branch,
+                effective_branch,
                 limit,
             )
             .await?;
@@ -695,54 +706,40 @@ impl MemoryEngine for SqliteMemoryEngine {
     }
 
     async fn write(&self, record: &MemoryRecord) -> Result<MemoryHandle, StrataError> {
-        let mut to_write = record.clone();
-
         // Strict Human-in-the-loop Invariant: Core Tier requires explicit human approval
-        if to_write.tier == MemoryTier::Core && !to_write.approved_by_human {
+        if record.tier == MemoryTier::Core && !record.approved_by_human {
             return Err(StrataError::Validation(
                 "Cannot write memory directly to Core Tier without explicit human approval (approved_by_human=true)".to_string(),
             ));
         }
 
-        // Auto-detect git branch if not explicitly set
-        if to_write.git_branch().is_none() {
-            if let Ok(curr_dir) = std::env::current_dir() {
-                if let Some(branch) = crate::workspace::detect_git_branch(&curr_dir) {
-                    to_write = to_write.with_branch(branch);
+        // Route writes through AUDN pipeline for deduplication, canonical updates, or addition
+        let decision = self.ingest_audn(record).await?;
+        match decision.operation {
+            AudnOperation::Noop { existing_id } => {
+                if let Ok(Some(existing)) = self.store.get_memory(&existing_id) {
+                    Ok(existing.to_handle(Some(existing.importance)))
+                } else {
+                    Ok(record.to_handle(Some(record.importance)))
                 }
             }
-        }
-
-        // If embedding is missing, generate it automatically
-        if to_write.embedding.is_none() && !to_write.content.trim().is_empty() {
-            if let Ok(emb) = self.embedding_provider.embed_text(&to_write.content).await {
-                to_write.embedding = Some(emb);
-                to_write.embedding_model = Some(self.embedding_provider.model_name().to_string());
-                to_write.embedding_version = Some(self.embedding_provider.model_version().to_string());
+            AudnOperation::Update { target_id } => {
+                if let Some(ref updated) = decision.record {
+                    Ok(updated.to_handle(Some(updated.importance)))
+                } else if let Ok(Some(existing)) = self.store.get_memory(&target_id) {
+                    Ok(existing.to_handle(Some(existing.importance)))
+                } else {
+                    Ok(record.to_handle(Some(record.importance)))
+                }
             }
-        } else if to_write.embedding.is_some() && to_write.embedding_model.is_none() {
-            to_write.embedding_model = Some(self.embedding_provider.model_name().to_string());
-            to_write.embedding_version = Some(self.embedding_provider.model_version().to_string());
+            AudnOperation::Add => {
+                let rec = decision.record.as_ref().unwrap_or(record);
+                Ok(rec.to_handle(Some(rec.importance)))
+            }
+            AudnOperation::Delete { .. } => {
+                Ok(record.to_handle(Some(record.importance)))
+            }
         }
-
-        self.store.insert_or_update_memory(&to_write)?;
-
-        // Auto-enqueue CDC sync delta in outbox
-        let workspace =
-            std::env::var("STRATA_WORKSPACE_ID").unwrap_or_else(|_| "default".to_string());
-        if let Ok(payload) = serde_json::to_value(&to_write) {
-            let version_hash = sync::compute_version_hash(&payload);
-            let delta = strata_core::schemas::SyncDelta::new(
-                &workspace,
-                0,
-                "memory_record",
-                payload,
-                version_hash,
-            );
-            let _ = self.store.enqueue_delta(&delta);
-        }
-
-        Ok(to_write.to_handle(Some(to_write.importance)))
     }
 
     async fn digest(

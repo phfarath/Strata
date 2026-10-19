@@ -791,7 +791,7 @@ impl HybridRanker {
             }
         }
 
-        // 4. Compute Tri-Modal Reciprocal Rank Fusion (RRF) with optional active file proximity bias and continuous recency weighting
+        // 4. Compute Tri-Modal Reciprocal Rank Fusion (RRF) with optional active file proximity bias, continuous recency weighting, and active branch priority
         let fused = self.fuse_tri_ranks_with_temporal(
             &fts_results,
             &vector_results,
@@ -799,6 +799,7 @@ impl HybridRanker {
             proximity_engine.as_ref(),
             active_files,
             as_of_time,
+            as_of_branch,
             limit,
         );
         Ok(fused)
@@ -843,12 +844,14 @@ impl HybridRanker {
             proximity_engine,
             active_files,
             None,
+            None,
             limit,
         )
     }
 
     /// Fuse BM25, Vector, and Spreading Activation rankings using Tri-Modal RRF,
-    /// augmented by Active File & Cursor Proximity Biasing and Continuous Recency Weighting.
+    /// augmented by Active File & Cursor Proximity Biasing, Continuous Recency Weighting,
+    /// and Active Branch Priority Biasing.
     pub fn fuse_tri_ranks_with_temporal(
         &self,
         fts_ranked: &[(MemoryRecord, f32)],
@@ -857,6 +860,7 @@ impl HybridRanker {
         proximity_engine: Option<&ProximityBiasEngine>,
         active_files: &[String],
         as_of_time: Option<DateTime<Utc>>,
+        as_of_branch: Option<&str>,
         limit: usize,
     ) -> Vec<MemoryRecord> {
         let mut score_map: HashMap<Uuid, f32> = HashMap::new();
@@ -955,6 +959,17 @@ impl HybridRanker {
                 if let (Some(prox), Some(ref hmap)) = (proximity_engine, &hop_map) {
                     let proximity_boost = prox.memory_proximity_boost_with_map(rec, hmap);
                     *score += proximity_boost;
+                }
+
+                // Active branch prioritization: prioritize memories originating from the active branch over fallback (main/master/global)
+                if let Some(target_b) = as_of_branch {
+                    if target_b != "*" && target_b != "all" {
+                        if let Some(b) = rec.git_branch() {
+                            if b == target_b {
+                                *score *= 1.35;
+                            }
+                        }
+                    }
                 }
             }
         }

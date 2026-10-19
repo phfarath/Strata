@@ -1562,6 +1562,14 @@ impl DreamEngine {
             report.memories_pruned = self.prune_decayed_active_memories(now)?;
         }
 
+        // 5. Context Rot Penalty Decay & Quarantine
+        let rot_detector = crate::context_rot::ContextRotDetector::with_default_config();
+        if let Ok(decayed) = rot_detector.apply_penalty_decay(&self.store) {
+            if decayed > 0 {
+                tracing::info!("Context rot detector quarantined and decayed {decayed} poisoned memories during dream cycle");
+            }
+        }
+
         // Update session and fingerprint watermarks
         for sid in active_sessions {
             self.dreamed_sessions.insert(sid);

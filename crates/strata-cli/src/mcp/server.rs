@@ -976,6 +976,32 @@ impl McpServer {
                                 "No memories found matching query: \"{query}\""
                             ))
                         } else {
+                            if let Some(ref engine) = self.sqlite_engine {
+                                let session_id = args
+                                    .get("session_id")
+                                    .and_then(|v| v.as_str())
+                                    .map(String::from)
+                                    .or_else(|| std::env::var("STRATA_SESSION_ID").ok())
+                                    .unwrap_or_else(|| "default".to_string());
+                                let task_id = args
+                                    .get("task_id")
+                                    .and_then(|v| v.as_str())
+                                    .map(String::from)
+                                    .or_else(|| std::env::var("STRATA_TASK_ID").ok());
+
+                                for r in &filtered_records {
+                                    let mut inj = strata_memory::MemoryInjectionRecord::new(
+                                        r.id,
+                                        &session_id,
+                                        strata_memory::InjectionOutcome::Success,
+                                    );
+                                    if let Some(ref tid) = task_id {
+                                        inj = inj.with_task_id(tid.clone());
+                                    }
+                                    let _ = engine.store().record_injection_outcome(&inj);
+                                }
+                            }
+
                             let handles: Vec<_> = filtered_records
                                 .iter()
                                 .map(|r| {
@@ -1152,18 +1178,55 @@ impl McpServer {
                     record = record.with_summary(s);
                 }
 
-                match self.memory_engine.write(&record).await {
-                    Ok(handle) => match serde_json::to_string_pretty(&serde_json::json!({
-                        "status": "stored",
-                        "id": handle.id.to_string(),
-                        "title": handle.title,
-                        "memory_type": handle.memory_type.to_string(),
-                        "scope": handle.scope.to_string()
-                    })) {
-                        Ok(json) => CallToolResult::text(json),
-                        Err(e) => CallToolResult::error(format!("Serialization error: {e}")),
-                    },
-                    Err(e) => CallToolResult::error(format!("Memory write error: {e}")),
+                if let Some(ref engine) = self.sqlite_engine {
+                    match engine.ingest_audn(&record).await {
+                        Ok(decision) => {
+                            let (status, id, title) = match &decision.operation {
+                                strata_memory::pipeline::AudnOperation::Add => {
+                                    let rec = decision.record.as_ref().unwrap_or(&record);
+                                    ("stored", rec.id.to_string(), rec.summary.clone().unwrap_or_else(|| rec.content.clone()))
+                                }
+                                strata_memory::pipeline::AudnOperation::Update { target_id } => {
+                                    let rec = decision.record.as_ref().unwrap_or(&record);
+                                    ("updated", target_id.to_string(), rec.summary.clone().unwrap_or_else(|| rec.content.clone()))
+                                }
+                                strata_memory::pipeline::AudnOperation::Noop { existing_id } => {
+                                    ("noop", existing_id.to_string(), record.summary.clone().unwrap_or_else(|| record.content.clone()))
+                                }
+                                strata_memory::pipeline::AudnOperation::Delete { target_id } => {
+                                    ("deleted", target_id.to_string(), record.summary.clone().unwrap_or_else(|| record.content.clone()))
+                                }
+                            };
+                            match serde_json::to_string_pretty(&serde_json::json!({
+                                "status": status,
+                                "id": id,
+                                "title": title,
+                                "memory_type": record.memory_type.to_string(),
+                                "scope": record.scope.to_string(),
+                                "reason": decision.reason,
+                                "cosine_similarity": decision.cosine_similarity,
+                                "minhash_similarity": decision.minhash_similarity,
+                            })) {
+                                Ok(json) => CallToolResult::text(json),
+                                Err(e) => CallToolResult::error(format!("Serialization error: {e}")),
+                            }
+                        }
+                        Err(e) => CallToolResult::error(format!("Memory write error: {e}")),
+                    }
+                } else {
+                    match self.memory_engine.write(&record).await {
+                        Ok(handle) => match serde_json::to_string_pretty(&serde_json::json!({
+                            "status": "stored",
+                            "id": handle.id.to_string(),
+                            "title": handle.title,
+                            "memory_type": handle.memory_type.to_string(),
+                            "scope": handle.scope.to_string()
+                        })) {
+                            Ok(json) => CallToolResult::text(json),
+                            Err(e) => CallToolResult::error(format!("Serialization error: {e}")),
+                        },
+                        Err(e) => CallToolResult::error(format!("Memory write error: {e}")),
+                    }
                 }
             }
             "memory_digest" => {
@@ -1206,11 +1269,16 @@ impl McpServer {
 
                 match self.memory_engine.get(&uuid).await {
                     Ok(Some(mut record)) => {
+                        let is_negative = rating.eq_ignore_ascii_case("negative")
+                            || rating.eq_ignore_ascii_case("fail")
+                            || rating.eq_ignore_ascii_case("failure")
+                            || score.map_or(false, |s| s < 0.4);
+
                         let new_confidence = if let Some(s) = score {
                             s.clamp(0.0, 1.0)
                         } else if rating.eq_ignore_ascii_case("positive") {
                             (record.confidence + 0.1).min(1.0)
-                        } else if rating.eq_ignore_ascii_case("negative") {
+                        } else if is_negative {
                             (record.confidence - 0.2).max(0.0)
                         } else {
                             record.confidence
@@ -1228,19 +1296,74 @@ impl McpServer {
                             }
                         }
 
+                        let session_id = args
+                            .get("session_id")
+                            .and_then(|v| v.as_str())
+                            .map(String::from)
+                            .or_else(|| std::env::var("STRATA_SESSION_ID").ok())
+                            .unwrap_or_else(|| "default".to_string());
+
+                        let task_id = args
+                            .get("task_id")
+                            .and_then(|v| v.as_str())
+                            .map(String::from)
+                            .or_else(|| std::env::var("STRATA_TASK_ID").ok());
+
+                        let mut is_quarantined = false;
+
+                        if let Some(ref engine) = self.sqlite_engine {
+                            let outcome = if is_negative {
+                                strata_memory::InjectionOutcome::Failure
+                            } else {
+                                strata_memory::InjectionOutcome::Success
+                            };
+
+                            let mut inj = strata_memory::MemoryInjectionRecord::new(uuid, &session_id, outcome);
+                            if let Some(ref tid) = task_id {
+                                inj = inj.with_task_id(tid.clone());
+                            }
+                            if let Some(c) = comment {
+                                inj = inj.with_command(c.to_string());
+                            }
+                            let _ = engine.store().record_injection_outcome(&inj);
+
+                            let detector = strata_memory::context_rot::ContextRotDetector::with_default_config();
+                            if let Ok(efficacy) = detector.evaluate_memory_efficacy(engine.store(), &uuid) {
+                                if efficacy.is_poisoned {
+                                    let _ = detector.apply_penalty_decay(engine.store());
+                                    let reason = format!(
+                                        "Context rot: rejection rate {:.2} ({}/{} failures) exceeds threshold {:.2}",
+                                        efficacy.rejection_rate,
+                                        efficacy.failure_count,
+                                        efficacy.total_injections,
+                                        detector.config.rejection_threshold
+                                    );
+                                    let _ = engine.store().quarantine_memory(&uuid, &reason);
+                                    is_quarantined = true;
+                                }
+                            }
+                        }
+
                         match self.memory_engine.write(&record).await {
                             Ok(handle) => {
-                                let structured = serde_json::json!({
+                                let mut structured = serde_json::json!({
                                     "status": "feedback_recorded",
                                     "id": handle.id.to_string(),
                                     "rating": rating,
                                     "confidence": new_confidence,
                                     "comment": comment
                                 });
-                                CallToolResult::structured(
-                                    format!("Feedback recorded for memory '{}': rating='{}', new confidence={:.2}", handle.id, rating, new_confidence),
-                                    structured,
-                                )
+                                if is_quarantined {
+                                    if let Some(obj) = structured.as_object_mut() {
+                                        obj.insert("quarantined".to_string(), serde_json::Value::Bool(true));
+                                    }
+                                }
+                                let msg = if is_quarantined {
+                                    format!("Feedback recorded for memory '{}': rating='{}', new confidence={:.2} [QUARANTINED due to context rot]", handle.id, rating, new_confidence)
+                                } else {
+                                    format!("Feedback recorded for memory '{}': rating='{}', new confidence={:.2}", handle.id, rating, new_confidence)
+                                };
+                                CallToolResult::structured(msg, structured)
                             }
                             Err(e) => CallToolResult::error(format!(
                                 "Failed to record memory feedback: {e}"

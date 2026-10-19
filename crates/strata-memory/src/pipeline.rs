@@ -1321,10 +1321,38 @@ impl AudnPipeline {
                 }
             }
 
+            let cand_file = candidate
+                .metadata
+                .get("file_path")
+                .and_then(|v| v.as_str())
+                .or_else(|| {
+                    candidate
+                        .metadata
+                        .get("code_anchor")
+                        .and_then(|ca| ca.get("file_path"))
+                        .and_then(|v| v.as_str())
+                });
+            let ex_file = existing
+                .metadata
+                .get("file_path")
+                .and_then(|v| v.as_str())
+                .or_else(|| {
+                    existing
+                        .metadata
+                        .get("code_anchor")
+                        .and_then(|ca| ca.get("file_path"))
+                        .and_then(|v| v.as_str())
+                });
+            let different_files = match (cand_file, ex_file) {
+                (Some(f1), Some(f2)) => f1 != f2,
+                _ => false,
+            };
+
             // Not a contradiction/update: check Noop thresholds
-            if norm_equal
-                || mh_sim >= self.config.minhash_noop_threshold
-                || cos_sim > self.config.cosine_noop_threshold
+            if !different_files
+                && (norm_equal
+                    || mh_sim >= self.config.minhash_noop_threshold
+                    || cos_sim > self.config.cosine_noop_threshold)
             {
                 let reason = if norm_equal {
                     format!(
