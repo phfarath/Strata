@@ -21,7 +21,8 @@ use strata_core::a2a::{
 };
 use strata_core::blackboard::{TaskArtifact, TaskFilter, TaskPayload, TaskRecord, TaskStatus};
 use strata_core::state::{
-    FailurePattern, FailureSeverity, MemoryRecord, MemoryTier, MemoryType, Scope,
+    FailurePattern, FailureSeverity, HumanApprovalRecord, MemoryRecord, MemoryTier, MemoryType,
+    Scope,
 };
 
 use crate::call_graph::{CallEdge, CallType};
@@ -206,6 +207,20 @@ impl SqliteStore {
         let _ = conn.execute("CREATE INDEX IF NOT EXISTS idx_episodic_embedding_model ON episodic_memories(embedding_model)", []);
         let _ = conn.execute("DROP TRIGGER IF EXISTS trg_memories_au", []);
 
+        // Human approval audit columns migrations
+        let _ = conn.execute("ALTER TABLE memories ADD COLUMN approved_by TEXT DEFAULT NULL", []);
+        let _ = conn.execute("ALTER TABLE memories ADD COLUMN approved_at TEXT DEFAULT NULL", []);
+        let _ = conn.execute("ALTER TABLE memories ADD COLUMN approval_channel TEXT DEFAULT NULL", []);
+        let _ = conn.execute("ALTER TABLE memories ADD COLUMN approved_content_hash TEXT DEFAULT NULL", []);
+        let _ = conn.execute("ALTER TABLE semantic_facts ADD COLUMN approved_by TEXT DEFAULT NULL", []);
+        let _ = conn.execute("ALTER TABLE semantic_facts ADD COLUMN approved_at TEXT DEFAULT NULL", []);
+        let _ = conn.execute("ALTER TABLE semantic_facts ADD COLUMN approval_channel TEXT DEFAULT NULL", []);
+        let _ = conn.execute("ALTER TABLE semantic_facts ADD COLUMN approved_content_hash TEXT DEFAULT NULL", []);
+        let _ = conn.execute("ALTER TABLE cold_storage_memories ADD COLUMN approved_by TEXT DEFAULT NULL", []);
+        let _ = conn.execute("ALTER TABLE cold_storage_memories ADD COLUMN approved_at TEXT DEFAULT NULL", []);
+        let _ = conn.execute("ALTER TABLE cold_storage_memories ADD COLUMN approval_channel TEXT DEFAULT NULL", []);
+        let _ = conn.execute("ALTER TABLE cold_storage_memories ADD COLUMN approved_content_hash TEXT DEFAULT NULL", []);
+
         // Idempotently backfill valid_until for legacy deprecated records
         let _ = conn.execute(
             "UPDATE memories SET valid_until = updated_at WHERE valid_until IS NULL AND json_extract(metadata_json, '$.status') = 'deprecated'",
@@ -263,8 +278,26 @@ impl SqliteStore {
                 git_commit_hash TEXT,
                 git_branch TEXT,
                 embedding_model TEXT,
-                embedding_version TEXT
+                embedding_version TEXT,
+                approved_by TEXT DEFAULT NULL,
+                approved_at TEXT DEFAULT NULL,
+                approval_channel TEXT DEFAULT NULL,
+                approved_content_hash TEXT DEFAULT NULL
             );
+
+            CREATE TABLE IF NOT EXISTS approval_tokens (
+                token TEXT PRIMARY KEY,
+                entity_id TEXT NOT NULL,
+                entity_type TEXT NOT NULL,
+                content_hash TEXT NOT NULL,
+                approved_by TEXT NOT NULL,
+                channel TEXT NOT NULL DEFAULT 'approval_token',
+                created_at TEXT NOT NULL,
+                expires_at TEXT NOT NULL,
+                used INTEGER NOT NULL DEFAULT 0,
+                rationale TEXT
+            );
+            CREATE INDEX IF NOT EXISTS idx_approval_tokens_entity ON approval_tokens(entity_id);
 
             CREATE INDEX IF NOT EXISTS idx_memories_scope ON memories(scope);
             CREATE INDEX IF NOT EXISTS idx_memories_type ON memories(memory_type);
@@ -320,7 +353,11 @@ impl SqliteStore {
                 access_count INTEGER NOT NULL DEFAULT 0,
                 last_accessed_at TEXT,
                 evidence_ids_json TEXT NOT NULL DEFAULT '[]',
-                metadata_json TEXT NOT NULL DEFAULT '{}'
+                metadata_json TEXT NOT NULL DEFAULT '{}',
+                approved_by TEXT DEFAULT NULL,
+                approved_at TEXT DEFAULT NULL,
+                approval_channel TEXT DEFAULT NULL,
+                approved_content_hash TEXT DEFAULT NULL
             );
 
             CREATE INDEX IF NOT EXISTS idx_cold_scope ON cold_storage_memories(scope);
@@ -501,7 +538,11 @@ impl SqliteStore {
                 git_commit_hash TEXT,
                 git_branch TEXT,
                 embedding_model TEXT,
-                embedding_version TEXT
+                embedding_version TEXT,
+                approved_by TEXT DEFAULT NULL,
+                approved_at TEXT DEFAULT NULL,
+                approval_channel TEXT DEFAULT NULL,
+                approved_content_hash TEXT DEFAULT NULL
             );
 
             CREATE INDEX IF NOT EXISTS idx_facts_scope ON semantic_facts(scope);
@@ -1330,13 +1371,30 @@ impl SqliteStore {
                     .map(|s| s.to_string())
             });
 
+        let (approved_by, approved_at, approval_channel, approved_content_hash) =
+            if let Some(ref approval) = memory.human_approval {
+                (
+                    Some(approval.approved_by.clone()),
+                    Some(approval.approved_at.to_rfc3339()),
+                    Some(approval.channel.clone()),
+                    Some(approval.content_hash.clone()),
+                )
+            } else {
+                (
+                    memory.metadata.get("approved_by").and_then(|v| v.as_str()).map(String::from),
+                    memory.metadata.get("approved_at").and_then(|v| v.as_str()).map(String::from),
+                    memory.metadata.get("approval_channel").and_then(|v| v.as_str()).map(String::from),
+                    memory.metadata.get("approved_content_hash").and_then(|v| v.as_str()).map(String::from),
+                )
+            };
+
         conn.execute(
             "INSERT INTO memories (
                 id, memory_type, content, summary, scope, tier, approved_by_human, importance, confidence,
                 tags_json, created_at, updated_at, access_count, last_accessed_at,
                 evidence_ids_json, embedding, metadata_json, valid_from, valid_until, git_commit_hash, git_branch,
-                embedding_model, embedding_version
-            ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18, ?19, ?20, ?21, ?22, ?23)
+                embedding_model, embedding_version, approved_by, approved_at, approval_channel, approved_content_hash
+            ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18, ?19, ?20, ?21, ?22, ?23, ?24, ?25, ?26, ?27)
             ON CONFLICT(id) DO UPDATE SET
                 memory_type = excluded.memory_type,
                 content = excluded.content,
@@ -1358,7 +1416,11 @@ impl SqliteStore {
                 valid_from = excluded.valid_from,
                 valid_until = excluded.valid_until,
                 git_commit_hash = excluded.git_commit_hash,
-                git_branch = COALESCE(excluded.git_branch, memories.git_branch)",
+                git_branch = COALESCE(excluded.git_branch, memories.git_branch),
+                approved_by = COALESCE(excluded.approved_by, memories.approved_by),
+                approved_at = COALESCE(excluded.approved_at, memories.approved_at),
+                approval_channel = COALESCE(excluded.approval_channel, memories.approval_channel),
+                approved_content_hash = COALESCE(excluded.approved_content_hash, memories.approved_content_hash)",
             params![
                 id_str,
                 mem_type_str,
@@ -1383,6 +1445,10 @@ impl SqliteStore {
                 git_branch_str,
                 memory.embedding_model.as_deref(),
                 memory.embedding_version.as_deref(),
+                approved_by.as_deref(),
+                approved_at.as_deref(),
+                approval_channel.as_deref(),
+                approved_content_hash.as_deref(),
             ],
         )
         .map_err(|e| StrataError::Database(format!("Failed to persist memory: {e}")))?;
@@ -1443,7 +1509,8 @@ impl SqliteStore {
         let mut sql = "SELECT id, memory_type, content, summary, scope, tier, approved_by_human, importance,
                               confidence, tags_json, created_at, updated_at, access_count,
                               last_accessed_at, evidence_ids_json, embedding, metadata_json,
-                              embedding_model, embedding_version
+                              embedding_model, embedding_version,
+                              approved_by, approved_at, approval_channel, approved_content_hash
                        FROM memories
                        WHERE id = ?1".to_string();
 
@@ -1531,7 +1598,8 @@ impl SqliteStore {
             "SELECT id, memory_type, content, summary, scope, tier, approved_by_human, importance,
                     confidence, tags_json, created_at, updated_at, access_count,
                     last_accessed_at, evidence_ids_json, embedding, metadata_json,
-                    embedding_model, embedding_version
+                    embedding_model, embedding_version,
+                    approved_by, approved_at, approval_channel, approved_content_hash
              FROM memories WHERE 1=1"
                 .to_string();
 
@@ -1629,7 +1697,8 @@ impl SqliteStore {
             "SELECT id, memory_type, content, summary, scope, tier, approved_by_human, importance,
                     confidence, tags_json, created_at, updated_at, access_count,
                     last_accessed_at, evidence_ids_json, embedding, metadata_json,
-                    embedding_model, embedding_version
+                    embedding_model, embedding_version,
+                    approved_by, approved_at, approval_channel, approved_content_hash
              FROM memories WHERE embedding IS NOT NULL"
                 .to_string();
 
@@ -1924,7 +1993,8 @@ impl SqliteStore {
             "SELECT id, memory_type, content, summary, scope, tier, approved_by_human, importance,
                                 confidence, tags_json, created_at, updated_at, access_count,
                                 last_accessed_at, evidence_ids_json, embedding, metadata_json,
-                                embedding_model, embedding_version
+                                embedding_model, embedding_version,
+                                approved_by, approved_at, approval_channel, approved_content_hash
                          FROM memories WHERE 1=1"
                 .to_string();
 
@@ -2041,6 +2111,189 @@ impl SqliteStore {
         Ok(changed)
     }
 
+    /// Generates a cryptographically secure, single-use approval token for a memory record or semantic fact.
+    pub fn generate_approval_token(
+        &self,
+        entity_id: &Uuid,
+        entity_type: &str,
+        content_hash: &str,
+        approved_by: &str,
+        ttl_seconds: u64,
+        rationale: Option<&str>,
+    ) -> Result<String, StrataError> {
+        let conn = self
+            .conn
+            .lock()
+            .map_err(|_| StrataError::Database("Lock poisoned on SQLite connection".to_string()))?;
+
+        let token_str = format!("st_appr_{}", Uuid::new_v4().simple());
+        let now = Utc::now();
+        let expires_at = now + chrono::Duration::seconds(ttl_seconds as i64);
+
+        conn.execute(
+            "INSERT INTO approval_tokens (
+                token, entity_id, entity_type, content_hash, approved_by,
+                channel, created_at, expires_at, used, rationale
+            ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, 0, ?9)",
+            params![
+                token_str,
+                entity_id.to_string(),
+                entity_type,
+                content_hash,
+                approved_by,
+                "approval_token",
+                now.to_rfc3339(),
+                expires_at.to_rfc3339(),
+                rationale,
+            ],
+        )
+        .map_err(|e| StrataError::Database(format!("Failed to persist approval token: {e}")))?;
+
+        Ok(token_str)
+    }
+
+    /// Verifies and atomically consumes an approval token, returning the HumanApprovalRecord if valid.
+    pub fn verify_and_consume_approval_token(
+        &self,
+        token_str: &str,
+        expected_entity_id: &Uuid,
+        expected_content_hash: &str,
+    ) -> Result<HumanApprovalRecord, StrataError> {
+        let mut conn = self
+            .conn
+            .lock()
+            .map_err(|_| StrataError::Database("Lock poisoned on SQLite connection".to_string()))?;
+
+        let tx = conn
+            .transaction()
+            .map_err(|e| StrataError::Database(format!("Transaction begin error: {e}")))?;
+
+        let (entity_id_str, _entity_type, content_hash, approved_by, channel, _created_at_str, expires_at_str, used, rationale): (
+            String, String, String, String, String, String, String, i64, Option<String>
+        ) = {
+            let mut stmt = tx
+                .prepare(
+                    "SELECT entity_id, entity_type, content_hash, approved_by, channel, created_at, expires_at, used, rationale
+                     FROM approval_tokens WHERE token = ?1",
+                )
+                .map_err(|e| StrataError::Database(format!("Prepare error: {e}")))?;
+
+            let mut rows = stmt
+                .query(params![token_str])
+                .map_err(|e| StrataError::Database(format!("Query error: {e}")))?;
+
+            let row = match rows
+                .next()
+                .map_err(|e| StrataError::Database(format!("Next error: {e}")))?
+            {
+                Some(r) => r,
+                None => {
+                    return Err(StrataError::Validation(format!(
+                        "Invalid approval token '{token_str}': token not recognized"
+                    )));
+                }
+            };
+
+            (
+                row.get(0).map_err(|e| StrataError::Database(e.to_string()))?,
+                row.get(1).map_err(|e| StrataError::Database(e.to_string()))?,
+                row.get(2).map_err(|e| StrataError::Database(e.to_string()))?,
+                row.get(3).map_err(|e| StrataError::Database(e.to_string()))?,
+                row.get(4).map_err(|e| StrataError::Database(e.to_string()))?,
+                row.get(5).map_err(|e| StrataError::Database(e.to_string()))?,
+                row.get(6).map_err(|e| StrataError::Database(e.to_string()))?,
+                row.get(7).map_err(|e| StrataError::Database(e.to_string()))?,
+                row.get(8).ok(),
+            )
+        };
+
+        if used != 0 {
+            return Err(StrataError::Validation(
+                "Approval token has already been consumed (single-use token)".to_string(),
+            ));
+        }
+
+        let now = Utc::now();
+        if let Ok(expires_at) = DateTime::parse_from_rfc3339(&expires_at_str) {
+            if now > expires_at.with_timezone(&Utc) {
+                return Err(StrataError::Validation(
+                    "Approval token has expired".to_string(),
+                ));
+            }
+        }
+
+        if entity_id_str != expected_entity_id.to_string() {
+            return Err(StrataError::Validation(format!(
+                "Approval token target mismatch: issued for entity '{entity_id_str}', but attempted promotion on '{expected_entity_id}'"
+            )));
+        }
+
+        if content_hash != expected_content_hash {
+            return Err(StrataError::Validation(format!(
+                "Memory content has been modified since approval token was issued: expected hash '{content_hash}', got '{expected_content_hash}'"
+            )));
+        }
+
+        tx.execute(
+            "UPDATE approval_tokens SET used = 1 WHERE token = ?1",
+            params![token_str],
+        )
+        .map_err(|e| StrataError::Database(format!("Update token error: {e}")))?;
+
+        tx.commit()
+            .map_err(|e| StrataError::Database(format!("Commit token consumption error: {e}")))?;
+
+        Ok(HumanApprovalRecord {
+            approved_by,
+            approved_at: now,
+            channel,
+            content_hash,
+            rationale,
+        })
+    }
+
+    /// Promotes a memory record to permanent Core Tier (frozen retention, R=1.0) with verifiable human approval metadata.
+    pub fn promote_memory_to_core_with_approval(
+        &self,
+        id: &Uuid,
+        approval: HumanApprovalRecord,
+    ) -> Result<MemoryRecord, StrataError> {
+        let mut mem = self.get_memory(id)?.ok_or_else(|| {
+            StrataError::NotFound(format!("Memory record with ID '{id}' not found"))
+        })?;
+
+        if !approval.matches_content(&mem.content) {
+            return Err(StrataError::Validation(format!(
+                "Content hash mismatch for memory '{id}': expected approval hash '{}', but actual content hash is '{}'. Memory content may have changed.",
+                approval.content_hash,
+                HumanApprovalRecord::compute_content_hash(&mem.content),
+            )));
+        }
+
+        mem.tier = MemoryTier::Core;
+        mem.approved_by_human = true;
+        mem.importance = 1.0;
+        mem.updated_at = Utc::now();
+        mem.human_approval = Some(approval.clone());
+
+        if let serde_json::Value::Object(ref mut map) = mem.metadata {
+            if let Some(ref r) = approval.rationale {
+                map.insert("promotion_reason".to_string(), serde_json::Value::String(r.clone()));
+            }
+            map.insert("promoted_at".to_string(), serde_json::Value::String(approval.approved_at.to_rfc3339()));
+            map.insert("human_approval".to_string(), serde_json::to_value(&approval).unwrap_or(serde_json::json!({})));
+        } else {
+            mem.metadata = serde_json::json!({
+                "promotion_reason": approval.rationale,
+                "promoted_at": approval.approved_at.to_rfc3339(),
+                "human_approval": approval,
+            });
+        }
+
+        self.insert_or_update_memory(&mem)?;
+        Ok(mem)
+    }
+
     /// Promotes a memory record to permanent Core Tier (frozen retention, R=1.0).
     /// Enforces strict requirement for explicit human approval (`approved_by_human == true`).
     pub fn promote_memory_to_core(
@@ -2055,35 +2308,18 @@ impl SqliteStore {
             ));
         }
 
-        let mut mem = self.get_memory(id)?.ok_or_else(|| {
+        let mem = self.get_memory(id)?.ok_or_else(|| {
             StrataError::NotFound(format!("Memory record with ID '{id}' not found"))
         })?;
 
-        mem.tier = MemoryTier::Core;
-        mem.approved_by_human = true;
-        mem.importance = 1.0;
-        mem.updated_at = Utc::now();
+        let approval = HumanApprovalRecord::new(
+            "cli_user",
+            "cli_direct",
+            &mem.content,
+            reason.map(String::from),
+        );
 
-        if let Some(r) = reason {
-            if let serde_json::Value::Object(ref mut map) = mem.metadata {
-                map.insert(
-                    "promotion_reason".to_string(),
-                    serde_json::Value::String(r.to_string()),
-                );
-                map.insert(
-                    "promoted_at".to_string(),
-                    serde_json::Value::String(Utc::now().to_rfc3339()),
-                );
-            } else {
-                mem.metadata = serde_json::json!({
-                    "promotion_reason": r,
-                    "promoted_at": Utc::now().to_rfc3339(),
-                });
-            }
-        }
-
-        self.insert_or_update_memory(&mem)?;
-        Ok(mem)
+        self.promote_memory_to_core_with_approval(id, approval)
     }
 
     // ==========================================
@@ -3124,6 +3360,18 @@ impl SqliteStore {
 
         let git_branch_str = fact.git_branch().map(|s| s.to_string());
 
+        let (approved_by, approved_at, approval_channel, approved_content_hash) =
+            if let Some(ref approval) = fact.human_approval {
+                (
+                    Some(approval.approved_by.clone()),
+                    Some(approval.approved_at.to_rfc3339()),
+                    Some(approval.channel.clone()),
+                    Some(approval.content_hash.clone()),
+                )
+            } else {
+                (None, None, None, None)
+            };
+
         let tx = conn
             .transaction()
             .map_err(|e| StrataError::Database(format!("Failed to begin transaction for semantic fact: {e}")))?;
@@ -3133,8 +3381,9 @@ impl SqliteStore {
                 id, project, scope, statement, category, evidence_json,
                 importance, confidence, tier, approved_by_human, created_at, last_updated_at, status,
                 version, replaced_by, tags_json, code_anchor_json, depends_on_json,
-                valid_from, valid_until, git_commit_hash, git_branch
-            ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18, ?19, ?20, ?21, ?22)
+                valid_from, valid_until, git_commit_hash, git_branch,
+                approved_by, approved_at, approval_channel, approved_content_hash
+            ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18, ?19, ?20, ?21, ?22, ?23, ?24, ?25, ?26)
             ON CONFLICT(id) DO UPDATE SET
                 project = excluded.project,
                 scope = excluded.scope,
@@ -3155,7 +3404,11 @@ impl SqliteStore {
                 valid_from = excluded.valid_from,
                 valid_until = excluded.valid_until,
                 git_commit_hash = excluded.git_commit_hash,
-                git_branch = COALESCE(excluded.git_branch, semantic_facts.git_branch)",
+                git_branch = COALESCE(excluded.git_branch, semantic_facts.git_branch),
+                approved_by = COALESCE(excluded.approved_by, semantic_facts.approved_by),
+                approved_at = COALESCE(excluded.approved_at, semantic_facts.approved_at),
+                approval_channel = COALESCE(excluded.approval_channel, semantic_facts.approval_channel),
+                approved_content_hash = COALESCE(excluded.approved_content_hash, semantic_facts.approved_content_hash)",
             params![
                 id_str,
                 fact.project,
@@ -3179,6 +3432,10 @@ impl SqliteStore {
                 valid_until_str,
                 git_commit_str,
                 git_branch_str,
+                approved_by.as_deref(),
+                approved_at.as_deref(),
+                approval_channel.as_deref(),
+                approved_content_hash.as_deref(),
             ],
         )
         .map_err(|e| StrataError::Database(format!("Failed to persist semantic fact: {e}")))?;
@@ -3225,7 +3482,8 @@ impl SqliteStore {
 
         let mut sql = "SELECT id, project, scope, statement, category, evidence_json,
                               importance, confidence, tier, approved_by_human, created_at, last_updated_at, status,
-                              version, replaced_by, tags_json, code_anchor_json, depends_on_json
+                              version, replaced_by, tags_json, code_anchor_json, depends_on_json,
+                              approved_by, approved_at, approval_channel, approved_content_hash
                        FROM semantic_facts
                        WHERE id = ?1".to_string();
 
@@ -3347,7 +3605,8 @@ impl SqliteStore {
 
         let mut sql = "SELECT id, project, scope, statement, category, evidence_json,
                               importance, confidence, tier, approved_by_human, created_at, last_updated_at, status,
-                              version, replaced_by, tags_json, code_anchor_json, depends_on_json
+                              version, replaced_by, tags_json, code_anchor_json, depends_on_json,
+                              approved_by, approved_at, approval_channel, approved_content_hash
                        FROM semantic_facts WHERE 1=1".to_string();
 
         let mut params_vec: Vec<Box<dyn rusqlite::ToSql>> = Vec::new();
@@ -3416,7 +3675,8 @@ impl SqliteStore {
 
         let mut sql = "SELECT id, project, scope, statement, category, evidence_json,
                               importance, confidence, tier, approved_by_human, created_at, last_updated_at, status,
-                              version, replaced_by, tags_json, code_anchor_json, depends_on_json, embedding
+                              version, replaced_by, tags_json, code_anchor_json, depends_on_json,
+                              approved_by, approved_at, approval_channel, approved_content_hash, embedding
                        FROM semantic_facts WHERE 1=1".to_string();
 
         let mut params_vec: Vec<Box<dyn rusqlite::ToSql>> = Vec::new();
@@ -3440,7 +3700,7 @@ impl SqliteStore {
         let rows = stmt
             .query_map(params_slice.as_slice(), |row| {
                 let fact = Self::row_to_fact(row)?;
-                let blob_opt: Option<Vec<u8>> = row.get(18)?;
+                let blob_opt: Option<Vec<u8>> = row.get("embedding")?;
                 let emb = blob_opt.and_then(|b| bytes_to_embedding(&b).ok());
                 Ok((fact, emb))
             })
@@ -3465,7 +3725,8 @@ impl SqliteStore {
 
         let mut sql = "SELECT id, project, scope, statement, category, evidence_json,
                               importance, confidence, tier, approved_by_human, created_at, last_updated_at, status,
-                              version, replaced_by, tags_json, code_anchor_json, depends_on_json, embedding, embedding_model
+                              version, replaced_by, tags_json, code_anchor_json, depends_on_json,
+                              approved_by, approved_at, approval_channel, approved_content_hash, embedding, embedding_model
                        FROM semantic_facts WHERE 1=1".to_string();
 
         let mut params_vec: Vec<Box<dyn rusqlite::ToSql>> = Vec::new();
@@ -3489,9 +3750,9 @@ impl SqliteStore {
         let rows = stmt
             .query_map(params_slice.as_slice(), |row| {
                 let fact = Self::row_to_fact(row)?;
-                let blob_opt: Option<Vec<u8>> = row.get(18)?;
+                let blob_opt: Option<Vec<u8>> = row.get("embedding")?;
                 let emb = blob_opt.and_then(|b| bytes_to_embedding(&b).ok());
-                let model: Option<String> = row.get(19).ok();
+                let model: Option<String> = row.get("embedding_model").ok();
                 Ok((fact, emb, model))
             })
             .map_err(|e| StrataError::Database(e.to_string()))?;
@@ -3534,6 +3795,7 @@ impl SqliteStore {
             SELECT m.id, m.project, m.scope, m.statement, m.category, m.evidence_json,
                    m.importance, m.confidence, m.tier, m.approved_by_human, m.created_at, m.last_updated_at, m.status,
                    m.version, m.replaced_by, m.tags_json, m.code_anchor_json, m.depends_on_json,
+                   m.approved_by, m.approved_at, m.approval_channel, m.approved_content_hash,
                    bm25(semantic_facts_fts) as rank
             FROM semantic_facts_fts f
             JOIN semantic_facts m ON m.id = f.id
@@ -3582,7 +3844,7 @@ impl SqliteStore {
         let rows = stmt
             .query_map(params_slice.as_slice(), |row| {
                 let fact = Self::row_to_fact(row)?;
-                let rank: f64 = row.get(18)?;
+                let rank: f64 = row.get("rank")?;
                 Ok((fact, rank as f32))
             })
             .map_err(|e| StrataError::Database(e.to_string()))?;
@@ -3818,6 +4080,38 @@ impl SqliteStore {
         Ok(results)
     }
 
+    /// Promotes a semantic fact to permanent Core Tier (frozen retention, R=1.0) with verifiable human approval metadata.
+    pub fn promote_semantic_fact_to_core_with_approval(
+        &self,
+        id: &Uuid,
+        approval: HumanApprovalRecord,
+    ) -> Result<SemanticFact, StrataError> {
+        let mut fact = self.get_semantic_fact(id)?.ok_or_else(|| {
+            StrataError::NotFound(format!("Semantic fact with ID '{id}' not found"))
+        })?;
+
+        if !approval.matches_content(&fact.statement) {
+            return Err(StrataError::Validation(format!(
+                "Content hash mismatch for semantic fact '{id}': expected approval hash '{}', but actual statement hash is '{}'. Statement may have changed.",
+                approval.content_hash,
+                HumanApprovalRecord::compute_content_hash(&fact.statement),
+            )));
+        }
+
+        fact.tier = MemoryTier::Core;
+        fact.approved_by_human = true;
+        fact.importance = 1.0;
+        fact.last_updated_at = Utc::now();
+        fact.human_approval = Some(approval.clone());
+
+        if let Some(ref r) = approval.rationale {
+            fact.tags.push(format!("reason:{r}"));
+        }
+
+        self.insert_or_update_semantic_fact(&fact)?;
+        Ok(fact)
+    }
+
     /// Promotes a semantic fact to permanent Core Tier (frozen retention, R=1.0).
     /// Enforces strict requirement for explicit human approval (`approved_by_human == true`).
     pub fn promote_semantic_fact_to_core(
@@ -3832,21 +4126,18 @@ impl SqliteStore {
             ));
         }
 
-        let mut fact = self.get_semantic_fact(id)?.ok_or_else(|| {
+        let fact = self.get_semantic_fact(id)?.ok_or_else(|| {
             StrataError::NotFound(format!("Semantic fact with ID '{id}' not found"))
         })?;
 
-        fact.tier = MemoryTier::Core;
-        fact.approved_by_human = true;
-        fact.importance = 1.0;
-        fact.last_updated_at = Utc::now();
+        let approval = HumanApprovalRecord::new(
+            "cli_user",
+            "cli_direct",
+            &fact.statement,
+            reason.map(String::from),
+        );
 
-        if let Some(r) = reason {
-            fact.tags.push(format!("reason:{r}"));
-        }
-
-        self.insert_or_update_semantic_fact(&fact)?;
-        Ok(fact)
+        self.promote_semantic_fact_to_core_with_approval(id, approval)
     }
 
     pub fn get_facts_by_file_anchor(
@@ -4267,6 +4558,54 @@ impl SqliteStore {
 
         let embedding = embedding_bytes.and_then(|b| bytes_to_embedding(&b).ok());
 
+        let human_approval: Option<HumanApprovalRecord> = match (
+            row.get::<_, Option<String>>("approved_by").ok().flatten(),
+            row.get::<_, Option<String>>("approved_at").ok().flatten(),
+            row.get::<_, Option<String>>("approval_channel").ok().flatten(),
+            row.get::<_, Option<String>>("approved_content_hash").ok().flatten(),
+        ) {
+            (Some(by), Some(at_str), Some(ch), Some(hash)) => {
+                DateTime::parse_from_rfc3339(&at_str)
+                    .ok()
+                    .map(|dt| HumanApprovalRecord {
+                        approved_by: by,
+                        approved_at: dt.with_timezone(&Utc),
+                        channel: ch,
+                        content_hash: hash,
+                        rationale: metadata.get("promotion_reason").and_then(|v| v.as_str()).map(String::from),
+                    })
+            }
+            _ => metadata
+                .get("human_approval")
+                .and_then(|v| serde_json::from_value(v.clone()).ok())
+                .or_else(|| {
+                    if approved_by_human {
+                        let by = metadata.get("approved_by").and_then(|v| v.as_str()).unwrap_or("cli_user").to_string();
+                        let ch = metadata.get("approval_channel").and_then(|v| v.as_str()).unwrap_or("cli_direct").to_string();
+                        let at = metadata.get("promoted_at")
+                            .or_else(|| metadata.get("approved_at"))
+                            .and_then(|v| v.as_str())
+                            .and_then(|s| DateTime::parse_from_rfc3339(s).ok())
+                            .map(|dt| dt.with_timezone(&Utc))
+                            .unwrap_or(updated_at);
+                        let hash = metadata.get("approved_content_hash")
+                            .and_then(|v| v.as_str())
+                            .map(String::from)
+                            .unwrap_or_else(|| HumanApprovalRecord::compute_content_hash(&content));
+                        let rat = metadata.get("promotion_reason").and_then(|v| v.as_str()).map(String::from);
+                        Some(HumanApprovalRecord {
+                            approved_by: by,
+                            approved_at: at,
+                            channel: ch,
+                            content_hash: hash,
+                            rationale: rat,
+                        })
+                    } else {
+                        None
+                    }
+                }),
+        };
+
         Ok(MemoryRecord {
             id,
             memory_type,
@@ -4287,6 +4626,7 @@ impl SqliteStore {
             metadata,
             embedding_model: row.get::<_, Option<String>>(17).ok().flatten(),
             embedding_version: row.get::<_, Option<String>>(18).ok().flatten(),
+            human_approval,
         })
     }
 
@@ -4442,6 +4782,38 @@ impl SqliteStore {
         let depends_on_json: String = row.get(17).unwrap_or_else(|_| "[]".to_string());
         let depends_on: Vec<Uuid> = serde_json::from_str(&depends_on_json).unwrap_or_default();
 
+        let human_approval: Option<HumanApprovalRecord> = match (
+            row.get::<_, Option<String>>("approved_by").ok().flatten(),
+            row.get::<_, Option<String>>("approved_at").ok().flatten(),
+            row.get::<_, Option<String>>("approval_channel").ok().flatten(),
+            row.get::<_, Option<String>>("approved_content_hash").ok().flatten(),
+        ) {
+            (Some(by), Some(at_str), Some(ch), Some(hash)) => {
+                DateTime::parse_from_rfc3339(&at_str)
+                    .ok()
+                    .map(|dt| HumanApprovalRecord {
+                        approved_by: by,
+                        approved_at: dt.with_timezone(&Utc),
+                        channel: ch,
+                        content_hash: hash,
+                        rationale: tags.iter().find(|t| t.starts_with("reason:")).map(|t| t[7..].to_string()),
+                    })
+            }
+            _ => {
+                if approved_by_human {
+                    Some(HumanApprovalRecord {
+                        approved_by: "cli_user".to_string(),
+                        approved_at: last_updated_at,
+                        channel: "cli_direct".to_string(),
+                        content_hash: HumanApprovalRecord::compute_content_hash(&statement),
+                        rationale: tags.iter().find(|t| t.starts_with("reason:")).map(|t| t[7..].to_string()),
+                    })
+                } else {
+                    None
+                }
+            }
+        };
+
         Ok(SemanticFact {
             id,
             project,
@@ -4461,6 +4833,7 @@ impl SqliteStore {
             tags,
             code_anchor,
             depends_on,
+            human_approval,
         })
     }
 

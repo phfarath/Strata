@@ -283,6 +283,9 @@ export function login(username: string): boolean {
             reason: Some("ADR-099 Security audit approval".to_string()),
             yes: true,
             to_global: false,
+            generate_token: false,
+            token: None,
+            approver: Some("security_auditor".to_string()),
             json: true,
         };
 
@@ -298,6 +301,9 @@ export function login(username: string): boolean {
         assert_eq!(fetched.tier, MemoryTier::Core);
         assert!(fetched.approved_by_human);
         assert_eq!(fetched.importance, 1.0);
+        let appr = fetched.human_approval.expect("human approval record");
+        assert_eq!(appr.approved_by, "security_auditor");
+        assert_eq!(appr.channel, "cli_flag");
 
         // 3. Test MCP `strata_promote` tool
         let fact = SemanticFact::new(
@@ -311,25 +317,24 @@ export function login(username: string): boolean {
             .insert_or_update_semantic_fact(&fact)
             .expect("insert fact");
 
-        let mcp_server =
-            McpServer::new(Arc::clone(&engine) as Arc<dyn strata_core::traits::MemoryEngine>);
+        let mcp_server = McpServer::new_with_engine(Arc::clone(&engine));
 
-        // Attempt without approved_by_human
+        // Attempt without approved token (even with approved_by_human = true)
         let unapproved_call = mcp_server
             .execute_tool(
                 "strata_promote",
                 serde_json::json!({
                     "id": fact.id.to_string(),
-                    "approved_by_human": false,
+                    "approved_by_human": true,
                 }),
             )
             .await;
         assert!(
             unapproved_call.is_error.unwrap_or(false),
-            "MCP promote without approval must fail"
+            "MCP promote without token must fail"
         );
 
-        // Call with approved_by_human = true for memory
+        // Call with verifiable approval token for memory
         let approved_mem = MemoryRecord::new(
             MemoryType::Procedural,
             "Always run migration scripts in a transaction",
@@ -338,19 +343,24 @@ export function login(username: string): boolean {
         .with_tier(MemoryTier::Working);
         let mem_handle = engine.write(&approved_mem).await.expect("write mem");
 
+        let hash = blake3::hash(approved_mem.content.as_bytes()).to_hex().to_string();
+        let token = engine
+            .generate_approval_token(&mem_handle.id, "memory", &hash, "lead_dev", 3600, Some("Production reliability policy"))
+            .expect("generate token");
+
         let approved_call = mcp_server
             .execute_tool(
                 "strata_promote",
                 serde_json::json!({
                     "id": mem_handle.id.to_string(),
-                    "approved_by_human": true,
+                    "approval_token": token,
                     "reason": "Production reliability policy",
                 }),
             )
             .await;
         assert!(
             !approved_call.is_error.unwrap_or(false),
-            "MCP promote with approval must succeed"
+            "MCP promote with approval token must succeed"
         );
 
         let fetched_mem = engine
@@ -360,6 +370,24 @@ export function login(username: string): boolean {
             .expect("mem exists");
         assert_eq!(fetched_mem.tier, MemoryTier::Core);
         assert!(fetched_mem.approved_by_human);
+        let mem_appr = fetched_mem.human_approval.expect("human approval record");
+        assert_eq!(mem_appr.approved_by, "lead_dev");
+        assert_eq!(mem_appr.channel, "approval_token");
+        assert_eq!(mem_appr.content_hash, hash);
+
+        // Verify provenance via memory_get
+        let get_call = mcp_server
+            .execute_tool(
+                "memory_get",
+                serde_json::json!({
+                    "id": mem_handle.id.to_string(),
+                }),
+            )
+            .await;
+        assert!(!get_call.is_error.unwrap_or(false));
+        let get_text = &get_call.content[0].text;
+        assert!(get_text.contains("provenance"));
+        assert!(get_text.contains("human_approval"));
     }
 
     #[tokio::test]

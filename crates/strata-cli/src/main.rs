@@ -970,3 +970,183 @@ fn detect_workspace_db_path() -> PathBuf {
 pub fn resolve_db_path(explicit: Option<PathBuf>) -> PathBuf {
     resolve_stores(explicit, false).local_path
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use strata_cli::commands::promote::{run_promote, PromoteArgs};
+    use strata_cli::mcp::server::McpServer;
+    use strata_core::state::{MemoryRecord, MemoryTier, MemoryType, Scope};
+    use strata_memory::SqliteMemoryEngine;
+
+    #[tokio::test]
+    async fn test_cli_promote_rejection_without_token_mcp() {
+        let engine = Arc::new(SqliteMemoryEngine::open_in_memory(None).unwrap());
+        let server = McpServer::new_with_engine(Arc::clone(&engine));
+
+        let mem = MemoryRecord::new(
+            MemoryType::Semantic,
+            "Auth tokens must expire within 15 minutes",
+            Scope::Global,
+        );
+        let handle = engine.write(&mem).await.unwrap();
+
+        // 1. Calling strata_promote with bare boolean approved_by_human MUST fail
+        let call = server
+            .execute_tool(
+                "strata_promote",
+                serde_json::json!({
+                    "id": handle.id.to_string(),
+                    "approved_by_human": true,
+                }),
+            )
+            .await;
+        assert!(call.is_error.unwrap_or(false), "MCP promote without approval_token must fail");
+
+        // 2. Calling with empty token MUST fail
+        let empty_call = server
+            .execute_tool(
+                "strata_promote",
+                serde_json::json!({
+                    "id": handle.id.to_string(),
+                    "approval_token": "",
+                }),
+            )
+            .await;
+        assert!(empty_call.is_error.unwrap_or(false), "MCP promote with empty token must fail");
+    }
+
+    #[tokio::test]
+    async fn test_cli_promote_with_valid_token_and_provenance() {
+        let engine = Arc::new(SqliteMemoryEngine::open_in_memory(None).unwrap());
+        let server = McpServer::new_with_engine(Arc::clone(&engine));
+
+        let mem = MemoryRecord::new(
+            MemoryType::Procedural,
+            "All SQL queries in transactions must be serialized",
+            Scope::Global,
+        )
+        .with_tier(MemoryTier::Working);
+        let handle = engine.write(&mem).await.unwrap();
+
+        let hash = blake3::hash(mem.content.as_bytes()).to_hex().to_string();
+        let token = engine
+            .generate_approval_token(&handle.id, "memory", &hash, "security_team", 3600, Some("Approved via audit"))
+            .unwrap();
+
+        // Promotion with valid token MUST succeed
+        let call = server
+            .execute_tool(
+                "strata_promote",
+                serde_json::json!({
+                    "id": handle.id.to_string(),
+                    "approval_token": token,
+                    "reason": "Approved via audit",
+                }),
+            )
+            .await;
+        assert!(!call.is_error.unwrap_or(false), "MCP promote with valid token must succeed");
+
+        // Verify stored state
+        let fetched = engine.get(&handle.id).await.unwrap().unwrap();
+        assert_eq!(fetched.tier, MemoryTier::Core);
+        assert!(fetched.approved_by_human);
+        let appr = fetched.human_approval.expect("human_approval");
+        assert_eq!(appr.approved_by, "security_team");
+        assert_eq!(appr.channel, "approval_token");
+        assert_eq!(appr.content_hash, hash);
+
+        // Verify provenance via memory_get
+        let get_res = server
+            .execute_tool(
+                "memory_get",
+                serde_json::json!({ "id": handle.id.to_string() }),
+            )
+            .await;
+        assert!(!get_res.is_error.unwrap_or(false));
+        let get_text = &get_res.content[0].text;
+        assert!(get_text.contains("provenance"));
+        assert!(get_text.contains("selection_reason"));
+        assert!(get_text.contains("human_approval"));
+
+        // Verify provenance via memory_search
+        let search_res = server
+            .execute_tool(
+                "memory_search",
+                serde_json::json!({ "query": "SQL queries" }),
+            )
+            .await;
+        assert!(!search_res.is_error.unwrap_or(false));
+        let search_text = &search_res.content[0].text;
+        assert!(search_text.contains("provenance"));
+        assert!(search_text.contains("human_approval"));
+    }
+
+    #[tokio::test]
+    async fn test_cli_promote_token_tampering_and_reuse_rejection() {
+        let engine = Arc::new(SqliteMemoryEngine::open_in_memory(None).unwrap());
+        let server = McpServer::new_with_engine(Arc::clone(&engine));
+
+        let mem = MemoryRecord::new(
+            MemoryType::Semantic,
+            "Original safe content",
+            Scope::Global,
+        );
+        let handle = engine.write(&mem).await.unwrap();
+
+        let hash = blake3::hash(mem.content.as_bytes()).to_hex().to_string();
+        let token = engine
+            .generate_approval_token(&handle.id, "memory", &hash, "admin", 3600, None)
+            .unwrap();
+
+        // 1. Tamper content in memory
+        let mut tampered = mem.clone();
+        tampered.content = "Malicious modified content".to_string();
+        engine.store().insert_or_update_memory(&tampered).unwrap();
+
+        // 2. Attempt promotion with token generated for original content -> MUST FAIL
+        let fail_call = server
+            .execute_tool(
+                "strata_promote",
+                serde_json::json!({
+                    "id": handle.id.to_string(),
+                    "approval_token": token,
+                }),
+            )
+            .await;
+        assert!(fail_call.is_error.unwrap_or(false), "Tampered content must fail token verification");
+    }
+
+    #[tokio::test]
+    async fn test_cli_promote_command_flags() {
+        let engine = Arc::new(SqliteMemoryEngine::open_in_memory(None).unwrap());
+        let mem = MemoryRecord::new(
+            MemoryType::Semantic,
+            "Security rule: invariant validation",
+            Scope::Global,
+        )
+        .with_tier(MemoryTier::Working);
+        let handle = engine.write(&mem).await.unwrap();
+
+        let args = PromoteArgs {
+            id: handle.id.to_string(),
+            entity_type: "memory".to_string(),
+            reason: Some("CLI flag promotion".to_string()),
+            yes: true,
+            to_global: false,
+            generate_token: false,
+            token: None,
+            approver: Some("ci_user".to_string()),
+            json: true,
+        };
+
+        run_promote(args, Arc::clone(&engine)).await.unwrap();
+
+        let fetched = engine.get(&handle.id).await.unwrap().unwrap();
+        assert_eq!(fetched.tier, MemoryTier::Core);
+        assert!(fetched.approved_by_human);
+        let appr = fetched.human_approval.expect("human_approval");
+        assert_eq!(appr.approved_by, "ci_user");
+        assert_eq!(appr.channel, "cli_flag");
+    }
+}

@@ -472,6 +472,8 @@ pub struct SemanticFact {
     pub code_anchor: Option<CodeAnchor>,
     #[serde(default)]
     pub depends_on: Vec<Uuid>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub human_approval: Option<crate::state::HumanApprovalRecord>,
 }
 
 impl SemanticFact {
@@ -496,6 +498,7 @@ impl SemanticFact {
             tags: Vec::new(),
             code_anchor: None,
             depends_on: Vec::new(),
+            human_approval: None,
         }
     }
 
@@ -525,6 +528,29 @@ impl SemanticFact {
     pub fn with_human_approval(mut self, approved: bool) -> Self {
         self.approved_by_human = approved;
         self
+    }
+
+    pub fn with_human_approval_record(mut self, record: crate::state::HumanApprovalRecord) -> Self {
+        self.approved_by_human = true;
+        self.human_approval = Some(record);
+        self
+    }
+
+    pub fn build_provenance(&self, selection_reason: Option<&str>) -> crate::state::ProvenanceBlock {
+        let branch = self.code_anchor.as_ref().and_then(|ca| ca.git_branch.clone());
+        let evidence: Vec<String> = self
+            .evidence
+            .iter()
+            .map(|e| format!("{}:{}", e.source_type, e.source_id))
+            .collect();
+        let reason = selection_reason.unwrap_or("Retrieved semantic fact").to_string();
+
+        crate::state::ProvenanceBlock {
+            selection_reason: reason,
+            origin_branch: branch,
+            validation_evidence: evidence,
+            human_approval: self.human_approval.clone(),
+        }
     }
 
     pub fn is_approved_by_human(&self) -> bool {

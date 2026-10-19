@@ -189,6 +189,64 @@ impl Scope {
     }
 }
 
+/// Audit and verification metadata certifying explicit human approval for memory promotion.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct HumanApprovalRecord {
+    /// Identifier or identity of the human approver (e.g., 'user:pedro', 'cli:pedro', 'token:sec_ops')
+    pub approved_by: String,
+    /// RFC3339 timestamp when approval was granted
+    pub approved_at: DateTime<Utc>,
+    /// Channel through which approval was verified ('cli_interactive', 'cli_flag', 'approval_token')
+    pub channel: String,
+    /// BLAKE3 cryptographic hash of the exact approved memory content
+    pub content_hash: String,
+    /// Optional rationale or justification provided during approval
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub rationale: Option<String>,
+}
+
+impl HumanApprovalRecord {
+    pub fn new(
+        approved_by: impl Into<String>,
+        channel: impl Into<String>,
+        content: &str,
+        rationale: Option<String>,
+    ) -> Self {
+        Self {
+            approved_by: approved_by.into(),
+            approved_at: Utc::now(),
+            channel: channel.into(),
+            content_hash: Self::compute_content_hash(content),
+            rationale,
+        }
+    }
+
+    /// Computes the deterministic BLAKE3 hash of a content string.
+    pub fn compute_content_hash(content: &str) -> String {
+        blake3::hash(content.as_bytes()).to_hex().to_string()
+    }
+
+    /// Verifies if the given content matches this approval record's content hash.
+    pub fn matches_content(&self, content: &str) -> bool {
+        self.content_hash == Self::compute_content_hash(content)
+    }
+}
+
+/// Structured provenance and verification metadata attached to retrieved memories.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct ProvenanceBlock {
+    /// Reason or scoring rationale why this memory was selected
+    pub selection_reason: String,
+    /// Origin Git branch where the memory was captured/anchored
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub origin_branch: Option<String>,
+    /// Supporting verification evidence IDs, tests, or anchors
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub validation_evidence: Vec<String>,
+    /// Status of verifiable human approval
+    pub human_approval: Option<HumanApprovalRecord>,
+}
+
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct MemoryRecord {
     pub id: Uuid,
@@ -217,6 +275,8 @@ pub struct MemoryRecord {
     pub embedding_model: Option<String>,
     #[serde(default)]
     pub embedding_version: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub human_approval: Option<HumanApprovalRecord>,
 }
 
 impl MemoryRecord {
@@ -242,8 +302,10 @@ impl MemoryRecord {
             metadata: serde_json::Value::Null,
             embedding_model: None,
             embedding_version: None,
+            human_approval: None,
         }
     }
+
 
     pub fn with_embedding_and_model(
         mut self,
@@ -419,6 +481,25 @@ impl MemoryRecord {
         }
     }
 
+    pub fn with_human_approval_record(mut self, record: HumanApprovalRecord) -> Self {
+        self.approved_by_human = true;
+        self.human_approval = Some(record);
+        self
+    }
+
+    pub fn build_provenance(&self, selection_reason: Option<&str>) -> ProvenanceBlock {
+        let branch = self.git_branch().map(String::from);
+        let evidence: Vec<String> = self.evidence_ids.iter().map(|u| u.to_string()).collect();
+        let reason = selection_reason.unwrap_or("Retrieved from active memory store").to_string();
+
+        ProvenanceBlock {
+            selection_reason: reason,
+            origin_branch: branch,
+            validation_evidence: evidence,
+            human_approval: self.human_approval.clone(),
+        }
+    }
+
     pub fn to_handle(&self, score: Option<f32>) -> MemoryHandle {
         let title = self.summary.clone().unwrap_or_else(|| {
             let lines = self.content.lines().next().unwrap_or("Untitled");
@@ -435,6 +516,7 @@ impl MemoryRecord {
                 self.content.clone()
             }
         });
+        let prov_reason = score.map(|s| format!("Relevance score: {:.2}", s));
         MemoryHandle {
             id: self.id,
             title,
@@ -444,6 +526,7 @@ impl MemoryRecord {
             tier: self.tier,
             approved_by_human: self.approved_by_human,
             relevance_score: score,
+            provenance: Some(self.build_provenance(prov_reason.as_deref())),
         }
     }
 }
@@ -460,6 +543,8 @@ pub struct MemoryHandle {
     #[serde(default)]
     pub approved_by_human: bool,
     pub relevance_score: Option<f32>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub provenance: Option<ProvenanceBlock>,
 }
 
 impl MemoryHandle {
@@ -728,6 +813,7 @@ mod tests {
             tier: MemoryTier::Working,
             approved_by_human: false,
             relevance_score: Some(1.0),
+            provenance: None,
         };
         assert!(working_handle.is_working());
         assert!(!working_handle.is_core());

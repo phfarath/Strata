@@ -435,7 +435,7 @@ impl McpServer {
             },
             ToolDefinition {
                 name: "strata_promote".to_string(),
-                description: "Promote a memory record or semantic fact to permanent Core Tier (frozen retention, R=1.0). Requires explicit human approval confirmation.".to_string(),
+                description: "Promote a memory record or semantic fact to permanent Core Tier (frozen retention, R=1.0). Requires a verifiable human approval token generated via `strata promote <id> --generate-token`.".to_string(),
                 input_schema: serde_json::json!({
                     "type": "object",
                     "properties": {
@@ -443,21 +443,21 @@ impl McpServer {
                             "type": "string",
                             "description": "The UUID of the memory record or semantic fact to promote"
                         },
+                        "approval_token": {
+                            "type": "string",
+                            "description": "Cryptographically secure, single-use human approval token generated via `strata promote <id> --generate-token`"
+                        },
                         "entity_type": {
                             "type": "string",
                             "enum": ["memory", "fact"],
                             "description": "Entity type: 'memory' (default) or 'fact'"
-                        },
-                        "approved_by_human": {
-                            "type": "boolean",
-                            "description": "Explicit human confirmation flag (must be true to complete promotion)"
                         },
                         "reason": {
                             "type": "string",
                             "description": "Optional policy rationale or justification for permanent Core Tier promotion"
                         }
                     },
-                    "required": ["id", "approved_by_human"]
+                    "required": ["id", "approval_token"]
                 }),
             },
             ToolDefinition {
@@ -566,7 +566,7 @@ impl McpServer {
             },
             ToolDefinition {
                 name: "memory_promote_global".to_string(),
-                description: "Promote a validated memory record or negative pattern to the Developer-Global store (~/.strata/global.db) with Scope::Global. Makes the learning immediately accessible to all workspaces and agents on this machine with 0 token overhead.".to_string(),
+                description: "Promote a validated memory record or negative pattern to the Developer-Global store (~/.strata/global.db) with Scope::Global. Requires a verifiable human approval token generated via `strata promote <id> --to-global --generate-token`.".to_string(),
                 input_schema: serde_json::json!({
                     "type": "object",
                     "properties": {
@@ -574,16 +574,16 @@ impl McpServer {
                             "type": "string",
                             "description": "The UUID of the memory record to promote to Global Store"
                         },
-                        "approved_by_human": {
-                            "type": "boolean",
-                            "description": "Explicit developer confirmation flag (must be true)"
+                        "approval_token": {
+                            "type": "string",
+                            "description": "Cryptographically secure, single-use human approval token generated via `strata promote <id> --to-global --generate-token`"
                         },
                         "reason": {
                             "type": "string",
                             "description": "Optional policy rationale or context for global cross-project promotion"
                         }
                     },
-                    "required": ["id", "approved_by_human"]
+                    "required": ["id", "approval_token"]
                 }),
             },
             ToolDefinition {
@@ -1005,7 +1005,10 @@ impl McpServer {
                             let handles: Vec<_> = filtered_records
                                 .iter()
                                 .map(|r| {
-                                    let mut val = serde_json::to_value(r.to_handle(None))
+                                    let mut handle = r.to_handle(None);
+                                    let prov_reason = format!("Matched search query: \"{query}\"");
+                                    handle.provenance = Some(r.build_provenance(Some(&prov_reason)));
+                                    let mut val = serde_json::to_value(&handle)
                                         .unwrap_or(serde_json::json!({}));
                                     if let Some(obj) = val.as_object_mut() {
                                         let is_global = if let Some(ref engine) = self.sqlite_engine
@@ -1117,10 +1120,17 @@ impl McpServer {
                 let as_of_branch = args.get("as_of_branch").and_then(|v| v.as_str());
 
                 match self.memory_engine.get_as_of(&uuid, as_of_time, as_of_commit, as_of_branch).await {
-                    Ok(Some(record)) => match serde_json::to_string_pretty(&record) {
-                        Ok(json) => CallToolResult::text(json),
-                        Err(e) => CallToolResult::error(format!("Serialization error: {e}")),
-                    },
+                    Ok(Some(record)) => {
+                        let mut val = serde_json::to_value(&record).unwrap_or(serde_json::json!({}));
+                        if let Some(obj) = val.as_object_mut() {
+                            let prov = record.build_provenance(Some("Retrieved by unique ID"));
+                            obj.insert("provenance".to_string(), serde_json::to_value(prov).unwrap_or_default());
+                        }
+                        match serde_json::to_string_pretty(&val) {
+                            Ok(json) => CallToolResult::text(json),
+                            Err(e) => CallToolResult::error(format!("Serialization error: {e}")),
+                        }
+                    }
                     Ok(None) => {
                         CallToolResult::text(format!("Memory record with ID '{id_str}' not found."))
                     }
@@ -1589,66 +1599,104 @@ impl McpServer {
                     Err(e) => return CallToolResult::error(format!("Invalid UUID format: {e}")),
                 };
 
-                let approved = args
-                    .get("approved_by_human")
-                    .and_then(|v| v.as_bool())
-                    .unwrap_or(false);
+                let token_opt = args.get("approval_token").and_then(|v| v.as_str());
+                let token = match token_opt {
+                    Some(t) if !t.trim().is_empty() => t.trim(),
+                    _ => {
+                        return CallToolResult::error(
+                            "Promotion rejected: Bare boolean 'approved_by_human' is not permitted for AI agents. A verifiable approval token is required. Generate an approval token using `strata promote <id> --generate-token` or complete promotion interactively via the CLI."
+                        );
+                    }
+                };
 
-                if !approved {
-                    return CallToolResult::error(
-                        "Core Tier Promotion rejected: 'approved_by_human' must be explicitly true. Developer confirmation required."
-                    );
-                }
-
+                let entity_type = args
+                    .get("entity_type")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("memory")
+                    .to_lowercase();
                 let reason = args.get("reason").and_then(|v| v.as_str());
 
-                match self.memory_engine.get(&id).await {
-                    Ok(Some(mut mem)) => {
-                        mem.tier = strata_core::state::MemoryTier::Core;
-                        mem.approved_by_human = true;
-                        mem.importance = 1.0;
-                        if let Some(r) = reason {
-                            if let serde_json::Value::Object(ref mut map) = mem.metadata {
-                                map.insert(
-                                    "promotion_reason".to_string(),
-                                    serde_json::Value::String(r.to_string()),
-                                );
-                                map.insert(
-                                    "promoted_at".to_string(),
-                                    serde_json::Value::String(chrono::Utc::now().to_rfc3339()),
-                                );
-                            } else {
-                                mem.metadata = serde_json::json!({
-                                    "promotion_reason": r,
-                                    "promoted_at": chrono::Utc::now().to_rfc3339(),
-                                });
-                            }
-                        }
+                let sqlite = match &self.sqlite_engine {
+                    Some(e) => e,
+                    None => {
+                        return CallToolResult::error("Promotion requires SQLite storage engine");
+                    }
+                };
 
-                        match self.memory_engine.write(&mem).await {
-                            Ok(handle) => {
-                                let structured = serde_json::json!({
-                                    "status": "success",
-                                    "id": handle.id.to_string(),
-                                    "tier": "core",
-                                    "approved_by_human": true,
-                                    "importance": 1.0,
-                                    "reason": reason,
-                                });
-                                CallToolResult::structured(
-                                    format!("Memory '{}' successfully promoted to permanent Core Tier (frozen retention, R=1.0).", handle.id),
-                                    structured,
-                                )
-                            }
-                            Err(e) => CallToolResult::error(format!(
-                                "Failed to write promoted memory: {e}"
-                            )),
+                if entity_type == "fact" || entity_type == "semantic" {
+                    let fact = match sqlite.store().get_semantic_fact(&id) {
+                        Ok(Some(f)) => f,
+                        Ok(None) => return CallToolResult::error(format!("Semantic fact with ID '{id}' not found")),
+                        Err(e) => return CallToolResult::error(format!("Failed to fetch semantic fact: {e}")),
+                    };
+
+                    let content_hash = blake3::hash(fact.statement.as_bytes()).to_hex().to_string();
+                    let mut approval_rec = match sqlite.verify_and_consume_approval_token(token, &id, &content_hash) {
+                        Ok(rec) => rec,
+                        Err(e) => return CallToolResult::error(format!("Approval token verification failed: {e}")),
+                    };
+                    if let Some(r) = reason {
+                        if approval_rec.rationale.is_none() {
+                            approval_rec.rationale = Some(r.to_string());
                         }
                     }
-                    Ok(None) => {
-                        CallToolResult::error(format!("Memory record with ID '{id}' not found"))
+
+                    match sqlite.promote_fact_to_core_with_approval(&id, approval_rec.clone()).await {
+                        Ok(promoted) => {
+                            let structured = serde_json::json!({
+                                "status": "success",
+                                "id": promoted.id.to_string(),
+                                "entity_type": "fact",
+                                "tier": "core",
+                                "approved_by_human": true,
+                                "importance": promoted.importance,
+                                "approval": approval_rec,
+                                "provenance": promoted.build_provenance(Some("Promoted to Core Tier with verified human approval token")),
+                            });
+                            CallToolResult::structured(
+                                format!("Semantic fact '{}' successfully promoted to permanent Core Tier (frozen retention, R=1.0).", promoted.id),
+                                structured,
+                            )
+                        }
+                        Err(e) => CallToolResult::error(format!("Failed to promote semantic fact: {e}")),
                     }
-                    Err(e) => CallToolResult::error(format!("Failed to fetch memory: {e}")),
+                } else {
+                    let mem = match sqlite.store().get_memory(&id) {
+                        Ok(Some(m)) => m,
+                        Ok(None) => return CallToolResult::error(format!("Memory record with ID '{id}' not found")),
+                        Err(e) => return CallToolResult::error(format!("Failed to fetch memory: {e}")),
+                    };
+
+                    let content_hash = blake3::hash(mem.content.as_bytes()).to_hex().to_string();
+                    let mut approval_rec = match sqlite.verify_and_consume_approval_token(token, &id, &content_hash) {
+                        Ok(rec) => rec,
+                        Err(e) => return CallToolResult::error(format!("Approval token verification failed: {e}")),
+                    };
+                    if let Some(r) = reason {
+                        if approval_rec.rationale.is_none() {
+                            approval_rec.rationale = Some(r.to_string());
+                        }
+                    }
+
+                    match sqlite.promote_to_core_with_approval(&id, approval_rec.clone()).await {
+                        Ok(promoted) => {
+                            let structured = serde_json::json!({
+                                "status": "success",
+                                "id": promoted.id.to_string(),
+                                "entity_type": "memory",
+                                "tier": "core",
+                                "approved_by_human": true,
+                                "importance": 1.0,
+                                "approval": approval_rec,
+                                "provenance": promoted.build_provenance(Some("Promoted to Core Tier with verified human approval token")),
+                            });
+                            CallToolResult::structured(
+                                format!("Memory '{}' successfully promoted to permanent Core Tier (frozen retention, R=1.0).", promoted.id),
+                                structured,
+                            )
+                        }
+                        Err(e) => CallToolResult::error(format!("Failed to promote memory: {e}")),
+                    }
                 }
             }
             "memory_promote_global" => {
@@ -1662,42 +1710,60 @@ impl McpServer {
                     Err(e) => return CallToolResult::error(format!("Invalid UUID format: {e}")),
                 };
 
-                let approved = args
-                    .get("approved_by_human")
-                    .and_then(|v| v.as_bool())
-                    .unwrap_or(false);
-
-                if !approved {
-                    return CallToolResult::error(
-                        "Global Promotion rejected: 'approved_by_human' must be explicitly true. Developer confirmation required."
-                    );
-                }
+                let token_opt = args.get("approval_token").and_then(|v| v.as_str());
+                let token = match token_opt {
+                    Some(t) if !t.trim().is_empty() => t.trim(),
+                    _ => {
+                        return CallToolResult::error(
+                            "Global promotion rejected: Bare boolean 'approved_by_human' is not permitted for AI agents. A verifiable approval token is required. Generate one using `strata promote <id> --to-global --generate-token` or complete promotion interactively via the CLI."
+                        );
+                    }
+                };
 
                 let reason = args.get("reason").and_then(|v| v.as_str());
 
-                if let Some(engine) = &self.sqlite_engine {
-                    match engine.promote_to_global(&id, true, reason).await {
-                        Ok(promoted) => {
-                            let structured = serde_json::json!({
-                                "status": "success",
-                                "id": promoted.id.to_string(),
-                                "scope": "global",
-                                "tier": "core",
-                                "destination": "~/.strata/global.db",
-                                "reason": reason,
-                            });
-                            CallToolResult::structured(
-                                format!(
-                                    "Memory '{}' successfully promoted to Developer-Global store (~/.strata/global.db). Accessible across all projects.",
-                                    promoted.id
-                                ),
-                                structured,
-                            )
-                        }
-                        Err(e) => CallToolResult::error(format!("Global promotion failed: {e}")),
+                let sqlite = match &self.sqlite_engine {
+                    Some(e) => e,
+                    None => return CallToolResult::error("Global promotion requires SQLite storage engine"),
+                };
+
+                let mem = match sqlite.store().get_memory(&id) {
+                    Ok(Some(m)) => m,
+                    Ok(None) => return CallToolResult::error(format!("Memory record with ID '{id}' not found in local workspace store")),
+                    Err(e) => return CallToolResult::error(format!("Failed to fetch memory: {e}")),
+                };
+
+                let content_hash = blake3::hash(mem.content.as_bytes()).to_hex().to_string();
+                let mut approval_rec = match sqlite.verify_and_consume_approval_token(token, &id, &content_hash) {
+                    Ok(rec) => rec,
+                    Err(e) => return CallToolResult::error(format!("Approval token verification failed: {e}")),
+                };
+                if let Some(r) = reason {
+                    if approval_rec.rationale.is_none() {
+                        approval_rec.rationale = Some(r.to_string());
                     }
-                } else {
-                    CallToolResult::error("Global promotion requires SQLite storage engine")
+                }
+
+                match sqlite.promote_to_global_with_approval(&id, approval_rec.clone()).await {
+                    Ok(promoted) => {
+                        let structured = serde_json::json!({
+                            "status": "success",
+                            "id": promoted.id.to_string(),
+                            "scope": "global",
+                            "tier": "core",
+                            "destination": "~/.strata/global.db",
+                            "approval": approval_rec,
+                            "provenance": promoted.build_provenance(Some("Promoted to Global Store with verified human approval token")),
+                        });
+                        CallToolResult::structured(
+                            format!(
+                                "Memory '{}' successfully promoted to Developer-Global store (~/.strata/global.db). Accessible across all projects.",
+                                promoted.id
+                            ),
+                            structured,
+                        )
+                    }
+                    Err(e) => CallToolResult::error(format!("Global promotion failed: {e}")),
                 }
             }
             "lease_acquire" => {
