@@ -189,6 +189,133 @@ impl TransactiveResponse {
     }
 }
 
+/// Lifecycle status of an asynchronous Agent-to-Agent task delegation.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum DelegationStatus {
+    Pending,
+    Accepted,
+    Completed,
+    Rejected,
+    TimedOut,
+}
+
+impl DelegationStatus {
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            Self::Pending => "pending",
+            Self::Accepted => "accepted",
+            Self::Completed => "completed",
+            Self::Rejected => "rejected",
+            Self::TimedOut => "timed_out",
+        }
+    }
+}
+
+impl std::fmt::Display for DelegationStatus {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{}", self.as_str())
+    }
+}
+
+impl std::str::FromStr for DelegationStatus {
+    type Err = String;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        match s.to_lowercase().as_str() {
+            "pending" => Ok(Self::Pending),
+            "accepted" => Ok(Self::Accepted),
+            "completed" => Ok(Self::Completed),
+            "rejected" => Ok(Self::Rejected),
+            "timed_out" | "timedout" => Ok(Self::TimedOut),
+            other => Err(format!("Unknown delegation status: {other}")),
+        }
+    }
+}
+
+/// Explicit verification-backed contract for delegating tasks between autonomous agents.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct DelegationContract {
+    pub delegation_id: String,
+    pub delegator_agent: String,
+    pub delegatee_agent: Option<String>,
+    pub domain_scope: Option<String>,
+    pub task_id: String,
+    pub objective: String,
+    pub context: Option<String>,
+    #[serde(default)]
+    pub expected_artifacts: Vec<String>,
+    pub verification_command: Option<String>,
+    pub timeout_seconds: u64,
+    pub status: DelegationStatus,
+    pub result_summary: Option<String>,
+    pub error: Option<String>,
+    pub created_at: i64,
+    pub completed_at: Option<i64>,
+}
+
+impl DelegationContract {
+    pub fn new(
+        delegation_id: impl Into<String>,
+        delegator_agent: impl Into<String>,
+        task_id: impl Into<String>,
+        objective: impl Into<String>,
+    ) -> Self {
+        Self {
+            delegation_id: delegation_id.into(),
+            delegator_agent: delegator_agent.into(),
+            delegatee_agent: None,
+            domain_scope: None,
+            task_id: task_id.into(),
+            objective: objective.into(),
+            context: None,
+            expected_artifacts: Vec::new(),
+            verification_command: None,
+            timeout_seconds: 60,
+            status: DelegationStatus::Pending,
+            result_summary: None,
+            error: None,
+            created_at: Utc::now().timestamp(),
+            completed_at: None,
+        }
+    }
+
+    pub fn with_delegatee(mut self, delegatee: impl Into<String>) -> Self {
+        self.delegatee_agent = Some(delegatee.into());
+        self
+    }
+
+    pub fn with_domain_scope(mut self, domain: impl Into<String>) -> Self {
+        self.domain_scope = Some(domain.into());
+        self
+    }
+
+    pub fn with_context(mut self, context: impl Into<String>) -> Self {
+        self.context = Some(context.into());
+        self
+    }
+
+    pub fn with_artifacts(mut self, artifacts: Vec<String>) -> Self {
+        self.expected_artifacts = artifacts;
+        self
+    }
+
+    pub fn with_verification(mut self, cmd: impl Into<String>) -> Self {
+        self.verification_command = Some(cmd.into());
+        self
+    }
+
+    pub fn with_timeout(mut self, timeout_seconds: u64) -> Self {
+        self.timeout_seconds = timeout_seconds;
+        self
+    }
+
+    pub fn is_expired(&self, now: i64) -> bool {
+        (self.status == DelegationStatus::Pending || self.status == DelegationStatus::Accepted)
+            && (now - self.created_at) > (self.timeout_seconds as i64)
+    }
+}
+
 /// Represents an exclusive temporal lease on a resource (file, directory, or module).
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ResourceLease {
@@ -317,6 +444,29 @@ pub enum IpcEvent {
         response: TransactiveResponse,
         timestamp_us: i64,
     },
+    TaskDelegated {
+        contract: DelegationContract,
+        timestamp_us: i64,
+    },
+    DelegationAccepted {
+        delegation_id: String,
+        delegatee_agent: String,
+        timestamp_us: i64,
+    },
+    DelegationCompleted {
+        delegation_id: String,
+        delegatee_agent: String,
+        success: bool,
+        summary: String,
+        artifacts: Vec<String>,
+        timestamp_us: i64,
+    },
+    DelegationRejected {
+        delegation_id: String,
+        delegatee_agent: String,
+        reason: String,
+        timestamp_us: i64,
+    },
 }
 
 impl IpcEvent {
@@ -334,6 +484,10 @@ impl IpcEvent {
             Self::DomainAuthorityUpdated { timestamp_us, .. } => *timestamp_us,
             Self::TransactiveQueryRouted { timestamp_us, .. } => *timestamp_us,
             Self::TransactiveResponseReturned { timestamp_us, .. } => *timestamp_us,
+            Self::TaskDelegated { timestamp_us, .. } => *timestamp_us,
+            Self::DelegationAccepted { timestamp_us, .. } => *timestamp_us,
+            Self::DelegationCompleted { timestamp_us, .. } => *timestamp_us,
+            Self::DelegationRejected { timestamp_us, .. } => *timestamp_us,
         }
     }
 }
@@ -401,6 +555,7 @@ impl A2aMessage {
 /// Top-level framed message on the local IPC transport.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(tag = "kind", rename_all = "snake_case")]
+#[allow(clippy::large_enum_variant)]
 pub enum IpcMessage {
     Event { event: IpcEvent },
     Ping { timestamp: i64 },
@@ -428,6 +583,29 @@ mod tests {
         let json = serde_json::to_string(&presence).expect("serialize presence");
         let de: AgentPresence = serde_json::from_str(&json).expect("deserialize presence");
         assert_eq!(presence, de);
+    }
+
+    #[test]
+    fn test_delegation_contract_lifecycle() {
+        let contract = DelegationContract::new(
+            "del-123",
+            "agent-planner",
+            "task-456",
+            "Implement A2A delegation",
+        )
+        .with_domain_scope("crates/strata-core")
+        .with_delegatee("agent-worker")
+        .with_verification("cargo test")
+        .with_artifacts(vec!["src/lib.rs".to_string()])
+        .with_timeout(120);
+
+        assert_eq!(contract.status, DelegationStatus::Pending);
+        assert!(!contract.is_expired(contract.created_at + 10));
+        assert!(contract.is_expired(contract.created_at + 121));
+
+        let json = serde_json::to_string(&contract).expect("serialize contract");
+        let de: DelegationContract = serde_json::from_str(&json).expect("deserialize contract");
+        assert_eq!(contract, de);
     }
 
     #[test]

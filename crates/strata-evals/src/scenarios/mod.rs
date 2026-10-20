@@ -1,3 +1,4 @@
+pub mod a2a_heterogeneous_delegation;
 pub mod a2a_stigmergic_leases;
 pub mod a2a_swarm_stress_benchmark;
 pub mod a2a_transactive_directory;
@@ -25,6 +26,7 @@ pub mod silent_failure_avoidance;
 pub mod workspace_monorepo;
 pub mod world_model_causal;
 
+pub use a2a_heterogeneous_delegation::*;
 pub use a2a_stigmergic_leases::*;
 pub use a2a_swarm_stress_benchmark::*;
 pub use a2a_transactive_directory::*;

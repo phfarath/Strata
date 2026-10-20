@@ -614,6 +614,183 @@ export function login(username: string): boolean {
     }
 
     #[tokio::test]
+    async fn test_cli_a2a_delegation_lifecycle() {
+        use strata_core::a2a::{DelegationStatus, DomainAuthority};
+        use strata_memory::SqliteStore;
+        use strata_memory::StigmergyCoordinator;
+
+        let store = Arc::new(SqliteStore::open_in_memory().unwrap());
+        let coordinator = StigmergyCoordinator::new(store);
+
+        // 1. Register domain authority for specialist agent
+        let auth = DomainAuthority::new("crates/strata-memory", "specialist-memory", 0.95);
+        coordinator.set_domain_authority(&auth).unwrap();
+
+        // 2. Delegate a task without specifying --to (should route to specialist-memory via transactive directory)
+        let delegate_args = A2aArgs {
+            action: Some(A2aAction::Delegate {
+                objective: "Optimize SQLite index scans".to_string(),
+                domain: Some("crates/strata-memory".to_string()),
+                to: None,
+                task: Some("task-del-01".to_string()),
+                context: Some("Use WAL checkpoints".to_string()),
+                artifact: vec!["crates/strata-memory/src/store.rs".to_string()],
+                verify: Some("cargo test -p strata-memory".to_string()),
+                timeout: 30,
+                wait: false,
+                agent: Some("agent-planner".to_string()),
+                json: true,
+            }),
+            ttl: 60,
+            json: true,
+        };
+        let res_del = run_a2a(delegate_args, coordinator.clone()).await;
+        assert!(res_del.is_ok());
+
+        // 3. Inspect delegations
+        let list = coordinator.list_delegations(None, None, None).unwrap();
+        assert_eq!(list.len(), 1);
+        let del = &list[0];
+        assert_eq!(del.delegator_agent, "agent-planner");
+        assert_eq!(del.delegatee_agent.as_deref(), Some("specialist-memory"));
+        assert_eq!(del.status, DelegationStatus::Pending);
+        assert_eq!(del.objective, "Optimize SQLite index scans");
+
+        // 4. Accept delegation
+        let accept_args = A2aArgs {
+            action: Some(A2aAction::Accept {
+                delegation_id: del.delegation_id.clone(),
+                agent: Some("specialist-memory".to_string()),
+                json: true,
+            }),
+            ttl: 60,
+            json: true,
+        };
+        let res_acc = run_a2a(accept_args, coordinator.clone()).await;
+        assert!(res_acc.is_ok());
+
+        let accepted = coordinator
+            .get_delegation(&del.delegation_id)
+            .unwrap()
+            .unwrap();
+        assert_eq!(accepted.status, DelegationStatus::Accepted);
+
+        // 5. Complete delegation
+        let complete_args = A2aArgs {
+            action: Some(A2aAction::CompleteDelegation {
+                delegation_id: del.delegation_id.clone(),
+                summary: "Added index idx_a2a_delegations_domain and verified tests".to_string(),
+                artifact: vec!["crates/strata-memory/src/store.rs".to_string()],
+                success: true,
+                agent: Some("specialist-memory".to_string()),
+                json: true,
+            }),
+            ttl: 60,
+            json: true,
+        };
+        let res_comp = run_a2a(complete_args, coordinator.clone()).await;
+        assert!(res_comp.is_ok());
+
+        let completed = coordinator
+            .get_delegation(&del.delegation_id)
+            .unwrap()
+            .unwrap();
+        assert_eq!(completed.status, DelegationStatus::Completed);
+        assert_eq!(
+            completed.result_summary.as_deref(),
+            Some("Added index idx_a2a_delegations_domain and verified tests")
+        );
+
+        // 6. Delegations command filter
+        let list_args = A2aArgs {
+            action: Some(A2aAction::Delegations {
+                delegator: Some("agent-planner".to_string()),
+                delegatee: None,
+                status: Some("completed".to_string()),
+                json: true,
+            }),
+            ttl: 60,
+            json: true,
+        };
+        let res_list = run_a2a(list_args, coordinator.clone()).await;
+        assert!(res_list.is_ok());
+    }
+
+    #[tokio::test]
+    async fn test_mcp_a2a_delegation_tools() {
+        use strata_memory::SqliteMemoryEngine;
+
+        let engine = Arc::new(SqliteMemoryEngine::open_in_memory(None).unwrap());
+        let server = McpServer::new_with_engine(Arc::clone(&engine));
+
+        // 1. Call a2a_delegate via MCP
+        let del_res = server
+            .execute_tool(
+                "a2a_delegate",
+                serde_json::json!({
+                    "objective": "Refactor token bucket in strata-tools",
+                    "domain": "crates/strata-tools",
+                    "to": "agent-worker-02",
+                    "timeout": 45,
+                    "verify": "cargo test -p strata-tools",
+                    "agent_id": "agent-supervisor"
+                }),
+            )
+            .await;
+        assert!(
+            del_res.is_error != Some(true),
+            "a2a_delegate failed: {:?}",
+            del_res
+        );
+        let del_text = &del_res.content[0].text;
+        assert!(del_text.contains("\"status\": \"delegated\""));
+
+        let parsed: serde_json::Value = serde_json::from_str(del_text).unwrap();
+        let delegation_id = parsed["contract"]["delegation_id"].as_str().unwrap();
+
+        // 2. Call a2a_accept via MCP
+        let acc_res = server
+            .execute_tool(
+                "a2a_accept",
+                serde_json::json!({
+                    "delegation_id": delegation_id,
+                    "agent_id": "agent-worker-02"
+                }),
+            )
+            .await;
+        assert!(acc_res.is_error != Some(true));
+        assert!(acc_res.content[0].text.contains("\"status\": \"accepted\""));
+
+        // 3. Call a2a_delegations
+        let list_res = server
+            .execute_tool(
+                "a2a_delegations",
+                serde_json::json!({ "status": "accepted" }),
+            )
+            .await;
+        assert!(list_res.is_error != Some(true));
+        assert!(list_res.content[0].text.contains(delegation_id));
+
+        // 3. Call a2a_complete_delegation
+        let comp_res = server
+            .execute_tool(
+                "a2a_complete_delegation",
+                serde_json::json!({
+                    "delegation_id": delegation_id,
+                    "summary": "Completed token bucket refactor with 100% tests passing",
+                    "artifact": "crates/strata-tools/src/token_bucket.rs",
+                    "success": true,
+                    "agent_id": "agent-worker-02"
+                }),
+            )
+            .await;
+        assert!(comp_res.is_error != Some(true));
+        assert!(comp_res.content[0]
+            .text
+            .contains("\"status\": \"completed\""));
+    }
+
+    #[tokio::test]
     async fn test_mcp_stigmergy_tools_execution() {
         use strata_memory::SqliteMemoryEngine;
 

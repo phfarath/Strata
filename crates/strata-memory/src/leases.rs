@@ -1,6 +1,7 @@
 use std::sync::Arc;
 use strata_core::a2a::{
-    A2aMessage, AgentCard, AgentPresence, DomainAuthority, LeaseAcquireResult, ResourceLease,
+    A2aMessage, AgentCard, AgentPresence, DelegationContract, DelegationStatus, DomainAuthority,
+    LeaseAcquireResult, ResourceLease,
 };
 use strata_core::blackboard::{TaskArtifact, TaskFilter, TaskRecord};
 use strata_core::errors::StrataError;
@@ -24,6 +25,11 @@ impl StigmergyCoordinator {
     /// Creates a new `StigmergyCoordinator` wrapping the given SQLite store.
     pub fn new(store: Arc<SqliteStore>) -> Self {
         Self { store }
+    }
+
+    /// Returns the underlying SQLite store.
+    pub fn store(&self) -> &Arc<SqliteStore> {
+        &self.store
     }
 
     /// Records or updates an agent's presence and heartbeat.
@@ -254,6 +260,53 @@ impl StigmergyCoordinator {
         self.store.mark_a2a_read(message_ids)
     }
 
+    // A2A Task Delegations (Frontier 2 Heterogeneous Swarm)
+
+    pub fn save_delegation(&self, contract: &DelegationContract) -> Result<(), StrataError> {
+        self.store.save_delegation(contract)
+    }
+
+    pub fn get_delegation(
+        &self,
+        delegation_id: &str,
+    ) -> Result<Option<DelegationContract>, StrataError> {
+        self.store.get_delegation(delegation_id)
+    }
+
+    pub fn update_delegation_status(
+        &self,
+        delegation_id: &str,
+        status: DelegationStatus,
+        delegatee_agent: Option<&str>,
+        result_summary: Option<&str>,
+        error: Option<&str>,
+    ) -> Result<bool, StrataError> {
+        self.store.update_delegation_status(
+            delegation_id,
+            status,
+            delegatee_agent,
+            result_summary,
+            error,
+        )
+    }
+
+    pub fn accept_delegation(
+        &self,
+        delegation_id: &str,
+        delegatee: &str,
+    ) -> Result<bool, StrataError> {
+        self.store.accept_delegation(delegation_id, delegatee)
+    }
+
+    pub fn list_delegations(
+        &self,
+        delegator: Option<&str>,
+        delegatee: Option<&str>,
+        status: Option<DelegationStatus>,
+    ) -> Result<Vec<DelegationContract>, StrataError> {
+        self.store.list_delegations(delegator, delegatee, status)
+    }
+
     // Transactive Memory Directory (A2A Frontier 2)
 
     /// Registers or updates an agent's capability card.
@@ -299,6 +352,14 @@ impl StigmergyCoordinator {
 
     /// Alias for `resolve_domain_authority`.
     pub fn find_best_authority_for_domain(
+        &self,
+        domain_or_path: &str,
+    ) -> Result<Option<DomainAuthority>, StrataError> {
+        self.resolve_domain_authority(domain_or_path)
+    }
+
+    /// Resolves domain specialist agent (alias for `resolve_domain_authority`).
+    pub fn resolve_domain_specialist(
         &self,
         domain_or_path: &str,
     ) -> Result<Option<DomainAuthority>, StrataError> {
@@ -632,6 +693,82 @@ mod tests {
             .unwrap()
             .expect("renewal by owner succeeds");
         assert_eq!(renewed.assigned_agent.as_deref(), Some("agent-1"));
+    }
+
+    #[test]
+    fn test_a2a_delegation_storage_and_lifecycle() {
+        let store = Arc::new(SqliteStore::open_in_memory().unwrap());
+        let coordinator = StigmergyCoordinator::new(store);
+
+        let contract = DelegationContract::new(
+            "del-alpha-1",
+            "agent-planner",
+            "task-db-optimize",
+            "Optimize SQLite indices for high concurrency",
+        )
+        .with_domain_scope("crates/strata-memory")
+        .with_delegatee("agent-sqlite-specialist")
+        .with_verification("cargo test -p strata-memory")
+        .with_artifacts(vec!["crates/strata-memory/src/store.rs".to_string()])
+        .with_timeout(90);
+
+        // 1. Save delegation
+        coordinator.save_delegation(&contract).unwrap();
+
+        // 2. Retrieve delegation
+        let fetched = coordinator.get_delegation("del-alpha-1").unwrap();
+        assert!(fetched.is_some());
+        let fetched = fetched.unwrap();
+        assert_eq!(fetched.delegation_id, "del-alpha-1");
+        assert_eq!(fetched.delegator_agent, "agent-planner");
+        assert_eq!(
+            fetched.delegatee_agent.as_deref(),
+            Some("agent-sqlite-specialist")
+        );
+        assert_eq!(fetched.status, DelegationStatus::Pending);
+        assert_eq!(fetched.expected_artifacts.len(), 1);
+
+        // 3. Accept delegation atomically
+        let updated = coordinator
+            .accept_delegation("del-alpha-1", "agent-sqlite-specialist")
+            .unwrap();
+        assert!(updated);
+
+        // 4. Complete delegation with summary and artifacts
+        let completed = coordinator
+            .update_delegation_status(
+                "del-alpha-1",
+                DelegationStatus::Completed,
+                Some("agent-sqlite-specialist"),
+                Some("Added partial index on a2a_delegations"),
+                None,
+            )
+            .unwrap();
+        assert!(completed);
+
+        let finished = coordinator.get_delegation("del-alpha-1").unwrap().unwrap();
+        assert_eq!(finished.status, DelegationStatus::Completed);
+        assert_eq!(
+            finished.result_summary.as_deref(),
+            Some("Added partial index on a2a_delegations")
+        );
+        assert!(finished.completed_at.is_some());
+
+        // 5. Query list filters
+        let list_by_delegator = coordinator
+            .list_delegations(Some("agent-planner"), None, None)
+            .unwrap();
+        assert_eq!(list_by_delegator.len(), 1);
+
+        let list_by_status = coordinator
+            .list_delegations(None, None, Some(DelegationStatus::Completed))
+            .unwrap();
+        assert_eq!(list_by_status.len(), 1);
+
+        let list_empty = coordinator
+            .list_delegations(None, None, Some(DelegationStatus::Rejected))
+            .unwrap();
+        assert!(list_empty.is_empty());
     }
 
     #[test]

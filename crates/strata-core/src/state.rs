@@ -413,7 +413,7 @@ impl MemoryRecord {
                     .metadata
                     .get("status")
                     .and_then(|v| v.as_str())
-                    .map_or(false, |s| s.eq_ignore_ascii_case("deprecated"))
+                    .is_some_and(|s| s.eq_ignore_ascii_case("deprecated"))
                 {
                     Some(self.updated_at)
                 } else {

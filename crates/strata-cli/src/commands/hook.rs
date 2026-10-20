@@ -423,6 +423,19 @@ pub async fn handle_hook(command: HookCommand, engine: Arc<SqliteMemoryEngine>) 
                             eprintln!("⚠️ [Strata Lease Warning]: Failed to acquire lease for '{resource_id}': {err}");
                         }
                     }
+
+                    // Transactive Domain Authority Advisory Check (<2ms, Non-blocking Advisory)
+                    if let Ok(Some(authority)) = coordinator.resolve_domain_specialist(&resource_id)
+                    {
+                        if authority.authoritative_agent != agent
+                            && authority.confidence_score >= 0.8
+                        {
+                            eprintln!(
+                                "🏛️ [Strata A2A Transactive Advisory]: Domain '{}' is maintained by peer specialist '{}' (confidence: {:.0}%). Consider delegating via `strata a2a delegate`.",
+                                authority.domain, authority.authoritative_agent, authority.confidence_score * 100.0
+                            );
+                        }
+                    }
                 }
 
                 // Deterministic Symbol-Level Anti-Pattern Guard (<10ms, Advisory Default - never aborts)
