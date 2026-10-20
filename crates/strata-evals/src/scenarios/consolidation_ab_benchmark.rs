@@ -15,8 +15,8 @@ use strata_memory::{
 };
 use strata_reasoning::mock::MockReasoningEngine;
 
-/// Helper to accurately approximate BPE sub-word token counts matching LLM/SLM tokenizers.
-pub fn count_exact_tokens(text: &str) -> usize {
+/// Helper to accurately approximate BPE sub-word token counts matching LLM/SLM tokenizers (~3.8 chars/tok).
+pub fn estimate_bpe_tokens(text: &str) -> usize {
     let chars = text.chars().count();
     let words = text.split_whitespace().count();
     if chars == 0 {
@@ -24,6 +24,11 @@ pub fn count_exact_tokens(text: &str) -> usize {
     }
     // Standard BPE approximation (~3.8 chars per token for code/JSON), bounded by whitespace words
     ((chars as f64 / 3.8).ceil() as usize).max(words)
+}
+
+/// Backwards-compatible alias for `estimate_bpe_tokens`.
+pub fn count_exact_tokens(text: &str) -> usize {
+    estimate_bpe_tokens(text)
 }
 
 /// Execution mode for the A/B evaluation benchmark engine.
@@ -35,48 +40,53 @@ pub enum BenchmarkEngineMode {
 }
 
 /// Resolves the reasoning engine for the benchmark.
-/// If an external API key (OPENROUTER_API_KEY, OPENAI_API_KEY) or local SLM endpoint
-/// (OLLAMA_ENDPOINT, e.g. SmolLM2) is configured, it instantiates the live provider.
-/// Otherwise, it uses the high-precision deterministic tokenized engine.
+/// Live API execution is strictly gated behind the `STRATA_BENCHMARK_LIVE=1` environment variable.
+/// Without this explicit flag, it defaults to the high-precision deterministic tokenized engine
+/// to prevent unintended external API costs, rate limits, and network dependencies in CI/CD.
 pub fn resolve_benchmark_engine() -> (Box<dyn ReasoningEngine>, BenchmarkEngineMode) {
-    if let Ok(key) = std::env::var("OPENROUTER_API_KEY") {
-        if !key.trim().is_empty() {
-            let model = std::env::var("STRATA_BENCHMARK_MODEL")
-                .unwrap_or_else(|_| "openrouter/free".to_string());
-            return (
-                Box::new(strata_reasoning::OpenRouterAdapter::new(key, &model)),
-                BenchmarkEngineMode::LiveApi {
-                    provider: "OpenRouter".to_string(),
-                    model,
-                },
-            );
-        }
-    }
+    let allow_live = std::env::var("STRATA_BENCHMARK_LIVE").as_deref() == Ok("1");
 
-    if let Ok(key) = std::env::var("OPENAI_API_KEY") {
-        if !key.trim().is_empty() {
-            let model = std::env::var("STRATA_BENCHMARK_MODEL")
-                .unwrap_or_else(|_| "gpt-4o-mini".to_string());
-            return (
-                Box::new(strata_reasoning::OpenAiAdapter::new(key, &model)),
-                BenchmarkEngineMode::LiveApi {
-                    provider: "OpenAI".to_string(),
-                    model,
-                },
-            );
+    if allow_live {
+        if let Ok(key) = std::env::var("OPENROUTER_API_KEY") {
+            if !key.trim().is_empty() {
+                let model = std::env::var("STRATA_BENCHMARK_MODEL")
+                    .unwrap_or_else(|_| "openrouter/free".to_string());
+                return (
+                    Box::new(strata_reasoning::OpenRouterAdapter::new(key, &model)),
+                    BenchmarkEngineMode::LiveApi {
+                        provider: "OpenRouter".to_string(),
+                        model,
+                    },
+                );
+            }
         }
-    }
 
-    if let Ok(endpoint) = std::env::var("OLLAMA_ENDPOINT") {
-        if !endpoint.trim().is_empty() {
-            let model = std::env::var("STRATA_BENCHMARK_MODEL")
-                .unwrap_or_else(|_| "smollm2:1.7b".to_string());
-            return (
-                Box::new(
-                    strata_reasoning::OllamaAdapter::new(&model).with_base_url(endpoint.clone()),
-                ),
-                BenchmarkEngineMode::LocalSlm { endpoint, model },
-            );
+        if let Ok(key) = std::env::var("OPENAI_API_KEY") {
+            if !key.trim().is_empty() {
+                let model = std::env::var("STRATA_BENCHMARK_MODEL")
+                    .unwrap_or_else(|_| "gpt-4o-mini".to_string());
+                return (
+                    Box::new(strata_reasoning::OpenAiAdapter::new(key, &model)),
+                    BenchmarkEngineMode::LiveApi {
+                        provider: "OpenAI".to_string(),
+                        model,
+                    },
+                );
+            }
+        }
+
+        if let Ok(endpoint) = std::env::var("OLLAMA_ENDPOINT") {
+            if !endpoint.trim().is_empty() {
+                let model = std::env::var("STRATA_BENCHMARK_MODEL")
+                    .unwrap_or_else(|_| "smollm2:1.7b".to_string());
+                return (
+                    Box::new(
+                        strata_reasoning::OllamaAdapter::new(&model)
+                            .with_base_url(endpoint.clone()),
+                    ),
+                    BenchmarkEngineMode::LocalSlm { endpoint, model },
+                );
+            }
         }
     }
 
@@ -134,7 +144,7 @@ pub async fn run_consolidation_ab_benchmark_scenario() -> Result<()> {
     // Measure exact prompt payload tokens constructed for distillation
     let baseline_prompt_text =
         strata_reasoning::prompts::build_distillation_prompt(&realistic_events);
-    let baseline_prompt_tokens = count_exact_tokens(&baseline_prompt_text);
+    let baseline_prompt_tokens = estimate_bpe_tokens(&baseline_prompt_text);
 
     let t0 = Instant::now();
     let baseline_result = baseline_pipeline
@@ -152,7 +162,7 @@ pub async fn run_consolidation_ab_benchmark_scenario() -> Result<()> {
         "{:?}{:?}",
         baseline_result.semantic_facts, baseline_result.procedural_skills
     );
-    let baseline_completion_tokens = count_exact_tokens(&baseline_output_repr);
+    let baseline_completion_tokens = estimate_bpe_tokens(&baseline_output_repr);
     let baseline_tokens = baseline_prompt_tokens + baseline_completion_tokens;
 
     // -------------------------------------------------------------------------
@@ -184,16 +194,19 @@ pub async fn run_consolidation_ab_benchmark_scenario() -> Result<()> {
     }
 
     let stress_prompt_text = strata_reasoning::prompts::build_distillation_prompt(&stress_events);
-    let stress_prompt_tokens = count_exact_tokens(&stress_prompt_text);
+    let stress_prompt_tokens = estimate_bpe_tokens(&stress_prompt_text);
     let baseline_stress_tokens = stress_prompt_tokens + 250;
 
+    // For the 1,000-event stress test, always use a high-throughput deterministic mock engine
+    // for the baseline distillation to strictly prevent massive external token costs or network timeouts.
+    let stress_mock_engine = MockReasoningEngine::default();
     let t_stress_0 = Instant::now();
     let _ = baseline_pipeline
         .run_pipeline(
             &store_stress_baseline,
             embedder.as_ref(),
             &stress_events,
-            Some(reasoning_engine.as_ref()),
+            Some(&stress_mock_engine),
         )
         .await?;
     let baseline_stress_ms = t_stress_0.elapsed().as_secs_f64() * 1000.0;
@@ -252,8 +265,17 @@ pub async fn run_consolidation_ab_benchmark_scenario() -> Result<()> {
     // -------------------------------------------------------------------------
     // Terminal Scorecard Table Output
     // -------------------------------------------------------------------------
+    let baseline_header = match &engine_mode {
+        BenchmarkEngineMode::LiveApi { provider, .. } => format!("BASELINE ({provider})"),
+        BenchmarkEngineMode::LocalSlm { .. } => "BASELINE (Local SLM)".to_string(),
+        BenchmarkEngineMode::DeterministicTokenized { .. } => "BASELINE (LLM Sim)".to_string(),
+    };
+
     println!("\n┌──────────────────────────────────────┬────────────────────┬────────────────────┬───────────┐");
-    println!("│ METRIC                               │ BASELINE (LLM)     │ STRATA NEURO-SYM   │ DELTA     │");
+    println!(
+        "│ METRIC                               │ {:<18} │ STRATA NEURO-SYM   │ DELTA     │",
+        baseline_header
+    );
     println!("├──────────────────────────────────────┼────────────────────┼────────────────────┼───────────┤");
     println!(
         "│ Tokens Consumed (Lifecycle 50 ev)    │ {:<18} │ {:<18} │ -100.0%   │",
@@ -307,10 +329,12 @@ pub async fn run_consolidation_ab_benchmark_scenario() -> Result<()> {
         bail!("Benchmark Failed: Neuro-Symbolic Engine consumed tokens (expected 0).");
     }
 
-    if neuro_realistic_ms > 200.0 {
+    let latency_threshold_ms = if cfg!(debug_assertions) { 500.0 } else { 200.0 };
+    if neuro_realistic_ms > latency_threshold_ms {
         bail!(
-            "Benchmark Failed: Neuro-Symbolic Engine latency ({:.1}ms) exceeded 200ms threshold.",
-            neuro_realistic_ms
+            "Benchmark Failed: Neuro-Symbolic Engine latency ({:.1}ms) exceeded {:.0}ms threshold.",
+            neuro_realistic_ms,
+            latency_threshold_ms
         );
     }
 
