@@ -1,6 +1,10 @@
-use anyhow::Result;
+use anyhow::{bail, Result};
 use serde::{Deserialize, Serialize};
-use strata_core::schemas::ProceduralSkill;
+use chrono::{DateTime, Utc};
+use std::collections::HashMap;
+use std::time::Instant;
+use uuid::Uuid;
+use strata_core::schemas::{ParameterDef, ProceduralSkill, ProceduralStep};
 
 use super::dag::GoalDag;
 use super::types::{GoalNode, GoalNodeKind, GoalStatus};
@@ -35,6 +39,392 @@ impl MacroCompilationReport {
     }
 }
 
+/// A parameter required by a compiled procedural macro.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct MacroParameter {
+    pub name: String,
+    pub description: String,
+    pub default_value: Option<serde_json::Value>,
+    pub required: bool,
+}
+
+impl MacroParameter {
+    pub fn new(name: impl Into<String>, description: impl Into<String>, required: bool) -> Self {
+        Self {
+            name: name.into(),
+            description: description.into(),
+            default_value: None,
+            required,
+        }
+    }
+
+    pub fn with_default(mut self, default_val: serde_json::Value) -> Self {
+        self.default_value = Some(default_val);
+        self
+    }
+
+    pub fn to_parameter_def(&self) -> ParameterDef {
+        ParameterDef {
+            name: self.name.clone(),
+            param_type: "string".to_string(),
+            description: self.description.clone(),
+
+            example: self.default_value.as_ref().map(|v| match v {
+                serde_json::Value::String(s) => s.clone(),
+                other => other.to_string(),
+            }),
+        }
+    }
+}
+
+/// A single step in a compiled macro with argument templates.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct MacroStep {
+    pub step_index: u32,
+    pub tool_name: String,
+    pub action: String,
+    pub input_template: serde_json::Value,
+    #[serde(default)]
+    pub expected_output: Option<String>,
+}
+
+impl MacroStep {
+    pub fn new(
+        step_index: u32,
+        tool_name: impl Into<String>,
+        action: impl Into<String>,
+        input_template: serde_json::Value,
+    ) -> Self {
+        Self {
+            step_index,
+            tool_name: tool_name.into(),
+            action: action.into(),
+            input_template,
+            expected_output: None,
+        }
+    }
+
+    pub fn with_expected_output(mut self, expected: impl Into<String>) -> Self {
+        self.expected_output = Some(expected.into());
+        self
+    }
+}
+
+/// A compiled procedural macro synthesized from recurrent successful execution patterns.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct CompiledMacro {
+    pub id: Uuid,
+    pub name: String,
+    pub description: String,
+    pub tool_sequence: Vec<String>,
+    pub parameters: Vec<MacroParameter>,
+    pub steps: Vec<MacroStep>,
+    pub preconditions: Vec<String>,
+    pub postconditions: Vec<String>,
+    pub support_count: usize,
+    pub success_rate: f32,
+    pub estimated_tokens_saved: usize,
+    pub created_at: DateTime<Utc>,
+}
+
+impl CompiledMacro {
+    pub fn new(name: impl Into<String>, description: impl Into<String>) -> Self {
+        Self {
+            id: Uuid::new_v4(),
+            name: name.into(),
+            description: description.into(),
+            tool_sequence: Vec::new(),
+            parameters: Vec::new(),
+            steps: Vec::new(),
+            preconditions: Vec::new(),
+            postconditions: Vec::new(),
+            support_count: 1,
+            success_rate: 1.0,
+            estimated_tokens_saved: 0,
+            created_at: Utc::now(),
+        }
+    }
+
+    pub fn with_steps(mut self, steps: Vec<MacroStep>) -> Self {
+        self.tool_sequence = steps.iter().map(|s| s.tool_name.clone()).collect();
+        self.estimated_tokens_saved = steps.len() * 450;
+        self.steps = steps;
+        self
+    }
+
+    pub fn with_parameters(mut self, parameters: Vec<MacroParameter>) -> Self {
+        self.parameters = parameters;
+        self
+    }
+
+    pub fn with_preconditions(mut self, pre: Vec<String>) -> Self {
+        self.preconditions = pre;
+        self
+    }
+
+    pub fn with_postconditions(mut self, post: Vec<String>) -> Self {
+        self.postconditions = post;
+        self
+    }
+
+    pub fn to_procedural_skill(&self) -> ProceduralSkill {
+        let mut skill = ProceduralSkill::new(self.name.clone(), self.description.clone())
+            .with_preconditions(self.preconditions.clone())
+            .with_postconditions(self.postconditions.clone())
+            .with_parameters(self.parameters.iter().map(|p| p.to_parameter_def()).collect());
+        skill.id = self.id;
+        skill.success_rate = self.success_rate;
+        skill.importance = 0.90;
+        skill.tags = vec!["compiled_macro".to_string(), "autonomous_mined".to_string()];
+        skill.tags.extend(self.tool_sequence.clone());
+        skill.steps = self
+            .steps
+            .iter()
+            .map(|s| {
+                let mut step = ProceduralStep::new(
+                    s.step_index,
+                    &s.tool_name,
+                    &s.action,
+                    s.input_template.clone(),
+                );
+                if let Some(ref exp) = s.expected_output {
+                    step = step.with_expected_result(exp);
+                }
+                step
+            })
+            .collect();
+        skill
+    }
+
+    /// Reconstructs a CompiledMacro from a persisted ProceduralSkill.
+    pub fn from_procedural_skill(skill: &ProceduralSkill) -> Self {
+        let tool_sequence: Vec<String> = skill.steps.iter().map(|s| s.tool.clone()).collect();
+        let parameters: Vec<MacroParameter> = skill
+            .parameters
+            .iter()
+            .map(|p| MacroParameter {
+                name: p.name.clone(),
+                description: p.description.clone(),
+                default_value: p.example.as_ref().and_then(|ex| serde_json::from_str(ex).ok()),
+                required: true,
+            })
+            .collect();
+
+        let steps: Vec<MacroStep> = skill
+            .steps
+            .iter()
+            .map(|s| MacroStep {
+                step_index: s.order,
+                tool_name: s.tool.clone(),
+                action: s.action.clone(),
+                input_template: s.arguments.clone(),
+                expected_output: s.expected_result.clone(),
+            })
+            .collect();
+
+        let est = steps.len() * 450;
+        Self {
+            id: skill.id,
+            name: skill.name.clone(),
+            description: skill.description.clone(),
+            tool_sequence,
+            parameters,
+            steps,
+            preconditions: skill.preconditions.clone(),
+            postconditions: skill.postconditions.clone(),
+            support_count: 1,
+            estimated_tokens_saved: est,
+            success_rate: skill.success_rate,
+            created_at: skill.created_at,
+        }
+    }
+}
+
+/// Result of a single step within a 1-step macro execution.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct StepExecutionResult {
+    pub step_index: u32,
+    pub tool_name: String,
+    pub success: bool,
+    pub output: serde_json::Value,
+    pub error: Option<String>,
+    pub duration_ms: u64,
+}
+
+/// Unified execution report returned by the 1-step macro engine.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct MacroExecutionReport {
+    pub macro_id: Uuid,
+    pub macro_name: String,
+    pub success: bool,
+    pub steps_completed: usize,
+    pub total_steps: usize,
+    pub step_results: Vec<StepExecutionResult>,
+    pub total_duration_ms: u64,
+    pub tokens_saved: usize,
+    pub final_output: serde_json::Value,
+    pub error: Option<String>,
+}
+
+/// Invoker trait abstraction for tool execution during 1-step macro execution.
+#[async_trait::async_trait]
+pub trait ToolInvoker: Send + Sync {
+    async fn invoke(&self, tool: &str, input: &serde_json::Value) -> Result<serde_json::Value>;
+}
+
+/// Mock/Function-based tool invoker for tests and lightweight runtime execution.
+pub struct CallbackToolInvoker<F> {
+    callback: F,
+}
+
+impl<F> CallbackToolInvoker<F> {
+    pub fn new(callback: F) -> Self {
+        Self { callback }
+    }
+}
+
+#[async_trait::async_trait]
+impl<F> ToolInvoker for CallbackToolInvoker<F>
+where
+    F: Fn(&str, &serde_json::Value) -> Result<serde_json::Value> + Send + Sync,
+{
+    async fn invoke(&self, tool: &str, input: &serde_json::Value) -> Result<serde_json::Value> {
+        (self.callback)(tool, input)
+    }
+}
+
+/// 1-Step Macro Execution Engine (Phase 4.3).
+///
+/// Executes all steps of a pre-compiled macro sequentially in native code,
+/// interpolating parameters without LLM round-trips.
+#[derive(Debug, Clone, Default)]
+pub struct MacroExecutionEngine;
+
+impl MacroExecutionEngine {
+    pub fn new() -> Self {
+        Self
+    }
+
+    /// Interpolates variable slots `{{var_name}}` in JSON templates with provided parameters.
+    pub fn interpolate_template(
+        template: &serde_json::Value,
+        params: &HashMap<String, serde_json::Value>,
+    ) -> serde_json::Value {
+        match template {
+            serde_json::Value::String(s) => {
+                let mut interpolated = s.clone();
+                for (k, v) in params {
+                    let placeholder = format!("{{{{{k}}}}}");
+                    let replacement = match v {
+                        serde_json::Value::String(vs) => vs.clone(),
+                        other => other.to_string(),
+                    };
+                    interpolated = interpolated.replace(&placeholder, &replacement);
+                }
+                serde_json::Value::String(interpolated)
+            }
+            serde_json::Value::Object(map) => {
+                let mut new_map = serde_json::Map::new();
+                for (k, v) in map {
+                    new_map.insert(k.clone(), Self::interpolate_template(v, params));
+                }
+                serde_json::Value::Object(new_map)
+            }
+            serde_json::Value::Array(arr) => {
+                let new_arr = arr
+                    .iter()
+                    .map(|item| Self::interpolate_template(item, params))
+                    .collect();
+                serde_json::Value::Array(new_arr)
+            }
+            other => other.clone(),
+        }
+    }
+
+    /// Executes all steps of a compiled macro in a single unified step.
+    pub async fn execute_macro_1step(
+        &self,
+        macro_def: &CompiledMacro,
+        params: &HashMap<String, serde_json::Value>,
+        invoker: &dyn ToolInvoker,
+    ) -> Result<MacroExecutionReport> {
+        let start = Instant::now();
+        let mut step_results = Vec::new();
+        let mut final_output = serde_json::json!({});
+        let mut success = true;
+        let mut failure_err = None;
+
+        // 1. Validate required parameters
+        for param in &macro_def.parameters {
+            if param.required && !params.contains_key(&param.name) && param.default_value.is_none() {
+                bail!("Missing required parameter '{}' for macro '{}'", param.name, macro_def.name);
+            }
+        }
+
+        // Merge defaults with provided params
+        let mut effective_params = params.clone();
+        for param in &macro_def.parameters {
+            if !effective_params.contains_key(&param.name) {
+                if let Some(ref def) = param.default_value {
+                    effective_params.insert(param.name.clone(), def.clone());
+                }
+            }
+        }
+
+        // 2. Execute each step sequentially
+        for step in &macro_def.steps {
+            let step_start = Instant::now();
+            let resolved_input = Self::interpolate_template(&step.input_template, &effective_params);
+
+            match invoker.invoke(&step.tool_name, &resolved_input).await {
+                Ok(output) => {
+                    let duration = step_start.elapsed().as_millis() as u64;
+                    final_output = output.clone();
+                    step_results.push(StepExecutionResult {
+                        step_index: step.step_index,
+                        tool_name: step.tool_name.clone(),
+                        success: true,
+                        output,
+                        error: None,
+                        duration_ms: duration,
+                    });
+                }
+                Err(err) => {
+                    let duration = step_start.elapsed().as_millis() as u64;
+                    let err_str = err.to_string();
+                    step_results.push(StepExecutionResult {
+                        step_index: step.step_index,
+                        tool_name: step.tool_name.clone(),
+                        success: false,
+                        output: serde_json::json!(null),
+                        error: Some(err_str.clone()),
+                        duration_ms: duration,
+                    });
+                    success = false;
+                    failure_err = Some(format!("Step {} ({}) failed: {}", step.step_index, step.tool_name, err_str));
+                    break;
+                }
+            }
+        }
+
+        let total_duration = start.elapsed().as_millis() as u64;
+        let steps_completed = step_results.iter().filter(|s| s.success).count();
+
+        Ok(MacroExecutionReport {
+            macro_id: macro_def.id,
+            macro_name: macro_def.name.clone(),
+            success,
+            steps_completed,
+            total_steps: macro_def.steps.len(),
+            step_results,
+            total_duration_ms: total_duration,
+            tokens_saved: macro_def.estimated_tokens_saved,
+            final_output,
+            error: failure_err,
+        })
+    }
+}
+
 /// Deterministic compiler that matches Goal DAG subgoals against learned procedural skills,
 /// substituting high-level goals with pre-verified action macros without LLM re-planning.
 #[derive(Debug, Clone)]
@@ -66,6 +456,10 @@ impl ProceduralMacroCompiler {
 
     pub fn add_skill(&mut self, skill: ProceduralSkill) {
         self.skills.push(skill);
+    }
+
+    pub fn add_macro(&mut self, macro_def: &CompiledMacro) {
+        self.skills.push(macro_def.to_procedural_skill());
     }
 
     pub fn with_min_success_rate(mut self, min_rate: f32) -> Self {
@@ -454,4 +848,111 @@ mod tests {
             other => panic!("Expected InjectMitigation, got {:?}", other),
         }
     }
+
+    #[tokio::test]
+    async fn test_macro_execution_engine_1step_success() {
+        let engine = MacroExecutionEngine::new();
+
+        let steps = vec![
+            MacroStep::new(
+                1,
+                "read_file",
+                "read",
+                serde_json::json!({ "path": "{{target_path}}" }),
+            ),
+            MacroStep::new(
+                2,
+                "edit_file",
+                "edit",
+                serde_json::json!({ "path": "{{target_path}}", "content": "{{patch_content}}" }),
+            ),
+            MacroStep::new(
+                3,
+                "cargo_test",
+                "test",
+                serde_json::json!({ "package": "{{pkg_name}}" }),
+            ),
+        ];
+
+        let parameters = vec![
+            MacroParameter::new("target_path", "Target source file", true),
+            MacroParameter::new("patch_content", "Replacement code", true),
+            MacroParameter::new("pkg_name", "Target crate", false)
+                .with_default(serde_json::json!("strata-core")),
+        ];
+
+        let compiled_macro = CompiledMacro::new("safe_edit_and_test", "Refactor module and verify")
+            .with_steps(steps)
+            .with_parameters(parameters);
+
+        let invoker = CallbackToolInvoker::new(|tool: &str, input: &serde_json::Value| {
+            if tool == "read_file" {
+                assert_eq!(input["path"], "crates/strata-core/src/state.rs");
+                Ok(serde_json::json!({ "content": "original content" }))
+            } else if tool == "edit_file" {
+                assert_eq!(input["path"], "crates/strata-core/src/state.rs");
+                assert_eq!(input["content"], "pub fn updated() {}");
+                Ok(serde_json::json!({ "modified": true }))
+            } else if tool == "cargo_test" {
+                assert_eq!(input["package"], "strata-core");
+                Ok(serde_json::json!({ "passed": 12, "failed": 0 }))
+            } else {
+                anyhow::bail!("Unexpected tool: {tool}")
+            }
+        });
+
+        let mut params = HashMap::new();
+        params.insert(
+            "target_path".to_string(),
+            serde_json::json!("crates/strata-core/src/state.rs"),
+        );
+        params.insert(
+            "patch_content".to_string(),
+            serde_json::json!("pub fn updated() {}"),
+        );
+
+        let report = engine
+            .execute_macro_1step(&compiled_macro, &params, &invoker)
+            .await
+            .unwrap();
+
+        assert!(report.success);
+        assert_eq!(report.steps_completed, 3);
+        assert_eq!(report.total_steps, 3);
+        assert_eq!(report.tokens_saved, 3 * 450);
+        assert_eq!(report.final_output["passed"], 12);
+    }
+
+    #[tokio::test]
+    async fn test_macro_execution_engine_halts_on_failure() {
+        let engine = MacroExecutionEngine::new();
+
+        let steps = vec![
+            MacroStep::new(1, "step_1", "act", serde_json::json!({})),
+            MacroStep::new(2, "step_2", "act", serde_json::json!({})),
+            MacroStep::new(3, "step_3", "act", serde_json::json!({})),
+        ];
+
+        let compiled_macro =
+            CompiledMacro::new("failing_macro", "Halt on step 2").with_steps(steps);
+
+        let invoker = CallbackToolInvoker::new(|tool: &str, _: &serde_json::Value| {
+            if tool == "step_1" {
+                Ok(serde_json::json!({ "ok": true }))
+            } else if tool == "step_2" {
+                anyhow::bail!("Disk full")
+            } else {
+                panic!("Step 3 should not be executed after step 2 failed!");
+            }
+        });
+
+        let report = engine
+            .execute_macro_1step(&compiled_macro, &HashMap::new(), &invoker)
+            .await
+            .unwrap();
+
+        assert!(!report.success);
+        assert_eq!(report.steps_completed, 1);
+        assert!(report.error.unwrap().contains("Disk full"));
+        }
 }

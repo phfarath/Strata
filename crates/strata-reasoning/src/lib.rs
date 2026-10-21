@@ -11,7 +11,10 @@ pub mod training;
 pub use adapters::*;
 pub use causal::{
     BlastRadiusReport, CausalEdge, CausalEdgeKind, CausalGraph, CausalNode, CausalNodeKind,
-    CodebaseCausalIndexer, ImpactedNode, PatchSimulationResult, WorldModel,
+    ActionExpectation, CausalBeliefUpdate, CausalPostcondition, CausalPrecondition,
+    CausalPredictionEngine, CodebaseCausalIndexer, CounterfactualAttribution,
+    CounterfactualHypothesis, CounterfactualSimulationResult, ImpactedNode, ObservedOutcome,
+    PatchSimulationResult, PredictionError, PredictionMismatchType, WorldModel,
 };
 pub use engine::*;
 pub use mock::*;
@@ -20,6 +23,8 @@ pub use planning::{
     GoalDecomposer, GoalEdge, GoalEdgeKind, GoalNode, GoalNodeKind, GoalStatus,
     MacroCompilationReport, MacroSubstitution, ProceduralMacroCompiler, RecoveryAction,
     SerializedGoalEdge, TaskExecutor,
+    CallbackToolInvoker, CompiledMacro, MacroExecutionEngine, MacroExecutionReport,
+    MacroParameter, MacroStep, StepExecutionResult, ToolInvoker,
 };
 pub use prompts::*;
 pub use resolver::*;

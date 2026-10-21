@@ -235,5 +235,10 @@ fn format_node_kind(kind: CausalNodeKind) -> &'static str {
         CausalNodeKind::DatabaseTable => "\x1b[1;35m[Table]\x1b[0m",
         CausalNodeKind::ConfigOption => "\x1b[90m[Config]\x1b[0m",
         CausalNodeKind::ContractInvariant => "\x1b[1;31m[Invariant]\x1b[0m",
+        CausalNodeKind::Assumption => "\x1b[33m[Assumption]\x1b[0m",
+        CausalNodeKind::Precondition => "\x1b[34m[Precondition]\x1b[0m",
+        CausalNodeKind::Postcondition => "\x1b[32m[Postcondition]\x1b[0m",
+        CausalNodeKind::EnvironmentVariable => "\x1b[36m[EnvVar]\x1b[0m",
+        CausalNodeKind::Action => "\x1b[35m[Action]\x1b[0m",
     }
 }

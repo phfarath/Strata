@@ -38,9 +38,11 @@ pub async fn run_all_scenarios() -> Result<()> {
     run_context_rot_scenario().await?;
     run_long_mem_eval_scenario().await?;
     run_self_supervised_distillation_pipeline_scenario().await?;
+    run_causal_prediction_error_scenario().await?;
+    run_autonomous_procedural_macro_scenario().await?;
 
     println!("\n========================================================");
-    println!("🎉 ALL EVAL SCENARIOS PASSED (28/28)");
+    println!("🎉 ALL EVAL SCENARIOS PASSED (30/30)");
     println!("========================================================\n");
 
     Ok(())
@@ -316,5 +318,19 @@ mod tests {
         run_self_supervised_distillation_pipeline_scenario()
             .await
             .expect("Self-supervised distillation pipeline scenario failed");
+    }
+
+    #[tokio::test]
+    async fn test_eval_causal_prediction_error() {
+        run_causal_prediction_error_scenario()
+            .await
+            .expect("Causal prediction error scenario failed");
+    }
+
+    #[tokio::test]
+    async fn test_eval_autonomous_procedural_macro() {
+        run_autonomous_procedural_macro_scenario()
+            .await
+            .expect("Autonomous procedural macro scenario failed");
     }
 }
