@@ -26,6 +26,8 @@ pub mod self_supervised_distillation_pipeline;
 pub mod silent_failure_avoidance;
 pub mod workspace_monorepo;
 pub mod world_model_causal;
+pub mod causal_prediction_error;
+pub mod autonomous_procedural_macro;
 
 pub use a2a_heterogeneous_delegation::*;
 pub use a2a_stigmergic_leases::*;
@@ -55,3 +57,5 @@ pub use self_supervised_distillation_pipeline::*;
 pub use silent_failure_avoidance::*;
 pub use workspace_monorepo::*;
 pub use world_model_causal::*;
+pub use causal_prediction_error::*;
+pub use autonomous_procedural_macro::*;
