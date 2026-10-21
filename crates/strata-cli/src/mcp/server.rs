@@ -349,6 +349,48 @@ impl McpServer {
                 }),
             },
             ToolDefinition {
+                name: "distill_pipeline".to_string(),
+                description: "Synthesize self-supervised distillation curriculum, train/eval dataset splits, Unsloth LoRA scripts, and Ollama Modelfile from continuous memory and oracle-verified delegations.".to_string(),
+                input_schema: serde_json::json!({
+                    "type": "object",
+                    "properties": {
+                        "base_model": {
+                            "type": "string",
+                            "description": "HuggingFace base model identifier (default: 'unsloth/Llama-3.2-3B-Instruct')"
+                        },
+                        "method": {
+                            "type": "string",
+                            "enum": ["dpo", "sft", "orpo", "kto"],
+                            "description": "Fine-tuning method (default: 'dpo')"
+                        },
+                        "eval_ratio": {
+                            "type": "number",
+                            "description": "Validation evaluation split ratio (default: 0.1)"
+                        },
+                        "oracle_only": {
+                            "type": "boolean",
+                            "description": "Gate to oracle-verified traces only (default: true)"
+                        },
+                        "output_dir": {
+                            "type": "string",
+                            "description": "Artifact output directory (default: './outputs/distill_run')"
+                        },
+                        "ollama_model_name": {
+                            "type": "string",
+                            "description": "Target Ollama model identifier (default: 'strata-custom-distilled')"
+                        },
+                        "export_gguf": {
+                            "type": "boolean",
+                            "description": "Whether to export GGUF format for Ollama (default: true)"
+                        },
+                        "dry_run": {
+                            "type": "boolean",
+                            "description": "Whether to run in dry-run mode (default: true)"
+                        }
+                    }
+                }),
+            },
+            ToolDefinition {
                 name: "strata_call_graph".to_string(),
                 description: "Deterministic Native Call Graph and Module Import Dependency Analyzer in Rust. Queries callers, callees, imports, and recursive cycles for any symbol or file.".to_string(),
                 input_schema: serde_json::json!({
@@ -1556,6 +1598,25 @@ impl McpServer {
                         CallToolResult::structured(summary_table.to_string(), val)
                     }
                     Err(e) => CallToolResult::error(format!("Train pipeline error: {e}")),
+                }
+            }
+            "distill_pipeline" => {
+                use strata_core::traits::Tool;
+                let store = self.sqlite_engine.as_ref().map(|e| e.store_arc());
+                let tool = if let Some(s) = store {
+                    strata_tools::DistillPipelineTool::with_store(s)
+                } else {
+                    strata_tools::DistillPipelineTool::new()
+                };
+                match tool.execute(args).await {
+                    Ok(val) => {
+                        let summary_table = val
+                            .get("summary_table")
+                            .and_then(|v| v.as_str())
+                            .unwrap_or("Distillation pipeline execution completed successfully.");
+                        CallToolResult::structured(summary_table.to_string(), val)
+                    }
+                    Err(e) => CallToolResult::error(format!("Distill pipeline error: {e}")),
                 }
             }
             "strata_call_graph" | "call_graph" => {

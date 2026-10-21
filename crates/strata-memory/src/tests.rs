@@ -5562,3 +5562,139 @@ async fn test_audn_pipeline_rejects_incompatible_embedding_spaces() {
         "Fact ingestion must reject cosine similarity across different models"
     );
 }
+
+#[tokio::test]
+async fn test_preference_miner_delegation_and_hitl_mining() {
+    use crate::alignment::PreferenceMiner;
+    use strata_core::a2a::{DelegationContract, DelegationStatus};
+    use strata_core::schemas::SemanticFact;
+    use strata_core::state::{HumanApprovalRecord, MemoryRecord, MemoryTier, MemoryType, Scope};
+
+    let store = Arc::new(SqliteStore::open_in_memory().expect("open memory store"));
+    let miner = PreferenceMiner::new(Arc::clone(&store));
+
+    // 1. Setup A2A Delegations
+    let mut contract_comp = DelegationContract::new(
+        "del-comp-1",
+        "planner-1",
+        "task-auth-impl",
+        "Implement JWT token validation logic",
+    );
+    contract_comp.delegatee_agent = Some("coder-1".to_string());
+    contract_comp.domain_scope = Some("security_auth".to_string());
+    contract_comp.context = Some("Use jsonwebtoken crate with RS256".to_string());
+    contract_comp.expected_artifacts = vec!["src/auth/jwt.rs".to_string()];
+    contract_comp.verification_command = Some("cargo test --lib auth::jwt".to_string());
+    contract_comp.status = DelegationStatus::Completed;
+    contract_comp.result_summary = Some("JWT RS256 validator implemented and verified".to_string());
+    store
+        .save_delegation(&contract_comp)
+        .expect("save comp delegation");
+
+    let mut contract_fail = DelegationContract::new(
+        "del-fail-1",
+        "planner-1",
+        "task-auth-insecure",
+        "Implement JWT token validation logic",
+    );
+    contract_fail.delegatee_agent = Some("junior-coder".to_string());
+    contract_fail.domain_scope = Some("security_auth".to_string());
+    contract_fail.context = Some("Allow none algorithm for speed".to_string());
+    contract_fail.status = DelegationStatus::Rejected;
+    contract_fail.error = Some("Rejected: None algorithm violates security invariants".to_string());
+    store
+        .save_delegation(&contract_fail)
+        .expect("save fail delegation");
+
+    // 2. Setup HITL & Council Approved Core Memory & Semantic Fact
+    let mut core_mem = MemoryRecord::new(
+        MemoryType::Semantic,
+        "System Invariant: All auth tokens must be signed with RS256 or Ed25519; never allow 'none'.",
+        Scope::Global,
+    );
+    core_mem.summary = Some("Auth Token Security Invariant".to_string());
+    core_mem.tier = MemoryTier::Core;
+    core_mem.approved_by_human = true;
+    core_mem.human_approval = Some(HumanApprovalRecord::new(
+        "security-council",
+        "web-ui",
+        &core_mem.content,
+        None,
+    ));
+    store.insert_memory(&core_mem).expect("insert core_mem");
+
+    let mut core_fact = SemanticFact::new(
+        "Ed25519 signatures are immutable and mandated across all agent IPC channels",
+        "security_policy",
+        Scope::Global,
+    );
+    core_fact.tier = MemoryTier::Core;
+    core_fact.approved_by_human = true;
+    core_fact.human_approval = Some(HumanApprovalRecord::new(
+        "human-admin",
+        "cli",
+        &core_fact.statement,
+        None,
+    ));
+    store
+        .insert_or_update_semantic_fact(&core_fact)
+        .expect("insert core_fact");
+
+    // 3. Test Delegation Mining
+    let del_dpo = miner
+        .mine_delegation_dpo_pairs(None)
+        .expect("mine delegation dpo");
+    assert_eq!(del_dpo.len(), 1, "Must mine 1 delegation DPO pair");
+    let pair = &del_dpo[0];
+    assert!(pair.prompt.contains("Implement JWT token validation logic"));
+    assert!(pair.chosen.contains("JWT RS256 validator implemented"));
+    assert!(pair
+        .rejected
+        .contains("Rejected: None algorithm violates security invariants"));
+    assert!(pair.oracle_verified);
+    assert_eq!(
+        pair.verification_source,
+        Some("delegation_contract_oracle:cargo test --lib auth::jwt".to_string())
+    );
+
+    let del_kto = miner
+        .mine_delegation_kto_samples(None)
+        .expect("mine delegation kto");
+    assert_eq!(
+        del_kto.len(),
+        2,
+        "Must mine 1 positive and 1 negative KTO sample"
+    );
+    assert!(del_kto
+        .iter()
+        .any(|s| s.label && s.completion.contains("JWT RS256 validator")));
+    assert!(del_kto
+        .iter()
+        .any(|s| !s.label && s.completion.contains("None algorithm violates")));
+
+    // 4. Test HITL Mining
+    let hitl_dpo = miner.mine_hitl_approval_pairs(None).expect("mine hitl dpo");
+    assert_eq!(hitl_dpo.len(), 2, "Must mine 1 memory pair + 1 fact pair");
+    assert!(hitl_dpo.iter().all(|p| p.oracle_verified));
+    assert!(hitl_dpo
+        .iter()
+        .any(|p| p.prompt.contains("Auth Token Security Invariant")));
+    assert!(hitl_dpo
+        .iter()
+        .any(|p| p.prompt.contains("security_policy")));
+
+    let hitl_kto = miner
+        .mine_hitl_approval_kto_samples(None)
+        .expect("mine hitl kto");
+    assert_eq!(hitl_kto.len(), 2);
+    assert!(hitl_kto.iter().all(|s| s.label && s.oracle_verified));
+
+    // 5. Test Alignment Report
+    let report = miner.get_alignment_report().expect("alignment report");
+    assert_eq!(report.delegation_dpo_pairs, 1);
+    assert_eq!(report.hitl_approval_dpo_pairs, 2);
+    assert_eq!(report.delegation_kto_samples, 2);
+    assert_eq!(report.hitl_approval_kto_samples, 2);
+    assert!(report.total_dpo_pairs >= 3);
+    assert!(report.oracle_verified_dpo_pairs >= 3);
+}

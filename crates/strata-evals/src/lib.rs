@@ -37,9 +37,10 @@ pub async fn run_all_scenarios() -> Result<()> {
     run_community_scoped_recall_scenario().await?;
     run_context_rot_scenario().await?;
     run_long_mem_eval_scenario().await?;
+    run_self_supervised_distillation_pipeline_scenario().await?;
 
     println!("\n========================================================");
-    println!("🎉 ALL EVAL SCENARIOS PASSED (27/27)");
+    println!("🎉 ALL EVAL SCENARIOS PASSED (28/28)");
     println!("========================================================\n");
 
     Ok(())
@@ -308,5 +309,12 @@ mod tests {
         run_a2a_heterogeneous_delegation_scenario()
             .await
             .expect("A2A heterogeneous delegation scenario failed");
+    }
+
+    #[tokio::test]
+    async fn test_eval_self_supervised_distillation_pipeline() {
+        run_self_supervised_distillation_pipeline_scenario()
+            .await
+            .expect("Self-supervised distillation pipeline scenario failed");
     }
 }

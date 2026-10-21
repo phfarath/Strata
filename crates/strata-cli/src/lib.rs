@@ -54,6 +54,76 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn test_cli_distill_mine_and_auto_dry_run() {
+        use strata_core::a2a::{DelegationContract, DelegationStatus};
+        use strata_core::state::{
+            HumanApprovalRecord, MemoryRecord, MemoryTier, MemoryType, Scope,
+        };
+
+        let temp_dir =
+            std::env::temp_dir().join(format!("strata_cli_distill_test_{}", uuid::Uuid::new_v4()));
+        let store = Arc::new(SqliteStore::open_in_memory().unwrap());
+
+        // Setup 1 delegation and 1 HITL core memory
+        let mut del =
+            DelegationContract::new("del-1", "agent-a", "task-1", "Refactor authentication");
+        del.domain_scope = Some("security".to_string());
+        del.status = DelegationStatus::Completed;
+        del.verification_command = Some("cargo test".to_string());
+        del.result_summary = Some("Verified auth fix".to_string());
+        store.save_delegation(&del).unwrap();
+
+        let mut mem = MemoryRecord::new(MemoryType::Semantic, "Core invariant rule", Scope::Global);
+        mem.tier = MemoryTier::Core;
+        mem.approved_by_human = true;
+        mem.human_approval = Some(HumanApprovalRecord::new(
+            "council",
+            "ui",
+            &mem.content,
+            None,
+        ));
+        store.insert_memory(&mem).unwrap();
+
+        // 1. Test Mine (JSON output report)
+        let mine_args = DistillArgs {
+            command: DistillCommands::Mine(MineArgs {
+                format: "dpo".to_string(),
+                oracle_only: true,
+                report: true,
+                session: None,
+                scope: None,
+                output: None,
+                json: true,
+            }),
+        };
+        assert!(run_distill(mine_args, store.clone()).await.is_ok());
+
+        // 2. Test Auto (dry-run with curriculum train/eval split)
+        let auto_args = DistillArgs {
+            command: DistillCommands::Auto(AutoArgs {
+                base_model: "unsloth/Llama-3.2-3B-Instruct".to_string(),
+                method: "dpo".to_string(),
+                eval_ratio: 0.5,
+                oracle_only: true,
+                out_dir: temp_dir.clone(),
+                deploy_ollama: Some("strata-distilled-coder".to_string()),
+                dry_run: true,
+                json: true,
+            }),
+        };
+        assert!(run_distill(auto_args, store).await.is_ok());
+
+        assert!(temp_dir.join("train.jsonl").exists());
+        assert!(temp_dir.join("eval.jsonl").exists());
+        assert!(temp_dir.join("train_lora.py").exists());
+        assert!(temp_dir.join("Modelfile").exists());
+        assert!(temp_dir.join("run_training.sh").exists());
+        assert!(temp_dir.join("manifest.json").exists());
+
+        let _ = std::fs::remove_dir_all(&temp_dir);
+    }
+
+    #[tokio::test]
     async fn test_cli_hook_wrap_and_user_prompt_guardrails() {
         use strata_core::state::Scope;
         use strata_core::traits::MemoryEngine;

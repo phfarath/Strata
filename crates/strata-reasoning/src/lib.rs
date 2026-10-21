@@ -314,7 +314,7 @@ mod tests {
             .with_learning_rate(2e-5)
             .with_max_steps(100);
 
-        let script = generate_unsloth_training_script(&config, "data/dpo.jsonl");
+        let script = generate_unsloth_training_script(&config, "data/dpo.jsonl", None);
         assert!(script.contains("FastLanguageModel.from_pretrained"));
         assert!(script.contains("unsloth/Qwen2.5-Coder-7B-Instruct"));
         assert!(script.contains("load_in_4bit = True"));
@@ -379,5 +379,48 @@ mod tests {
             dep_tasks[0].status,
             strata_core::blackboard::TaskStatus::Blocked
         );
+    }
+
+    #[test]
+    fn test_training_generator_kto_and_curriculum_split() {
+        let config = TrainingConfig::new("unsloth/Llama-3.2-3B-Instruct")
+            .with_method(TrainingMethod::Kto)
+            .with_lora(16, 32, 0.0)
+            .with_learning_rate(5e-5);
+
+        let script = generate_unsloth_training_script(&config, "data/kto.jsonl", None);
+        assert!(script.contains("KTOTrainer"));
+        assert!(script.contains("KTOConfig"));
+        assert!(script.contains("format_kto"));
+        assert!(script.contains("from trl import DPOTrainer, DPOConfig, SFTTrainer, SFTConfig, ORPOTrainer, ORPOConfig, KTOTrainer, KTOConfig"));
+
+        // Test Curriculum Split
+        let raw_data = "{\"prompt\":\"p1\",\"completion\":\"c1\",\"label\":true}\n".to_string()
+            + "{\"prompt\":\"p2\",\"completion\":\"c2\",\"label\":false}\n"
+            + "{\"prompt\":\"p3\",\"completion\":\"c3\",\"label\":true}\n"
+            + "{\"prompt\":\"p1\",\"completion\":\"c1\",\"label\":true}\n"; // Duplicate!
+
+        let (train, eval) = TrainingPipeline::split_dataset_curriculum(&raw_data, 0.33, 42);
+        assert_eq!(train.len() + eval.len(), 3, "Duplicates must be stripped");
+        assert_eq!(eval.len(), 1);
+        assert_eq!(train.len(), 2);
+
+        // Test Curriculum Artifact Generation
+        let temp_dir =
+            std::env::temp_dir().join(format!("strata_test_curriculum_{}", uuid::Uuid::new_v4()));
+        let pipeline = TrainingPipeline::new(config);
+        let (split, res) = pipeline
+            .generate_curriculum_artifacts(&temp_dir, &raw_data, 0.33)
+            .unwrap();
+
+        assert_eq!(split.total_raw_samples, 4);
+        assert_eq!(split.unique_samples, 3);
+        assert_eq!(split.train_samples, 2);
+        assert_eq!(split.eval_samples, 1);
+        assert!(temp_dir.join("train.jsonl").exists());
+        assert!(temp_dir.join("eval.jsonl").exists());
+        assert!(res.success);
+
+        let _ = std::fs::remove_dir_all(&temp_dir);
     }
 }

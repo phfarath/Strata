@@ -1,12 +1,33 @@
 use crate::store::SqliteStore;
+use serde::{Deserialize, Serialize};
 use std::sync::Arc;
+use strata_core::a2a::DelegationStatus;
 use strata_core::errors::StrataError;
 use strata_core::events::{Event, EventPayload};
 use strata_core::schemas::{ExportFormat, KtoSample, PreferencePair, SftSample, SignalKind};
+use strata_core::state::MemoryTier;
+
+/// Detailed summary report of mined alignment dataset statistics across various memory subsystems.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Default)]
+pub struct AlignmentDatasetReport {
+    pub total_dpo_pairs: usize,
+    pub oracle_verified_dpo_pairs: usize,
+    pub delegation_dpo_pairs: usize,
+    pub hitl_approval_dpo_pairs: usize,
+    pub failure_pattern_dpo_pairs: usize,
+    pub episodic_dpo_pairs: usize,
+    pub implicit_signal_dpo_pairs: usize,
+    pub total_kto_samples: usize,
+    pub oracle_verified_kto_samples: usize,
+    pub delegation_kto_samples: usize,
+    pub hitl_approval_kto_samples: usize,
+    pub total_sft_samples: usize,
+    pub oracle_verified_sft_samples: usize,
+}
 
 /// Extracts alignment datasets (DPO pairs, KTO binary feedback, SFT instruction data)
-/// from persistent memory, failure patterns, episodic signals, and procedural skills,
-/// with support for oracle-verified gating.
+/// from persistent memory, failure patterns, episodic signals, procedural skills,
+/// A2A delegations, and HITL/council approved core memories, with support for oracle-verified gating.
 pub struct PreferenceMiner {
     store: Arc<SqliteStore>,
 }
@@ -18,7 +39,8 @@ impl PreferenceMiner {
     }
 
     /// Mine DPO preference pairs (prompt, chosen, rejected) matching failure patterns,
-    /// anti-patterns with mitigations, and successful vs failed episodic trajectories.
+    /// anti-patterns with mitigations, successful vs failed episodic trajectories,
+    /// verified A2A task delegations, and HITL/council approved core memories.
     pub fn mine_dpo_pairs(
         &self,
         session_id: Option<&str>,
@@ -26,7 +48,7 @@ impl PreferenceMiner {
         let mut pairs = self.store.get_preference_pairs(session_id)?;
 
         // 1. Mine pairs from Failure Patterns (Anti-pattern -> Rejected vs Mitigation -> Chosen)
-        let failures = self.store.search_failures(None, None, 100)?;
+        let failures = self.store.search_failures(None, None, 10_000)?;
         for failure in failures {
             let prompt = format!(
                 "Context: Agent encountered obstacle.\nProblem / Trigger: {}\nFailure Signature: {}",
@@ -57,7 +79,7 @@ impl PreferenceMiner {
         let episodes = if let Some(sid) = session_id {
             self.store.get_episodic_memories_by_session(sid)?
         } else {
-            self.store.get_all_episodic_memories(None, 100)?
+            self.store.get_all_episodic_memories(None, 10_000)?
         };
 
         for ep in episodes {
@@ -84,7 +106,7 @@ impl PreferenceMiner {
 
         // 3. Implicit signals from Event Stream (ToolLoop & CommandFix)
         let events = if let Some(sid) = session_id {
-            self.store.get_events(sid, None, Some(5000))?
+            self.store.get_events(sid, None, Some(10_000))?
         } else {
             self.store.get_all_events()?
         };
@@ -111,6 +133,211 @@ impl PreferenceMiner {
                         );
                     }
                 }
+            }
+        }
+
+        // 5. Mine pairs from A2A Delegations (verified completed vs rejected)
+        pairs.extend(self.mine_delegation_dpo_pairs(session_id)?);
+
+        // 6. Mine pairs from HITL & Council Approved Core Memories
+        pairs.extend(self.mine_hitl_approval_pairs(session_id)?);
+
+        Ok(pairs)
+    }
+
+    /// Mine DPO preference pairs from completed vs failed A2A heterogeneous task delegations.
+    ///
+    /// Contracts completed with an explicit `verification_command` are treated as oracle-verified
+    /// ground truth. Only explicitly rejected or timed-out contracts in the same domain scope serve as hard negative samples
+    /// (in-flight Pending/Accepted tasks are never treated as failures).
+    pub fn mine_delegation_dpo_pairs(
+        &self,
+        session_id: Option<&str>,
+    ) -> Result<Vec<PreferencePair>, StrataError> {
+        let contracts = self.store.list_delegations(None, None, None)?;
+        let mut pairs = Vec::new();
+
+        let completed: Vec<_> = contracts
+            .iter()
+            .filter(|c| c.status == DelegationStatus::Completed)
+            .cloned()
+            .collect();
+
+        // In-flight tasks (Pending, Accepted) must NOT be categorized as failed
+        let failed: Vec<_> = contracts
+            .iter()
+            .filter(|c| {
+                matches!(
+                    c.status,
+                    DelegationStatus::Rejected | DelegationStatus::TimedOut
+                )
+            })
+            .cloned()
+            .collect();
+
+        for c in completed {
+            if let Some(sid) = session_id {
+                if c.task_id != sid && c.domain_scope.as_deref() != Some(sid) {
+                    continue;
+                }
+            }
+
+            let prompt = format!(
+                "Task Delegation Objective: {}\nDomain Scope: {}\nTask ID: {}\nContext / Constraints: {}",
+                c.objective,
+                c.domain_scope.as_deref().unwrap_or("general"),
+                c.task_id,
+                c.context.as_deref().unwrap_or("")
+            );
+
+            let mut chosen_parts = Vec::new();
+            chosen_parts.push("Status: Completed".to_string());
+            if let Some(ref summary) = c.result_summary {
+                chosen_parts.push(format!("Summary: {}", summary));
+            }
+            if !c.expected_artifacts.is_empty() {
+                chosen_parts.push(format!("Artifacts: {}", c.expected_artifacts.join(", ")));
+            }
+            if let Some(ref cmd) = c.verification_command {
+                chosen_parts.push(format!("Verification Command: {}", cmd));
+            }
+            let chosen = chosen_parts.join("\n");
+
+            let rejected = if let Some(neg) =
+                failed.iter().find(|f| f.domain_scope == c.domain_scope)
+            {
+                format!(
+                    "Status: {}\nError / Obstacle: {}\nIncomplete Artifacts: {}",
+                    neg.status.as_str(),
+                    neg.error
+                        .as_deref()
+                        .unwrap_or("Task delegation failed without satisfying constraints"),
+                    neg.expected_artifacts.join(", ")
+                )
+            } else if let Some(neg) = failed.first() {
+                format!(
+                    "Status: {}\nError / Obstacle: {}",
+                    neg.status.as_str(),
+                    neg.error.as_deref().unwrap_or("Task delegation failed")
+                )
+            } else {
+                "Status: Failed\nError: Task execution timed out or failed verification criteria without producing verified artifacts.\nArtifacts: None".to_string()
+            };
+
+            let src_session = c.task_id.clone();
+            // Oracle verification requires an actual verification_command; completed without verification is unverified
+            let is_verified = c.verification_command.is_some();
+            let v_source = c
+                .verification_command
+                .as_ref()
+                .map(|cmd| format!("delegation_contract_oracle:{}", cmd))
+                .or_else(|| Some("delegation_contract_unverified".to_string()));
+
+            pairs.push(
+                PreferencePair::new(prompt, chosen, rejected, src_session)
+                    .with_verification(is_verified, v_source),
+            );
+        }
+
+        Ok(pairs)
+    }
+
+    /// Mine DPO preference pairs from HITL and council approved Core memories and semantic facts.
+    ///
+    /// Core tier memories vetted by a human or council represent ground-truth invariants.
+    pub fn mine_hitl_approval_pairs(
+        &self,
+        session_id: Option<&str>,
+    ) -> Result<Vec<PreferencePair>, StrataError> {
+        let mut pairs = Vec::new();
+
+        // 1. Core memories with human approval
+        let memories = self.store.get_all_memories(None, None, 10_000)?;
+        for mem in memories {
+            if mem.tier == MemoryTier::Core
+                && (mem.approved_by_human || mem.human_approval.is_some())
+            {
+                if let Some(sid) = session_id {
+                    if mem.scope.to_string() != sid && !mem.tags.iter().any(|t| t == sid) {
+                        continue;
+                    }
+                }
+
+                let summary = mem
+                    .summary
+                    .clone()
+                    .unwrap_or_else(|| "Core Architectural Invariant".to_string());
+                let prompt = format!(
+                    "System Invariant & Core Architecture Directive\nSummary: {}\nScope: {}",
+                    summary, mem.scope
+                );
+
+                let approved_by = mem
+                    .human_approval
+                    .as_ref()
+                    .map(|a| a.approved_by.clone())
+                    .unwrap_or_else(|| "human_council".to_string());
+
+                let chosen = format!(
+                    "Verified Directive (Approved by: {}):\n{}\nImportance: {:.2}",
+                    approved_by, mem.content, mem.importance
+                );
+
+                let rejected = format!(
+                    "Anti-pattern Violation: Disregard core invariant '{}' and apply unvetted modifications without consensus.",
+                    summary
+                );
+
+                let v_source = Some(format!("hitl_approved_core_memory:{}", approved_by));
+                let src_sid = session_id.unwrap_or("core_invariant").to_string();
+
+                pairs.push(
+                    PreferencePair::new(prompt, chosen, rejected, src_sid)
+                        .with_verification(true, v_source),
+                );
+            }
+        }
+
+        // 2. Core semantic facts with human approval
+        let facts = self.store.get_all_semantic_facts(None, None, 10_000)?;
+        for fact in facts {
+            if fact.tier == MemoryTier::Core
+                && (fact.approved_by_human || fact.human_approval.is_some())
+            {
+                if let Some(sid) = session_id {
+                    if fact.scope.to_string() != sid && fact.category != sid {
+                        continue;
+                    }
+                }
+
+                let prompt = format!(
+                    "Core Semantic Invariant Fact\nCategory: {}\nScope: {}",
+                    fact.category, fact.scope
+                );
+
+                let approved_by = fact
+                    .human_approval
+                    .as_ref()
+                    .map(|a| a.approved_by.clone())
+                    .unwrap_or_else(|| "human_council".to_string());
+
+                let chosen = format!(
+                    "Verified Fact Statement (Approved by: {}):\n{}\nConfidence: {:.2}",
+                    approved_by, fact.statement, fact.confidence
+                );
+
+                let rejected = format!(
+                    "Falsified Assumption: Contradict core invariant in category '{}' with unverified assertions.",
+                    fact.category
+                );
+
+                let v_source = Some(format!("hitl_approved_core_fact:{}", approved_by));
+                let src_sid = session_id.unwrap_or("core_fact").to_string();
+
+                pairs.push(
+                    PreferencePair::new(prompt, chosen, rejected, src_sid)
+                        .with_verification(true, v_source),
+                );
             }
         }
 
@@ -235,7 +462,7 @@ impl PreferenceMiner {
     }
 
     /// Mine KTO samples (prompt, completion, label: bool) from positive/negative feedback,
-    /// episodic outcome signals, and implicit behavioral telemetry.
+    /// episodic outcome signals, implicit telemetry, A2A delegations, and HITL approvals.
     pub fn mine_kto_samples(
         &self,
         session_id: Option<&str>,
@@ -243,6 +470,7 @@ impl PreferenceMiner {
         let mut samples = Vec::new();
 
         // 1. From mined preference pairs (chosen = true, rejected = false)
+        // Note: mine_dpo_pairs already aggregates failure patterns, episodes, feedback, delegations, and HITL.
         let pairs = self.mine_dpo_pairs(session_id)?;
         for pair in pairs {
             samples.push(
@@ -255,11 +483,11 @@ impl PreferenceMiner {
             );
         }
 
-        // 2. From Episodic memories
+        // 2. From Episodic memories (single-turn outcomes)
         let episodes = if let Some(sid) = session_id {
             self.store.get_episodic_memories_by_session(sid)?
         } else {
-            self.store.get_all_episodic_memories(None, 100)?
+            self.store.get_all_episodic_memories(None, 10_000)?
         };
 
         for ep in episodes {
@@ -277,7 +505,7 @@ impl PreferenceMiner {
                     None
                 };
                 samples.push(
-                    KtoSample::new(&prompt, &ep.outcomes.join("; "), true, &ep.session_id)
+                    KtoSample::new(&prompt, ep.outcomes.join("; "), true, &ep.session_id)
                         .with_verification(is_verified, v_source),
                 );
             }
@@ -292,7 +520,7 @@ impl PreferenceMiner {
                     None
                 };
                 samples.push(
-                    KtoSample::new(&prompt, &ep.obstacles.join("; "), false, &ep.session_id)
+                    KtoSample::new(&prompt, ep.obstacles.join("; "), false, &ep.session_id)
                         .with_verification(is_verified, v_source),
                 );
             }
@@ -346,6 +574,189 @@ impl PreferenceMiner {
             }
         }
 
+        // 4. Add isolated failed/timed-out delegations not already present in samples
+        let contracts = self.store.list_delegations(None, None, None)?;
+        for c in contracts {
+            if matches!(
+                c.status,
+                DelegationStatus::Rejected | DelegationStatus::TimedOut
+            ) {
+                if let Some(sid) = session_id {
+                    if c.task_id != sid && c.domain_scope.as_deref() != Some(sid) {
+                        continue;
+                    }
+                }
+                let prompt = format!(
+                    "Task Delegation Objective: {}\nDomain Scope: {}\nTask ID: {}\nContext / Constraints: {}",
+                    c.objective,
+                    c.domain_scope.as_deref().unwrap_or("general"),
+                    c.task_id,
+                    c.context.as_deref().unwrap_or("")
+                );
+                if !samples.iter().any(|s| !s.label && s.prompt == prompt) {
+                    let completion = format!(
+                        "Status: {}\nError: {}",
+                        c.status.as_str(),
+                        c.error
+                            .as_deref()
+                            .unwrap_or("Delegation failed without resolution")
+                    );
+                    let v_source = Some(format!("delegation_failure:{}", c.status.as_str()));
+                    samples.push(
+                        KtoSample::new(&prompt, &completion, false, &c.task_id)
+                            .with_verification(true, v_source),
+                    );
+                }
+            }
+        }
+
+        Ok(samples)
+    }
+
+    /// Mine binary KTO samples from A2A delegation outcomes (completed = true, rejected/failed = false).
+    pub fn mine_delegation_kto_samples(
+        &self,
+        session_id: Option<&str>,
+    ) -> Result<Vec<KtoSample>, StrataError> {
+        let contracts = self.store.list_delegations(None, None, None)?;
+        let mut samples = Vec::new();
+
+        for c in contracts {
+            if let Some(sid) = session_id {
+                if c.task_id != sid && c.domain_scope.as_deref() != Some(sid) {
+                    continue;
+                }
+            }
+
+            let prompt = format!(
+                "Task Delegation Objective: {}\nDomain Scope: {}\nTask ID: {}\nContext / Constraints: {}",
+                c.objective,
+                c.domain_scope.as_deref().unwrap_or("general"),
+                c.task_id,
+                c.context.as_deref().unwrap_or("")
+            );
+            let src_session = c.task_id.clone();
+
+            match c.status {
+                DelegationStatus::Completed => {
+                    let mut comp_parts = Vec::new();
+                    comp_parts.push("Status: Completed".to_string());
+                    if let Some(ref summary) = c.result_summary {
+                        comp_parts.push(format!("Summary: {}", summary));
+                    }
+                    if !c.expected_artifacts.is_empty() {
+                        comp_parts.push(format!("Artifacts: {}", c.expected_artifacts.join(", ")));
+                    }
+                    let completion = comp_parts.join("\n");
+                    let is_verified = c.verification_command.is_some();
+                    let v_source = c
+                        .verification_command
+                        .as_ref()
+                        .map(|cmd| format!("delegation_contract_oracle:{}", cmd))
+                        .or_else(|| Some("delegation_contract_unverified".to_string()));
+                    samples.push(
+                        KtoSample::new(&prompt, &completion, true, &src_session)
+                            .with_verification(is_verified, v_source),
+                    );
+                }
+                DelegationStatus::Rejected | DelegationStatus::TimedOut => {
+                    let completion = format!(
+                        "Status: {}\nError: {}",
+                        c.status.as_str(),
+                        c.error
+                            .as_deref()
+                            .unwrap_or("Delegation failed without resolution")
+                    );
+                    let v_source = Some(format!("delegation_failure:{}", c.status.as_str()));
+                    samples.push(
+                        KtoSample::new(&prompt, &completion, false, &src_session)
+                            .with_verification(true, v_source),
+                    );
+                }
+                _ => {}
+            }
+        }
+
+        Ok(samples)
+    }
+
+    /// Mine KTO binary feedback samples from HITL and council approved Core tier records.
+    pub fn mine_hitl_approval_kto_samples(
+        &self,
+        session_id: Option<&str>,
+    ) -> Result<Vec<KtoSample>, StrataError> {
+        let mut samples = Vec::new();
+
+        let memories = self.store.get_all_memories(None, None, 10_000)?;
+        for mem in memories {
+            if mem.tier == MemoryTier::Core
+                && (mem.approved_by_human || mem.human_approval.is_some())
+            {
+                if let Some(sid) = session_id {
+                    if mem.scope.to_string() != sid && !mem.tags.iter().any(|t| t == sid) {
+                        continue;
+                    }
+                }
+
+                let summary = mem
+                    .summary
+                    .clone()
+                    .unwrap_or_else(|| "Core Architectural Invariant".to_string());
+                let prompt = format!(
+                    "System Invariant & Core Architecture Directive\nSummary: {}\nScope: {}",
+                    summary, mem.scope
+                );
+
+                let approved_by = mem
+                    .human_approval
+                    .as_ref()
+                    .map(|a| a.approved_by.clone())
+                    .unwrap_or_else(|| "human_council".to_string());
+
+                let completion =
+                    format!("Verified Invariant: {}\nContent: {}", summary, mem.content);
+                let v_source = Some(format!("hitl_approved_core_memory:{}", approved_by));
+                let src_sid = session_id.unwrap_or("core_invariant").to_string();
+
+                samples.push(
+                    KtoSample::new(&prompt, &completion, true, &src_sid)
+                        .with_verification(true, v_source),
+                );
+            }
+        }
+
+        let facts = self.store.get_all_semantic_facts(None, None, 10_000)?;
+        for fact in facts {
+            if fact.tier == MemoryTier::Core
+                && (fact.approved_by_human || fact.human_approval.is_some())
+            {
+                if let Some(sid) = session_id {
+                    if fact.scope.to_string() != sid && fact.category != sid {
+                        continue;
+                    }
+                }
+
+                let prompt = format!(
+                    "Core Semantic Invariant Fact\nCategory: {}\nScope: {}",
+                    fact.category, fact.scope
+                );
+                let approved_by = fact
+                    .human_approval
+                    .as_ref()
+                    .map(|a| a.approved_by.clone())
+                    .unwrap_or_else(|| "human_council".to_string());
+
+                let completion = format!("Verified Fact Statement: {}", fact.statement);
+                let v_source = Some(format!("hitl_approved_core_fact:{}", approved_by));
+                let src_sid = session_id.unwrap_or("core_fact").to_string();
+
+                samples.push(
+                    KtoSample::new(&prompt, &completion, true, &src_sid)
+                        .with_verification(true, v_source),
+                );
+            }
+        }
+
         Ok(samples)
     }
 
@@ -364,7 +775,7 @@ impl PreferenceMiner {
 
     /// Turn procedural skills and examples into SFT format `(instruction, input, output)`.
     pub fn mine_sft_samples(&self) -> Result<Vec<SftSample>, StrataError> {
-        let skills = self.store.get_all_procedural_skills(None, 100)?;
+        let skills = self.store.get_all_procedural_skills(None, 10_000)?;
         let mut samples = Vec::new();
 
         for skill in skills {
@@ -424,6 +835,70 @@ impl PreferenceMiner {
             samples.retain(|s| s.oracle_verified);
         }
         Ok(samples)
+    }
+
+    /// Generates a structured breakdown of mined alignment pairs and samples without redundant database scans.
+    pub fn get_alignment_report(&self) -> Result<AlignmentDatasetReport, StrataError> {
+        let all_dpo = self.mine_dpo_pairs(None)?;
+        let oracle_dpo = all_dpo.iter().filter(|p| p.oracle_verified).count();
+
+        let delegation_dpo = all_dpo
+            .iter()
+            .filter(|p| {
+                p.verification_source
+                    .as_deref()
+                    .unwrap_or("")
+                    .starts_with("delegation_contract_oracle")
+            })
+            .count();
+        let hitl_dpo = all_dpo
+            .iter()
+            .filter(|p| {
+                let src = p.verification_source.as_deref().unwrap_or("");
+                src.starts_with("hitl_approved_core_memory")
+                    || src.starts_with("hitl_approved_core_fact")
+            })
+            .count();
+
+        let failure_dpo = all_dpo
+            .iter()
+            .filter(|p| p.verification_source.as_deref() == Some("failure_pattern_mitigation"))
+            .count();
+        let episodic_dpo = all_dpo
+            .iter()
+            .filter(|p| p.verification_source.as_deref() == Some("episodic_high_success"))
+            .count();
+        let implicit_dpo = all_dpo
+            .iter()
+            .filter(|p| {
+                let src = p.verification_source.as_deref().unwrap_or("");
+                src.starts_with("tool_execution_success") || src == "task_completed_success"
+            })
+            .count();
+
+        let all_kto = self.mine_kto_samples(None)?;
+        let oracle_kto = all_kto.iter().filter(|s| s.oracle_verified).count();
+        let delegation_kto = self.mine_delegation_kto_samples(None)?.len();
+        let hitl_kto = self.mine_hitl_approval_kto_samples(None)?.len();
+
+        let all_sft = self.mine_sft_samples()?;
+        let oracle_sft = all_sft.iter().filter(|s| s.oracle_verified).count();
+
+        Ok(AlignmentDatasetReport {
+            total_dpo_pairs: all_dpo.len(),
+            oracle_verified_dpo_pairs: oracle_dpo,
+            delegation_dpo_pairs: delegation_dpo,
+            hitl_approval_dpo_pairs: hitl_dpo,
+            failure_pattern_dpo_pairs: failure_dpo,
+            episodic_dpo_pairs: episodic_dpo,
+            implicit_signal_dpo_pairs: implicit_dpo,
+            total_kto_samples: all_kto.len(),
+            oracle_verified_kto_samples: oracle_kto,
+            delegation_kto_samples: delegation_kto,
+            hitl_approval_kto_samples: hitl_kto,
+            total_sft_samples: all_sft.len(),
+            oracle_verified_sft_samples: oracle_sft,
+        })
     }
 
     /// Export mined alignment dataset in specified format (DPO, KTO, SFT, Markdown, or JSONL),

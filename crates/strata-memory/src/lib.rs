@@ -42,7 +42,7 @@ use strata_core::state::{
 pub use strata_core::state::{HumanApprovalRecord, ProvenanceBlock};
 use strata_core::traits::{EventStore, MemoryEngine};
 
-pub use alignment::PreferenceMiner;
+pub use alignment::{AlignmentDatasetReport, PreferenceMiner};
 pub use ast::{
     AstDiffResult, AstParser, CodeAnchorEngine, ExtractedSymbol, LanguageKind, ReconciliationReport,
 };
