@@ -37,6 +37,13 @@ pub struct MineArgs {
     )]
     pub oracle_only: bool,
 
+    #[arg(
+        long,
+        default_value_t = false,
+        help = "Display alignment dataset breakdown report across continuous memory sources"
+    )]
+    pub report: bool,
+
     #[arg(long, help = "Optional session ID filter")]
     pub session: Option<String>,
 
@@ -118,11 +125,54 @@ async fn run_mine(args: MineArgs, store: Arc<SqliteStore>) -> Result<()> {
     let miner = PreferenceMiner::new(store);
     let filter = args.session.as_deref().or(args.scope.as_deref());
 
-    if args.json {
+    if args.report {
         let report = miner
             .get_alignment_report()
             .context("Failed to get alignment dataset report")?;
-        println!("{}", serde_json::to_string_pretty(&report)?);
+        if args.json {
+            println!("{}", serde_json::to_string_pretty(&report)?);
+        } else {
+            println!("┌────────────────────────────────────────────────────────┐");
+            println!("│ STRATA ALIGNMENT DATASET REPORT                        │");
+            println!("├────────────────────────────────────────────────────────┤");
+            println!(
+                "│ A2A Delegations (DPO Pairs):     {:<21} │",
+                report.delegation_dpo_pairs
+            );
+            println!(
+                "│ A2A Delegations (KTO Samples):   {:<21} │",
+                report.delegation_kto_samples
+            );
+            println!(
+                "│ HITL & Council Approvals:        {:<21} │",
+                report.hitl_approval_dpo_pairs
+            );
+            println!(
+                "│ Negative Failure Mitigations:    {:<21} │",
+                report.failure_pattern_dpo_pairs
+            );
+            println!(
+                "│ Episodic Trajectories:           {:<21} │",
+                report.episodic_dpo_pairs
+            );
+            println!(
+                "│ Total DPO Pairs:                 {:<21} │",
+                report.total_dpo_pairs
+            );
+            println!(
+                "│ Total KTO Samples:               {:<21} │",
+                report.total_kto_samples
+            );
+            println!(
+                "│ Total SFT Samples:               {:<21} │",
+                report.total_sft_samples
+            );
+            println!(
+                "│ Oracle-Verified DPO Pairs:       {:<21} │",
+                report.oracle_verified_dpo_pairs
+            );
+            println!("└────────────────────────────────────────────────────────┘");
+        }
         return Ok(());
     }
 
@@ -138,20 +188,35 @@ async fn run_mine(args: MineArgs, store: Arc<SqliteStore>) -> Result<()> {
         .export_with_gating(fmt, filter, args.oracle_only)
         .context("Failed to export alignment preferences")?;
 
+    let final_output = if args.json && fmt != ExportFormat::Markdown {
+        let records: Vec<serde_json::Value> = exported
+            .lines()
+            .filter(|l| !l.trim().is_empty())
+            .filter_map(|l| serde_json::from_str(l).ok())
+            .collect();
+        serde_json::to_string_pretty(&records)?
+    } else {
+        exported
+    };
+
     if let Some(ref out_path) = args.output {
-        fs::write(out_path, &exported).with_context(|| {
+        fs::write(out_path, &final_output).with_context(|| {
             format!(
                 "Failed to write alignment dataset to '{}'",
                 out_path.display()
             )
         })?;
+        let sample_count = final_output
+            .lines()
+            .filter(|l| !l.trim().is_empty())
+            .count();
         println!(
             "✓ Alignment dataset written to '{}' ({} samples)",
             out_path.display(),
-            exported.lines().filter(|l| !l.trim().is_empty()).count()
+            sample_count
         );
     } else {
-        println!("{exported}");
+        println!("{final_output}");
     }
 
     Ok(())
@@ -174,12 +239,16 @@ async fn run_auto(args: AutoArgs, store: Arc<SqliteStore>) -> Result<()> {
         _ => ExportFormat::Dpo,
     };
 
-    let mut raw_dataset = miner
+    let raw_dataset = miner
         .export_with_gating(export_fmt, None, args.oracle_only)
         .context("Failed to mine alignment dataset")?;
 
     if raw_dataset.trim().is_empty() {
-        raw_dataset = "{\"prompt\":\"Task Delegation: Refactor auth\\nContext: Invariants\",\"chosen\":\"Implemented RS256 with oracle verification\",\"rejected\":\"Insecure algorithm\"}\n".to_string();
+        anyhow::bail!(
+            "No alignment dataset samples found matching criteria (oracle_only: {}). \
+             Ensure completed A2A delegations, approved HITL memories, or failure patterns exist in SQLite store.",
+            args.oracle_only
+        );
     }
 
     let mut config = TrainingConfig::new(&args.base_model)
@@ -206,6 +275,7 @@ async fn run_auto(args: AutoArgs, store: Arc<SqliteStore>) -> Result<()> {
             "eval_dataset_path": split.eval_path,
             "modelfile_path": result.modelfile_path,
             "run_script_path": result.run_script_path,
+            "dry_run": args.dry_run,
             "summary": result.summary
         });
         println!("{}", serde_json::to_string_pretty(&output)?);

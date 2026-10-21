@@ -157,7 +157,8 @@ pub async fn run_lora_finetuning_pipeline_scenario() -> Result<()> {
     // Step 4: Test Unsloth Python Training Script Synthesis
     // -------------------------------------------------------------------------
     println!("  [Step 4] Synthesizing Unsloth Python fine-tuning script...");
-    let python_script = generate_unsloth_training_script(&valid_config, "outputs/dataset.jsonl");
+    let python_script =
+        generate_unsloth_training_script(&valid_config, "outputs/dataset.jsonl", None);
 
     assert!(python_script.contains("from unsloth import FastLanguageModel"));
     assert!(python_script.contains("unsloth/Llama-3.2-3B-Instruct"));

@@ -89,6 +89,7 @@ mod tests {
             command: DistillCommands::Mine(MineArgs {
                 format: "dpo".to_string(),
                 oracle_only: true,
+                report: true,
                 session: None,
                 scope: None,
                 output: None,

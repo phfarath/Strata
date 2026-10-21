@@ -1,7 +1,11 @@
 use super::types::{QuantizationType, TrainingConfig, TrainingMethod};
 
 /// Synthesize a production-ready Unsloth Python fine-tuning script.
-pub fn generate_unsloth_training_script(config: &TrainingConfig, dataset_path: &str) -> String {
+pub fn generate_unsloth_training_script(
+    config: &TrainingConfig,
+    dataset_path: &str,
+    eval_dataset_path: Option<&str>,
+) -> String {
     let load_in_4bit = match config.quantization {
         QuantizationType::Bits4 => "True",
         _ => "False",
@@ -11,11 +15,42 @@ pub fn generate_unsloth_training_script(config: &TrainingConfig, dataset_path: &
         .unwrap_or_else(|_| "[\"q_proj\", \"k_proj\", \"v_proj\", \"o_proj\", \"gate_proj\", \"up_proj\", \"down_proj\"]".to_string());
 
     let normalized_dataset = dataset_path.replace('\\', "/");
+    let normalized_eval = eval_dataset_path.map(|p| p.replace('\\', "/"));
     let normalized_out = config.output_dir.replace('\\', "/");
 
+    let dpo_patch_block = if matches!(config.method, TrainingMethod::Dpo) {
+        "from unsloth import PatchDPOTrainer\nPatchDPOTrainer()\n"
+    } else {
+        ""
+    };
+
     let trainer_setup = match config.method {
-        TrainingMethod::Dpo => format!(
-            r####"    # --- DPO Dataset Formatting ---
+        TrainingMethod::Dpo => {
+            let eval_load_code = if let Some(ref eval_path) = normalized_eval {
+                format!(
+                    r####"    raw_eval_dataset = load_dataset("json", data_files="{eval_path}")["train"]
+    eval_dataset = raw_eval_dataset.map(format_dpo)
+"####,
+                    eval_path = eval_path
+                )
+            } else {
+                String::new()
+            };
+
+            let eval_cfg = if normalized_eval.is_some() {
+                "        eval_strategy = \"steps\",\n        eval_steps = 10,\n"
+            } else {
+                ""
+            };
+
+            let eval_trainer_arg = if normalized_eval.is_some() {
+                "        eval_dataset = eval_dataset,\n"
+            } else {
+                ""
+            };
+
+            format!(
+                r####"    # --- DPO Dataset Formatting ---
     raw_dataset = load_dataset("json", data_files="{dataset_path}")["train"]
 
     def format_dpo(sample):
@@ -26,7 +61,7 @@ pub fn generate_unsloth_training_script(config: &TrainingConfig, dataset_path: &
         }}
 
     dataset = raw_dataset.map(format_dpo)
-
+{eval_load_code}
     # --- DPO Trainer Setup ---
     dpo_config = DPOConfig(
         output_dir = "{out_dir}",
@@ -38,7 +73,7 @@ pub fn generate_unsloth_training_script(config: &TrainingConfig, dataset_path: &
         max_prompt_length = {max_seq_len} // 2,
         beta = {beta},
         seed = {seed},
-        fp16 = not is_bfloat16_supported(),
+{eval_cfg}        fp16 = not is_bfloat16_supported(),
         bf16 = is_bfloat16_supported(),
         logging_steps = 1,
         optim = "adamw_8bit",
@@ -52,20 +87,48 @@ pub fn generate_unsloth_training_script(config: &TrainingConfig, dataset_path: &
         ref_model = None,
         args = dpo_config,
         train_dataset = dataset,
-        tokenizer = tokenizer,
+{eval_trainer_arg}        tokenizer = tokenizer,
     )"####,
-            dataset_path = normalized_dataset,
-            out_dir = normalized_out,
-            lr = config.learning_rate,
-            batch_size = config.batch_size,
-            grad_accum = config.gradient_accumulation_steps,
-            max_steps = config.max_steps,
-            max_seq_len = config.max_seq_length,
-            beta = config.beta,
-            seed = config.seed,
-        ),
-        TrainingMethod::Sft => format!(
-            r####"    # --- SFT Dataset Formatting ---
+                dataset_path = normalized_dataset,
+                eval_load_code = eval_load_code,
+                out_dir = normalized_out,
+                lr = config.learning_rate,
+                batch_size = config.batch_size,
+                grad_accum = config.gradient_accumulation_steps,
+                max_steps = config.max_steps,
+                max_seq_len = config.max_seq_length,
+                beta = config.beta,
+                seed = config.seed,
+                eval_cfg = eval_cfg,
+                eval_trainer_arg = eval_trainer_arg,
+            )
+        }
+        TrainingMethod::Sft => {
+            let eval_load_code = if let Some(ref eval_path) = normalized_eval {
+                format!(
+                    r####"    raw_eval_dataset = load_dataset("json", data_files="{eval_path}")["train"]
+    eval_dataset = raw_eval_dataset.map(format_sft)
+"####,
+                    eval_path = eval_path
+                )
+            } else {
+                String::new()
+            };
+
+            let eval_cfg = if normalized_eval.is_some() {
+                "        eval_strategy = \"steps\",\n        eval_steps = 10,\n"
+            } else {
+                ""
+            };
+
+            let eval_trainer_arg = if normalized_eval.is_some() {
+                "        eval_dataset = eval_dataset,\n"
+            } else {
+                ""
+            };
+
+            format!(
+                r####"    # --- SFT Dataset Formatting ---
     raw_dataset = load_dataset("json", data_files="{dataset_path}")["train"]
 
     def format_sft(sample):
@@ -79,7 +142,7 @@ pub fn generate_unsloth_training_script(config: &TrainingConfig, dataset_path: &
         return {{"text": text}}
 
     dataset = raw_dataset.map(format_sft)
-
+{eval_load_code}
     # --- SFT Trainer Setup ---
     sft_config = SFTConfig(
         output_dir = "{out_dir}",
@@ -92,7 +155,7 @@ pub fn generate_unsloth_training_script(config: &TrainingConfig, dataset_path: &
         gradient_accumulation_steps = {grad_accum},
         max_steps = {max_steps},
         seed = {seed},
-        fp16 = not is_bfloat16_supported(),
+{eval_cfg}        fp16 = not is_bfloat16_supported(),
         bf16 = is_bfloat16_supported(),
         logging_steps = 1,
         optim = "adamw_8bit",
@@ -105,19 +168,47 @@ pub fn generate_unsloth_training_script(config: &TrainingConfig, dataset_path: &
         model = model,
         tokenizer = tokenizer,
         train_dataset = dataset,
-        args = sft_config,
+{eval_trainer_arg}        args = sft_config,
     )"####,
-            dataset_path = normalized_dataset,
-            out_dir = normalized_out,
-            lr = config.learning_rate,
-            batch_size = config.batch_size,
-            grad_accum = config.gradient_accumulation_steps,
-            max_steps = config.max_steps,
-            max_seq_len = config.max_seq_length,
-            seed = config.seed,
-        ),
-        TrainingMethod::Orpo => format!(
-            r####"    # --- ORPO Dataset Formatting ---
+                dataset_path = normalized_dataset,
+                eval_load_code = eval_load_code,
+                out_dir = normalized_out,
+                lr = config.learning_rate,
+                batch_size = config.batch_size,
+                grad_accum = config.gradient_accumulation_steps,
+                max_steps = config.max_steps,
+                max_seq_len = config.max_seq_length,
+                seed = config.seed,
+                eval_cfg = eval_cfg,
+                eval_trainer_arg = eval_trainer_arg,
+            )
+        }
+        TrainingMethod::Orpo => {
+            let eval_load_code = if let Some(ref eval_path) = normalized_eval {
+                format!(
+                    r####"    raw_eval_dataset = load_dataset("json", data_files="{eval_path}")["train"]
+    eval_dataset = raw_eval_dataset.map(format_orpo)
+"####,
+                    eval_path = eval_path
+                )
+            } else {
+                String::new()
+            };
+
+            let eval_cfg = if normalized_eval.is_some() {
+                "        eval_strategy = \"steps\",\n        eval_steps = 10,\n"
+            } else {
+                ""
+            };
+
+            let eval_trainer_arg = if normalized_eval.is_some() {
+                "        eval_dataset = eval_dataset,\n"
+            } else {
+                ""
+            };
+
+            format!(
+                r####"    # --- ORPO Dataset Formatting ---
     raw_dataset = load_dataset("json", data_files="{dataset_path}")["train"]
 
     def format_orpo(sample):
@@ -128,7 +219,7 @@ pub fn generate_unsloth_training_script(config: &TrainingConfig, dataset_path: &
         }}
 
     dataset = raw_dataset.map(format_orpo)
-
+{eval_load_code}
     # --- ORPO Trainer Setup ---
     orpo_config = ORPOConfig(
         output_dir = "{out_dir}",
@@ -140,7 +231,7 @@ pub fn generate_unsloth_training_script(config: &TrainingConfig, dataset_path: &
         max_prompt_length = {max_seq_len} // 2,
         beta = {beta},
         seed = {seed},
-        fp16 = not is_bfloat16_supported(),
+{eval_cfg}        fp16 = not is_bfloat16_supported(),
         bf16 = is_bfloat16_supported(),
         logging_steps = 1,
         optim = "adamw_8bit",
@@ -150,20 +241,48 @@ pub fn generate_unsloth_training_script(config: &TrainingConfig, dataset_path: &
         model = model,
         args = orpo_config,
         train_dataset = dataset,
-        tokenizer = tokenizer,
+{eval_trainer_arg}        tokenizer = tokenizer,
     )"####,
-            dataset_path = normalized_dataset,
-            out_dir = normalized_out,
-            lr = config.learning_rate,
-            batch_size = config.batch_size,
-            grad_accum = config.gradient_accumulation_steps,
-            max_steps = config.max_steps,
-            max_seq_len = config.max_seq_length,
-            beta = config.beta,
-            seed = config.seed,
-        ),
-        TrainingMethod::Kto => format!(
-            r####"    # --- KTO Dataset Formatting ---
+                dataset_path = normalized_dataset,
+                eval_load_code = eval_load_code,
+                out_dir = normalized_out,
+                lr = config.learning_rate,
+                batch_size = config.batch_size,
+                grad_accum = config.gradient_accumulation_steps,
+                max_steps = config.max_steps,
+                max_seq_len = config.max_seq_length,
+                beta = config.beta,
+                seed = config.seed,
+                eval_cfg = eval_cfg,
+                eval_trainer_arg = eval_trainer_arg,
+            )
+        }
+        TrainingMethod::Kto => {
+            let eval_load_code = if let Some(ref eval_path) = normalized_eval {
+                format!(
+                    r####"    raw_eval_dataset = load_dataset("json", data_files="{eval_path}")["train"]
+    eval_dataset = raw_eval_dataset.map(format_kto)
+"####,
+                    eval_path = eval_path
+                )
+            } else {
+                String::new()
+            };
+
+            let eval_cfg = if normalized_eval.is_some() {
+                "        eval_strategy = \"steps\",\n        eval_steps = 10,\n"
+            } else {
+                ""
+            };
+
+            let eval_trainer_arg = if normalized_eval.is_some() {
+                "        eval_dataset = eval_dataset,\n"
+            } else {
+                ""
+            };
+
+            format!(
+                r####"    # --- KTO Dataset Formatting ---
     raw_dataset = load_dataset("json", data_files="{dataset_path}")["train"]
 
     def format_kto(sample):
@@ -174,7 +293,7 @@ pub fn generate_unsloth_training_script(config: &TrainingConfig, dataset_path: &
         }}
 
     dataset = raw_dataset.map(format_kto)
-
+{eval_load_code}
     # --- KTO Trainer Setup ---
     kto_config = KTOConfig(
         output_dir = "{out_dir}",
@@ -186,7 +305,7 @@ pub fn generate_unsloth_training_script(config: &TrainingConfig, dataset_path: &
         max_prompt_length = {max_seq_len} // 2,
         beta = {beta},
         seed = {seed},
-        fp16 = not is_bfloat16_supported(),
+{eval_cfg}        fp16 = not is_bfloat16_supported(),
         bf16 = is_bfloat16_supported(),
         logging_steps = 1,
         optim = "adamw_8bit",
@@ -197,18 +316,22 @@ pub fn generate_unsloth_training_script(config: &TrainingConfig, dataset_path: &
         ref_model = None,
         args = kto_config,
         train_dataset = dataset,
-        tokenizer = tokenizer,
+{eval_trainer_arg}        tokenizer = tokenizer,
     )"####,
-            dataset_path = normalized_dataset,
-            out_dir = normalized_out,
-            lr = config.learning_rate,
-            batch_size = config.batch_size,
-            grad_accum = config.gradient_accumulation_steps,
-            max_steps = config.max_steps,
-            max_seq_len = config.max_seq_length,
-            beta = config.beta,
-            seed = config.seed,
-        ),
+                dataset_path = normalized_dataset,
+                eval_load_code = eval_load_code,
+                out_dir = normalized_out,
+                lr = config.learning_rate,
+                batch_size = config.batch_size,
+                grad_accum = config.gradient_accumulation_steps,
+                max_steps = config.max_steps,
+                max_seq_len = config.max_seq_length,
+                beta = config.beta,
+                seed = config.seed,
+                eval_cfg = eval_cfg,
+                eval_trainer_arg = eval_trainer_arg,
+            )
+        }
     };
 
     let gguf_export_block = if config.export_gguf {
@@ -247,7 +370,7 @@ import torch
 from datasets import load_dataset
 from trl import DPOTrainer, DPOConfig, SFTTrainer, SFTConfig, ORPOTrainer, ORPOConfig, KTOTrainer, KTOConfig
 from unsloth import FastLanguageModel, is_bfloat16_supported
-
+{dpo_patch_block}
 def main():
     print("=================================================================")
     print("🚀 STRATA ONE-CLICK LOCAL LORA FINE-TUNING VIA UNSLOTH")
@@ -320,6 +443,7 @@ if __name__ == "__main__":
         lora_dropout = config.lora_dropout,
         target_modules = target_modules_json,
         seed = config.seed,
+        dpo_patch_block = dpo_patch_block,
         trainer_setup = trainer_setup,
         out_dir = normalized_out,
         gguf_export_block = gguf_export_block,
@@ -332,7 +456,16 @@ pub fn generate_ollama_modelfile(config: &TrainingConfig, adapter_or_gguf_path: 
     let is_gguf = normalized_path.ends_with(".gguf") || normalized_path.contains("/gguf");
 
     let from_line = if is_gguf {
-        format!("FROM {}", normalized_path)
+        let gguf_file = if normalized_path.ends_with(".gguf") {
+            normalized_path
+        } else {
+            format!(
+                "{}/unsloth.{}.gguf",
+                normalized_path.trim_end_matches('/'),
+                config.gguf_quantization
+            )
+        };
+        format!("FROM {}", gguf_file)
     } else {
         format!("FROM {}\nADAPTER {}", config.base_model, normalized_path)
     };
@@ -417,4 +550,67 @@ echo "=========================================================="
         script_path = normalized_script,
         ollama_deploy = ollama_deploy,
     )
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::training::types::{TrainingConfig, TrainingMethod};
+
+    #[test]
+    fn test_generate_unsloth_dpo_with_eval() {
+        let config = TrainingConfig::new("unsloth/Llama-3.2-3B-Instruct")
+            .with_method(TrainingMethod::Dpo)
+            .with_lora(16, 32, 0.05)
+            .with_output_dir("./test_outputs/dpo");
+
+        let script = generate_unsloth_training_script(
+            &config,
+            "./test_outputs/train.jsonl",
+            Some("./test_outputs/eval.jsonl"),
+        );
+
+        assert!(script.contains("PatchDPOTrainer()"));
+        assert!(script.contains("raw_eval_dataset = load_dataset(\"json\", data_files=\"./test_outputs/eval.jsonl\")[\"train\"]"));
+        assert!(script.contains("eval_strategy = \"steps\""));
+        assert!(script.contains("eval_dataset = eval_dataset"));
+        assert!(script.contains("DPOTrainer("));
+    }
+
+    #[test]
+    fn test_generate_unsloth_kto_without_eval() {
+        let config = TrainingConfig::new("unsloth/Qwen2.5-Coder-7B-Instruct")
+            .with_method(TrainingMethod::Kto)
+            .with_output_dir("./test_outputs/kto");
+
+        let script = generate_unsloth_training_script(&config, "./test_outputs/train.jsonl", None);
+
+        assert!(!script.contains("PatchDPOTrainer()"));
+        assert!(!script.contains("raw_eval_dataset"));
+        assert!(script.contains("KTOTrainer("));
+        assert!(script.contains("KTOConfig("));
+        assert!(script.contains("format_kto"));
+    }
+
+    #[test]
+    fn test_generate_ollama_modelfile_gguf_and_adapter() {
+        let mut config = TrainingConfig::new("unsloth/Llama-3.2-3B-Instruct");
+        config.export_gguf = true;
+        config.gguf_quantization = "Q4_K_M".to_string();
+
+        let modelfile_gguf_dir = generate_ollama_modelfile(&config, "./test_outputs/gguf");
+        assert!(modelfile_gguf_dir.contains("FROM ./test_outputs/gguf/unsloth.Q4_K_M.gguf"));
+        assert!(!modelfile_gguf_dir.contains("ADAPTER"));
+
+        let modelfile_gguf_file =
+            generate_ollama_modelfile(&config, "./test_outputs/custom_model.gguf");
+        assert!(modelfile_gguf_file.contains("FROM ./test_outputs/custom_model.gguf"));
+
+        let mut adapter_config = TrainingConfig::new("unsloth/Llama-3.2-3B-Instruct");
+        adapter_config.export_gguf = false;
+        let modelfile_adapter =
+            generate_ollama_modelfile(&adapter_config, "./test_outputs/lora_adapter");
+        assert!(modelfile_adapter.contains("FROM unsloth/Llama-3.2-3B-Instruct"));
+        assert!(modelfile_adapter.contains("ADAPTER ./test_outputs/lora_adapter"));
+    }
 }

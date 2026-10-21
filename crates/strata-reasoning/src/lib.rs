@@ -314,7 +314,7 @@ mod tests {
             .with_learning_rate(2e-5)
             .with_max_steps(100);
 
-        let script = generate_unsloth_training_script(&config, "data/dpo.jsonl");
+        let script = generate_unsloth_training_script(&config, "data/dpo.jsonl", None);
         assert!(script.contains("FastLanguageModel.from_pretrained"));
         assert!(script.contains("unsloth/Qwen2.5-Coder-7B-Instruct"));
         assert!(script.contains("load_in_4bit = True"));
@@ -388,7 +388,7 @@ mod tests {
             .with_lora(16, 32, 0.0)
             .with_learning_rate(5e-5);
 
-        let script = generate_unsloth_training_script(&config, "data/kto.jsonl");
+        let script = generate_unsloth_training_script(&config, "data/kto.jsonl", None);
         assert!(script.contains("KTOTrainer"));
         assert!(script.contains("KTOConfig"));
         assert!(script.contains("format_kto"));

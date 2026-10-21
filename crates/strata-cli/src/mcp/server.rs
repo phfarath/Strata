@@ -379,6 +379,10 @@ impl McpServer {
                             "type": "string",
                             "description": "Target Ollama model identifier (default: 'strata-custom-distilled')"
                         },
+                        "export_gguf": {
+                            "type": "boolean",
+                            "description": "Whether to export GGUF format for Ollama (default: true)"
+                        },
                         "dry_run": {
                             "type": "boolean",
                             "description": "Whether to run in dry-run mode (default: true)"

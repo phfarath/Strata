@@ -1142,7 +1142,7 @@ impl Tool for DistillPipelineTool {
         let miner = strata_memory::PreferenceMiner::new(Arc::clone(&store));
         let report = miner.get_alignment_report()?;
 
-        let mut raw_dataset = match method {
+        let raw_dataset = match method {
             strata_reasoning::TrainingMethod::Sft => {
                 miner.export_with_gating(strata_memory::ExportFormat::Sft, None, oracle_only)?
             }
@@ -1153,7 +1153,11 @@ impl Tool for DistillPipelineTool {
         };
 
         if raw_dataset.trim().is_empty() {
-            raw_dataset = "{\"prompt\":\"Task Delegation: Refactor auth\\nContext: Invariants\",\"chosen\":\"Implemented RS256 with oracle verification\",\"rejected\":\"Insecure algorithm\"}\n".to_string();
+            return Err(StrataError::ValidationError(format!(
+                "No alignment dataset samples found matching criteria (oracle_only: {}). \
+                 Ensure completed A2A delegations, approved HITL memories, or failure patterns exist in SQLite store.",
+                oracle_only
+            )));
         }
 
         let mut config = strata_reasoning::TrainingConfig::new(base_model)

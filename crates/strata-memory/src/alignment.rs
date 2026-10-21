@@ -48,7 +48,7 @@ impl PreferenceMiner {
         let mut pairs = self.store.get_preference_pairs(session_id)?;
 
         // 1. Mine pairs from Failure Patterns (Anti-pattern -> Rejected vs Mitigation -> Chosen)
-        let failures = self.store.search_failures(None, None, 100)?;
+        let failures = self.store.search_failures(None, None, 10_000)?;
         for failure in failures {
             let prompt = format!(
                 "Context: Agent encountered obstacle.\nProblem / Trigger: {}\nFailure Signature: {}",
@@ -79,7 +79,7 @@ impl PreferenceMiner {
         let episodes = if let Some(sid) = session_id {
             self.store.get_episodic_memories_by_session(sid)?
         } else {
-            self.store.get_all_episodic_memories(None, 100)?
+            self.store.get_all_episodic_memories(None, 10_000)?
         };
 
         for ep in episodes {
@@ -106,7 +106,7 @@ impl PreferenceMiner {
 
         // 3. Implicit signals from Event Stream (ToolLoop & CommandFix)
         let events = if let Some(sid) = session_id {
-            self.store.get_events(sid, None, Some(5000))?
+            self.store.get_events(sid, None, Some(10_000))?
         } else {
             self.store.get_all_events()?
         };
@@ -148,7 +148,8 @@ impl PreferenceMiner {
     /// Mine DPO preference pairs from completed vs failed A2A heterogeneous task delegations.
     ///
     /// Contracts completed with an explicit `verification_command` are treated as oracle-verified
-    /// ground truth. Rejected or timed-out contracts in the same domain scope serve as hard negative samples.
+    /// ground truth. Only explicitly rejected or timed-out contracts in the same domain scope serve as hard negative samples
+    /// (in-flight Pending/Accepted tasks are never treated as failures).
     pub fn mine_delegation_dpo_pairs(
         &self,
         session_id: Option<&str>,
@@ -156,9 +157,23 @@ impl PreferenceMiner {
         let contracts = self.store.list_delegations(None, None, None)?;
         let mut pairs = Vec::new();
 
-        let (completed, failed): (Vec<_>, Vec<_>) = contracts
-            .into_iter()
-            .partition(|c| c.status == DelegationStatus::Completed);
+        let completed: Vec<_> = contracts
+            .iter()
+            .filter(|c| c.status == DelegationStatus::Completed)
+            .cloned()
+            .collect();
+
+        // In-flight tasks (Pending, Accepted) must NOT be categorized as failed
+        let failed: Vec<_> = contracts
+            .iter()
+            .filter(|c| {
+                matches!(
+                    c.status,
+                    DelegationStatus::Rejected | DelegationStatus::TimedOut
+                )
+            })
+            .cloned()
+            .collect();
 
         for c in completed {
             if let Some(sid) = session_id {
@@ -210,12 +225,12 @@ impl PreferenceMiner {
             };
 
             let src_session = c.task_id.clone();
-            let is_verified =
-                c.verification_command.is_some() || c.status == DelegationStatus::Completed;
+            // Oracle verification requires an actual verification_command; completed without verification is unverified
+            let is_verified = c.verification_command.is_some();
             let v_source = if let Some(ref cmd) = c.verification_command {
                 Some(format!("delegation_contract_oracle:{}", cmd))
             } else {
-                Some("delegation_contract_completed".to_string())
+                None
             };
 
             pairs.push(
@@ -237,7 +252,7 @@ impl PreferenceMiner {
         let mut pairs = Vec::new();
 
         // 1. Core memories with human approval
-        let memories = self.store.get_all_memories(None, None, 1000)?;
+        let memories = self.store.get_all_memories(None, None, 10_000)?;
         for mem in memories {
             if mem.tier == MemoryTier::Core
                 && (mem.approved_by_human || mem.human_approval.is_some())
@@ -284,7 +299,7 @@ impl PreferenceMiner {
         }
 
         // 2. Core semantic facts with human approval
-        let facts = self.store.get_all_semantic_facts(None, None, 1000)?;
+        let facts = self.store.get_all_semantic_facts(None, None, 10_000)?;
         for fact in facts {
             if fact.tier == MemoryTier::Core
                 && (fact.approved_by_human || fact.human_approval.is_some())
@@ -455,6 +470,7 @@ impl PreferenceMiner {
         let mut samples = Vec::new();
 
         // 1. From mined preference pairs (chosen = true, rejected = false)
+        // Note: mine_dpo_pairs already aggregates failure patterns, episodes, feedback, delegations, and HITL.
         let pairs = self.mine_dpo_pairs(session_id)?;
         for pair in pairs {
             samples.push(
@@ -467,11 +483,11 @@ impl PreferenceMiner {
             );
         }
 
-        // 2. From Episodic memories
+        // 2. From Episodic memories (single-turn outcomes)
         let episodes = if let Some(sid) = session_id {
             self.store.get_episodic_memories_by_session(sid)?
         } else {
-            self.store.get_all_episodic_memories(None, 100)?
+            self.store.get_all_episodic_memories(None, 10_000)?
         };
 
         for ep in episodes {
@@ -558,11 +574,41 @@ impl PreferenceMiner {
             }
         }
 
-        // 4. From A2A Delegations
-        samples.extend(self.mine_delegation_kto_samples(session_id)?);
-
-        // 5. From HITL & Council Approved Core Memories
-        samples.extend(self.mine_hitl_approval_kto_samples(session_id)?);
+        // 4. Add isolated failed/timed-out delegations not already present in samples
+        let contracts = self.store.list_delegations(None, None, None)?;
+        for c in contracts {
+            if matches!(
+                c.status,
+                DelegationStatus::Rejected | DelegationStatus::TimedOut
+            ) {
+                if let Some(sid) = session_id {
+                    if c.task_id != sid && c.domain_scope.as_deref() != Some(sid) {
+                        continue;
+                    }
+                }
+                let prompt = format!(
+                    "Task Delegation Objective: {}\nDomain Scope: {}\nTask ID: {}\nContext / Constraints: {}",
+                    c.objective,
+                    c.domain_scope.as_deref().unwrap_or("general"),
+                    c.task_id,
+                    c.context.as_deref().unwrap_or("")
+                );
+                if !samples.iter().any(|s| !s.label && s.prompt == prompt) {
+                    let completion = format!(
+                        "Status: {}\nError: {}",
+                        c.status.as_str(),
+                        c.error
+                            .as_deref()
+                            .unwrap_or("Delegation failed without resolution")
+                    );
+                    let v_source = Some(format!("delegation_failure:{}", c.status.as_str()));
+                    samples.push(
+                        KtoSample::new(&prompt, &completion, false, &c.task_id)
+                            .with_verification(true, v_source),
+                    );
+                }
+            }
+        }
 
         Ok(samples)
     }
@@ -583,7 +629,7 @@ impl PreferenceMiner {
             }
 
             let prompt = format!(
-                "Task Delegation Objective: {}\nDomain Scope: {}\nTask ID: {}\nContext: {}",
+                "Task Delegation Objective: {}\nDomain Scope: {}\nTask ID: {}\nContext / Constraints: {}",
                 c.objective,
                 c.domain_scope.as_deref().unwrap_or("general"),
                 c.task_id,
@@ -602,11 +648,11 @@ impl PreferenceMiner {
                         comp_parts.push(format!("Artifacts: {}", c.expected_artifacts.join(", ")));
                     }
                     let completion = comp_parts.join("\n");
-                    let is_verified = true;
+                    let is_verified = c.verification_command.is_some();
                     let v_source = if let Some(ref cmd) = c.verification_command {
                         Some(format!("delegation_contract_oracle:{}", cmd))
                     } else {
-                        Some("delegation_contract_completed".to_string())
+                        None
                     };
                     samples.push(
                         KtoSample::new(&prompt, &completion, true, &src_session)
@@ -641,7 +687,7 @@ impl PreferenceMiner {
     ) -> Result<Vec<KtoSample>, StrataError> {
         let mut samples = Vec::new();
 
-        let memories = self.store.get_all_memories(None, None, 1000)?;
+        let memories = self.store.get_all_memories(None, None, 10_000)?;
         for mem in memories {
             if mem.tier == MemoryTier::Core
                 && (mem.approved_by_human || mem.human_approval.is_some())
@@ -655,9 +701,9 @@ impl PreferenceMiner {
                 let summary = mem
                     .summary
                     .clone()
-                    .unwrap_or_else(|| "Core Invariant".to_string());
+                    .unwrap_or_else(|| "Core Architectural Invariant".to_string());
                 let prompt = format!(
-                    "Core Architecture Directive\nSummary: {}\nScope: {}",
+                    "System Invariant & Core Architecture Directive\nSummary: {}\nScope: {}",
                     summary, mem.scope
                 );
 
@@ -679,7 +725,7 @@ impl PreferenceMiner {
             }
         }
 
-        let facts = self.store.get_all_semantic_facts(None, None, 1000)?;
+        let facts = self.store.get_all_semantic_facts(None, None, 10_000)?;
         for fact in facts {
             if fact.tier == MemoryTier::Core
                 && (fact.approved_by_human || fact.human_approval.is_some())
@@ -691,7 +737,7 @@ impl PreferenceMiner {
                 }
 
                 let prompt = format!(
-                    "Core Semantic Fact\nCategory: {}\nScope: {}",
+                    "Core Semantic Invariant Fact\nCategory: {}\nScope: {}",
                     fact.category, fact.scope
                 );
                 let approved_by = fact
@@ -729,7 +775,7 @@ impl PreferenceMiner {
 
     /// Turn procedural skills and examples into SFT format `(instruction, input, output)`.
     pub fn mine_sft_samples(&self) -> Result<Vec<SftSample>, StrataError> {
-        let skills = self.store.get_all_procedural_skills(None, 100)?;
+        let skills = self.store.get_all_procedural_skills(None, 10_000)?;
         let mut samples = Vec::new();
 
         for skill in skills {
@@ -791,26 +837,44 @@ impl PreferenceMiner {
         Ok(samples)
     }
 
-    /// Generates a structured breakdown of mined alignment pairs and samples.
+    /// Generates a structured breakdown of mined alignment pairs and samples without redundant database scans.
     pub fn get_alignment_report(&self) -> Result<AlignmentDatasetReport, StrataError> {
         let all_dpo = self.mine_dpo_pairs(None)?;
         let oracle_dpo = all_dpo.iter().filter(|p| p.oracle_verified).count();
 
-        let delegation_dpo = self.mine_delegation_dpo_pairs(None)?.len();
-        let hitl_dpo = self.mine_hitl_approval_pairs(None)?.len();
-
-        let failures = self.store.search_failures(None, None, 100)?.len();
-        let episodes = self
-            .store
-            .get_all_episodic_memories(None, 100)?
-            .into_iter()
-            .filter(|ep| {
-                ep.signals.success >= 0.7 && !ep.outcomes.is_empty() && !ep.obstacles.is_empty()
+        let delegation_dpo = all_dpo
+            .iter()
+            .filter(|p| {
+                p.verification_source
+                    .as_deref()
+                    .unwrap_or("")
+                    .starts_with("delegation_contract_oracle")
+            })
+            .count();
+        let hitl_dpo = all_dpo
+            .iter()
+            .filter(|p| {
+                let src = p.verification_source.as_deref().unwrap_or("");
+                src.starts_with("hitl_approved_core_memory")
+                    || src.starts_with("hitl_approved_core_fact")
             })
             .count();
 
-        let events = self.store.get_all_events()?;
-        let implicit_dpo = self.mine_implicit_signals_from_events(&events).len();
+        let failure_dpo = all_dpo
+            .iter()
+            .filter(|p| p.verification_source.as_deref() == Some("failure_pattern_mitigation"))
+            .count();
+        let episodic_dpo = all_dpo
+            .iter()
+            .filter(|p| p.verification_source.as_deref() == Some("episodic_high_success"))
+            .count();
+        let implicit_dpo = all_dpo
+            .iter()
+            .filter(|p| {
+                let src = p.verification_source.as_deref().unwrap_or("");
+                src.starts_with("tool_execution_success") || src == "task_completed_success"
+            })
+            .count();
 
         let all_kto = self.mine_kto_samples(None)?;
         let oracle_kto = all_kto.iter().filter(|s| s.oracle_verified).count();
@@ -825,8 +889,8 @@ impl PreferenceMiner {
             oracle_verified_dpo_pairs: oracle_dpo,
             delegation_dpo_pairs: delegation_dpo,
             hitl_approval_dpo_pairs: hitl_dpo,
-            failure_pattern_dpo_pairs: failures,
-            episodic_dpo_pairs: episodes,
+            failure_pattern_dpo_pairs: failure_dpo,
+            episodic_dpo_pairs: episodic_dpo,
             implicit_signal_dpo_pairs: implicit_dpo,
             total_kto_samples: all_kto.len(),
             oracle_verified_kto_samples: oracle_kto,
