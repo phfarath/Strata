@@ -367,7 +367,6 @@ pub struct ShellExecutionOutput {
 
 /// Audited command execution tool with timeout, sandboxing, and error classification.
 pub struct SafeShellTool {
-    allowed_working_dirs: Vec<String>,
     blocked_commands: Vec<String>,
     default_timeout: Duration,
 }
@@ -375,7 +374,6 @@ pub struct SafeShellTool {
 impl SafeShellTool {
     pub fn new() -> Self {
         Self {
-            allowed_working_dirs: Vec::new(),
             blocked_commands: vec![
                 "rm -rf /".to_string(),
                 "rmdir /s /q c:\\".to_string(),
@@ -386,21 +384,6 @@ impl SafeShellTool {
             ],
             default_timeout: Duration::from_secs(30),
         }
-    }
-
-    pub fn with_blocked_command(mut self, cmd: impl Into<String>) -> Self {
-        self.blocked_commands.push(cmd.into());
-        self
-    }
-
-    pub fn with_timeout(mut self, timeout: Duration) -> Self {
-        self.default_timeout = timeout;
-        self
-    }
-
-    pub fn with_allowed_dir(mut self, dir: impl Into<String>) -> Self {
-        self.allowed_working_dirs.push(dir.into());
-        self
     }
 
     fn check_command_safety(&self, command: &str) -> Result<(), StrataError> {
@@ -612,10 +595,6 @@ impl GoalDecomposeTool {
             decomposer: Arc::new(strata_reasoning::GoalDecomposer::new()),
         }
     }
-
-    pub fn with_decomposer(decomposer: Arc<strata_reasoning::GoalDecomposer>) -> Self {
-        Self { decomposer }
-    }
 }
 
 #[async_trait]
@@ -704,10 +683,6 @@ impl DagExecuteTool {
         Self {
             scheduler: Arc::new(strata_reasoning::DagScheduler::new()),
         }
-    }
-
-    pub fn with_scheduler(scheduler: Arc<strata_reasoning::DagScheduler>) -> Self {
-        Self { scheduler }
     }
 }
 

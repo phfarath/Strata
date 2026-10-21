@@ -64,20 +64,6 @@ impl ProceduralMacroCompiler {
         self
     }
 
-    pub fn add_skill(&mut self, skill: ProceduralSkill) {
-        self.skills.push(skill);
-    }
-
-    pub fn with_min_success_rate(mut self, min_rate: f32) -> Self {
-        self.min_success_rate = min_rate.clamp(0.0, 1.0);
-        self
-    }
-
-    pub fn with_auto_inject_verification(mut self, inject: bool) -> Self {
-        self.auto_inject_verification = inject;
-        self
-    }
-
     pub fn skills(&self) -> &[ProceduralSkill] {
         &self.skills
     }
@@ -169,60 +155,6 @@ impl ProceduralMacroCompiler {
         }
 
         best_match.map(|(s, _)| s)
-    }
-
-    /// Matches an observed execution error against mined procedural recovery routines.
-    pub fn find_recovery_macro_for_error(
-        &self,
-        error_type: &str,
-        error_message: &str,
-    ) -> Option<&ProceduralSkill> {
-        let err_type_lower = error_type.to_lowercase();
-        let err_msg_lower = error_message.to_lowercase();
-
-        let mut candidate_skills: Vec<&ProceduralSkill> = self
-            .skills
-            .iter()
-            .filter(|s| {
-                // Must be marked as a recovery skill
-                s.tags.iter().any(|t| t == "recovery" || t == "auto_mined")
-                    || s.name.starts_with("Recover_")
-            })
-            .filter(|s| s.success_rate >= self.min_success_rate && !s.steps.is_empty())
-            .collect();
-
-        // Sort descending by success rate and step count
-        candidate_skills.sort_by(|a, b| {
-            b.success_rate
-                .partial_cmp(&a.success_rate)
-                .unwrap_or(std::cmp::Ordering::Equal)
-                .then_with(|| b.steps.len().cmp(&a.steps.len()))
-        });
-
-        for skill in candidate_skills {
-            // Check preconditions for error pattern match
-            let matches_precondition = skill.preconditions.iter().any(|pre| {
-                let pre_lower = pre.to_lowercase();
-                pre_lower.contains(&err_type_lower)
-                    || (!err_msg_lower.is_empty() && pre_lower.contains(&err_msg_lower))
-            });
-
-            // Check tags or name
-            let matches_tag = skill
-                .tags
-                .iter()
-                .any(|t| t.to_lowercase() == err_type_lower);
-            let matches_name = skill
-                .name
-                .to_lowercase()
-                .contains(&err_type_lower.replace(|c: char| !c.is_alphanumeric(), ""));
-
-            if matches_precondition || matches_tag || matches_name {
-                return Some(skill);
-            }
-        }
-
-        None
     }
 
     /// Compiles all matching procedural macros into the Goal DAG in-place.

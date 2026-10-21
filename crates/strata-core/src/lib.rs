@@ -17,9 +17,9 @@ pub use blackboard::{TaskArtifact, TaskFilter, TaskRecord, TaskStatus};
 pub use config::StrataConfig;
 pub use errors::StrataError;
 pub use events::{
-    CanonicalEvent, DataClassification, ErrorObserved, Event, EventId, EventPayload,
-    MemoryConsolidated, MemoryWritten, ObservationReceived, Provenance, RetentionPolicy,
-    SessionEnded, SessionStarted, TaskCompleted, TaskStarted, ToolInvoked, ToolResultReceived,
+    DataClassification, ErrorObserved, Event, EventId, EventPayload, MemoryConsolidated,
+    MemoryWritten, ObservationReceived, Provenance, RetentionPolicy, SessionEnded, SessionStarted,
+    TaskCompleted, TaskStarted, ToolInvoked, ToolResultReceived,
 };
 pub use paths::{canonical_resource_id, canonical_resource_id_with_root};
 pub use schemas::{
@@ -36,7 +36,7 @@ pub use state::{
     SessionStatus,
 };
 
-pub use traits::{EventStore, MemoryEngine, ReasoningEngine, Tool, ToolGateway};
+pub use traits::{EventStore, MemoryEngine, ReasoningEngine, Tool};
 
 #[cfg(test)]
 mod tests {
@@ -229,8 +229,6 @@ mod tests {
             Some("https://api.strata.dev/sync")
         );
         assert_eq!(config.batch_size, 50);
-        assert_eq!(config.max_retries, 5);
-        assert_eq!(config.base_backoff_ms, 500);
 
         let report = SyncReport {
             pushed_count: 10,

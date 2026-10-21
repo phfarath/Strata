@@ -151,11 +151,6 @@ impl SubconsciousBuffer {
         self
     }
 
-    /// Set environmental volatility, adapting the bypass importance threshold.
-    pub fn set_volatility(&mut self, volatility: f32) {
-        self.config = self.config.with_volatility(volatility);
-    }
-
     /// Ingest an event and evaluate gating decision.
     pub fn ingest(&mut self, event: Event, embedding: Vec<f32>, importance: f32) -> GatingDecision {
         let now = Utc::now();

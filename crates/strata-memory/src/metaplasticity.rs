@@ -138,11 +138,6 @@ impl MetaplasticityState {
         }
     }
 
-    pub fn set_volatility(&mut self, volatility: f32) {
-        self.volatility = volatility.clamp(0.0, 1.0);
-        self.last_updated_at = Utc::now();
-    }
-
     /// Calculate adapted decay stability S_0 for given base and volatility.
     pub fn calculate_adapted_decay_stability(base_s0: f32, volatility: f32) -> f32 {
         MetaplasticityConfig::calculate_adapted_decay_stability(base_s0, volatility)
@@ -195,22 +190,6 @@ impl MetaplasticityState {
         if self.volatility < 1e-3 {
             self.volatility = 0.0;
         }
-    }
-
-    /// Adapt a `DecayCalculator` using current state volatility.
-    pub fn adapt_decay_calculator(
-        &self,
-        calculator: &crate::decay::DecayCalculator,
-    ) -> crate::decay::DecayCalculator {
-        calculator.with_volatility(self.volatility)
-    }
-
-    /// Adapt a `SubconsciousConfig` using current state volatility.
-    pub fn adapt_subconscious_config(
-        &self,
-        config: &crate::subconscious::SubconsciousConfig,
-    ) -> crate::subconscious::SubconsciousConfig {
-        config.with_volatility(self.volatility)
     }
 }
 

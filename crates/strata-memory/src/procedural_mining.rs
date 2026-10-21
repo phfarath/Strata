@@ -56,11 +56,11 @@ impl TrajectoryMiner {
                                 break;
                             }
                         }
-                        EventPayload::TaskCompleted(task) if task.success => {
-                            if !corrective_steps.is_empty() {
-                                found_success = true;
-                                break;
-                            }
+                        EventPayload::TaskCompleted(task)
+                            if task.success && !corrective_steps.is_empty() =>
+                        {
+                            found_success = true;
+                            break;
                         }
                         _ => {}
                     }

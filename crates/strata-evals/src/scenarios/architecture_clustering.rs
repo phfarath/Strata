@@ -22,8 +22,6 @@ pub struct ArchitectureClusteringEvalResult {
     pub cache_roundtrip_passed: bool,
 }
 
-pub type ArchitectureClusteringResult = ArchitectureClusteringEvalResult;
-
 pub struct ArchitectureClusteringEval;
 
 impl ArchitectureClusteringEval {

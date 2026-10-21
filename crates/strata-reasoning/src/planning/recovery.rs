@@ -26,22 +26,9 @@ impl DynamicReplanner {
         }
     }
 
-    pub fn with_known_failures(mut self, failures: Vec<FailurePattern>) -> Self {
-        self.known_failures = failures;
-        self
-    }
-
-    pub fn add_known_failure(&mut self, failure: FailurePattern) {
-        self.known_failures.push(failure);
-    }
-
     pub fn with_procedural_skills(mut self, skills: Vec<ProceduralSkill>) -> Self {
         self.procedural_recovery_skills = skills;
         self
-    }
-
-    pub fn add_procedural_skill(&mut self, skill: ProceduralSkill) {
-        self.procedural_recovery_skills.push(skill);
     }
 
     /// Evaluate failure context and determine appropriate `RecoveryAction`.

@@ -1,13 +1,10 @@
 use anyhow::Result;
-use std::sync::Arc;
 
 use super::dag::GoalDag;
-use super::types::{GoalNode, GoalNodeKind};
-use crate::engine::{ChatMessage, PromptContext, ReasoningEngine};
+use super::types::GoalNode;
 
 /// Hierarchical goal decomposer that parses high-level objectives into executable Goal DAGs.
 pub struct GoalDecomposer {
-    default_max_depth: usize,
     include_verification_gates: bool,
 }
 
@@ -20,14 +17,8 @@ impl Default for GoalDecomposer {
 impl GoalDecomposer {
     pub fn new() -> Self {
         Self {
-            default_max_depth: 3,
             include_verification_gates: true,
         }
-    }
-
-    pub fn with_max_depth(mut self, depth: usize) -> Self {
-        self.default_max_depth = depth;
-        self
     }
 
     pub fn with_verification_gates(mut self, enabled: bool) -> Self {
@@ -60,34 +51,6 @@ impl GoalDecomposer {
 
         // 3. Specialized template for refactoring / migrations / feature implementations
         self.decompose_engineering_task(trimmed)
-    }
-
-    /// Async decomposition optionally utilizing an LLM ReasoningEngine if provided.
-    pub async fn decompose_with_engine(
-        &self,
-        engine: Option<Arc<dyn ReasoningEngine>>,
-        goal: &str,
-    ) -> Result<GoalDag> {
-        if let Some(engine) = engine {
-            let prompt = format!(
-                "Decompose this software engineering goal into a structured JSON execution plan with parallel waves:\n\
-                Goal: \"{goal}\"\n\
-                Return JSON format:\n\
-                {{\n  \"nodes\": [\n    {{\"id\": \"task-1\", \"title\": \"...\", \"kind\": \"task|verification|phase\"}}\n  ],\n  \"dependencies\": [\n    {{\"dependent\": \"task-2\", \"prerequisite\": \"task-1\"}}\n  ]\n}}"
-            );
-
-            let ctx = PromptContext::new().with_message(ChatMessage::user(prompt));
-            if let Ok(output) = engine.complete(&ctx).await {
-                if let Some(content) = output.content {
-                    if let Ok(dag) = self.parse_json_dag(&content) {
-                        return Ok(dag);
-                    }
-                }
-            }
-        }
-
-        // Fallback to deterministic template decomposition
-        self.decompose(goal)
     }
 
     fn decompose_engineering_task(&self, goal: &str) -> Result<GoalDag> {
@@ -260,53 +223,6 @@ impl GoalDecomposer {
             }
         }
 
-        Ok(dag)
-    }
-
-    fn parse_json_dag(&self, json_str: &str) -> Result<GoalDag> {
-        // Strip markdown code fences if LLM returns ```json
-        let clean = json_str
-            .trim()
-            .trim_start_matches("```json")
-            .trim_start_matches("```")
-            .trim_end_matches("```")
-            .trim();
-
-        let val: serde_json::Value = serde_json::from_str(clean)?;
-        let mut dag = GoalDag::new();
-
-        if let Some(nodes) = val.get("nodes").and_then(|v| v.as_array()) {
-            for n in nodes {
-                let id = n.get("id").and_then(|v| v.as_str()).unwrap_or("task");
-                let title = n.get("title").and_then(|v| v.as_str()).unwrap_or("Task");
-                let kind_str = n.get("kind").and_then(|v| v.as_str()).unwrap_or("task");
-
-                let kind = match kind_str {
-                    "verification" => GoalNodeKind::Verification,
-                    "phase" => GoalNodeKind::Phase,
-                    "rollback" => GoalNodeKind::Rollback,
-                    "root" => GoalNodeKind::Root,
-                    _ => GoalNodeKind::Task,
-                };
-
-                let node = GoalNode::new(id, title, kind);
-                dag.add_node(node);
-            }
-        }
-
-        if let Some(deps) = val.get("dependencies").and_then(|v| v.as_array()) {
-            for d in deps {
-                let dep = d.get("dependent").and_then(|v| v.as_str());
-                let prereq = d.get("prerequisite").and_then(|v| v.as_str());
-                if let (Some(dep_id), Some(prereq_id)) = (dep, prereq) {
-                    if dag.contains_node(dep_id) && dag.contains_node(prereq_id) {
-                        let _ = dag.add_dependency(dep_id, prereq_id);
-                    }
-                }
-            }
-        }
-
-        dag.validate()?;
         Ok(dag)
     }
 }

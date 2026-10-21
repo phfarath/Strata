@@ -363,27 +363,12 @@ impl ProximityBiasEngine {
         }
     }
 
-    /// Computes the weighted proximity score boost for a `MemoryRecord`.
-    pub fn memory_proximity_boost(&self, record: &MemoryRecord, active_files: &[String]) -> f32 {
-        self.config.proximity_weight * self.memory_decay_factor(record, active_files)
-    }
-
     pub fn memory_proximity_boost_with_map(
         &self,
         record: &MemoryRecord,
         hop_map: &HashMap<String, usize>,
     ) -> f32 {
         self.config.proximity_weight * self.memory_decay_factor_with_map(record, hop_map)
-    }
-
-    /// Computes the weighted proximity score boost for a `FailurePattern`.
-    pub fn failure_proximity_boost(
-        &self,
-        failure: &FailurePattern,
-        active_files: &[String],
-    ) -> f32 {
-        let hop_map = self.compute_hop_distances(active_files);
-        self.failure_proximity_boost_with_map(failure, &hop_map)
     }
 
     pub fn failure_proximity_boost_with_map(
@@ -720,9 +705,8 @@ impl HybridRanker {
                             store.get_memory_as_of(&mem_id, as_of_time, as_of_commit, as_of_branch)
                         {
                             // Discovered via associative multi-hop jump!
-                            if effective_scope.map_or(true, |s| s.is_compatible(&rec.scope))
-                                && memory_types
-                                    .map_or(true, |types| types.contains(&rec.memory_type))
+                            if effective_scope.is_none_or(|s| s.is_compatible(&rec.scope))
+                                && memory_types.is_none_or(|types| types.contains(&rec.memory_type))
                             {
                                 graph_results.push((rec, act_score));
                             }
@@ -750,23 +734,24 @@ impl HybridRanker {
                     candidate_limit,
                 )?;
                 candidates.retain(|rec| {
-                    let is_suppressed =
-                        rec.metadata
-                            .get("quarantined")
+                    let is_suppressed = rec
+                        .metadata
+                        .get("quarantined")
+                        .and_then(|v| v.as_bool())
+                        .unwrap_or(false)
+                        || rec
+                            .metadata
+                            .get("suppressed")
                             .and_then(|v| v.as_bool())
                             .unwrap_or(false)
-                            || rec
-                                .metadata
-                                .get("suppressed")
-                                .and_then(|v| v.as_bool())
-                                .unwrap_or(false)
-                            || rec.metadata.get("status").and_then(|v| v.as_str()).map_or(
-                                false,
-                                |s| {
-                                    s.eq_ignore_ascii_case("quarantined")
-                                        || s.eq_ignore_ascii_case("suppressed")
-                                },
-                            );
+                        || rec
+                            .metadata
+                            .get("status")
+                            .and_then(|v| v.as_str())
+                            .is_some_and(|s| {
+                                s.eq_ignore_ascii_case("quarantined")
+                                    || s.eq_ignore_ascii_case("suppressed")
+                            });
                     !is_suppressed
                 });
                 if let Some(ref prox) = proximity_engine {
@@ -800,16 +785,6 @@ impl HybridRanker {
             limit,
         );
         Ok(fused)
-    }
-
-    /// Backward-compatible dual-modal fusion (BM25 + Vector).
-    pub fn fuse_ranks(
-        &self,
-        fts_ranked: &[(MemoryRecord, f32)],
-        vector_ranked: &[(MemoryRecord, f32)],
-        limit: usize,
-    ) -> Vec<MemoryRecord> {
-        self.fuse_tri_ranks(fts_ranked, vector_ranked, &[], limit)
     }
 
     /// Fuse BM25, Vector, and Spreading Activation rankings using Tri-Modal Reciprocal Rank Fusion (RRF).
@@ -930,7 +905,7 @@ impl HybridRanker {
                         .metadata
                         .get("status")
                         .and_then(|v| v.as_str())
-                        .map_or(false, |s| {
+                        .is_some_and(|s| {
                             s.eq_ignore_ascii_case("quarantined")
                                 || s.eq_ignore_ascii_case("suppressed")
                         });
@@ -987,33 +962,6 @@ impl HybridRanker {
             .take(limit)
             .filter_map(|(id, _)| record_map.remove(&id))
             .collect()
-    }
-
-    /// Perform federated hybrid retrieval across a local workspace store and an optional global store.
-    /// Results are ranked using Tri-Modal RRF with priority weighting (local 1.0 vs global_federation_weight).
-    pub async fn retrieve_federated(
-        &self,
-        local_store: &SqliteStore,
-        global_store: Option<&SqliteStore>,
-        embedding_provider: Option<&dyn EmbeddingProvider>,
-        query: &str,
-        scope: Option<&Scope>,
-        memory_types: Option<&[MemoryType]>,
-        limit: usize,
-    ) -> Result<Vec<MemoryRecord>, StrataError> {
-        self.retrieve_federated_as_of(
-            local_store,
-            global_store,
-            embedding_provider,
-            query,
-            scope,
-            memory_types,
-            None,
-            None,
-            None,
-            limit,
-        )
-        .await
     }
 
     /// Perform federated hybrid retrieval across a local workspace store and an optional global store with bi-temporal and branch filters.
@@ -1146,7 +1094,7 @@ impl HybridRanker {
                         .metadata
                         .get("status")
                         .and_then(|v| v.as_str())
-                        .map_or(false, |s| {
+                        .is_some_and(|s| {
                             s.eq_ignore_ascii_case("quarantined")
                                 || s.eq_ignore_ascii_case("suppressed")
                         });
@@ -1171,36 +1119,6 @@ impl HybridRanker {
             .take(limit)
             .filter_map(|(id, _)| record_map.remove(&id))
             .collect()
-    }
-
-    /// Performs community-scoped hybrid retrieval using the CommunityMemoryRouter.
-    /// Provides candidate reduction statistics, bridge expansion, and transparent fallback.
-    pub async fn retrieve_community_scoped(
-        &self,
-        store: &SqliteStore,
-        embedding_provider: Option<&dyn EmbeddingProvider>,
-        query: &str,
-        community_id: &str,
-        summary: Option<&crate::community::ArchitectureGraphSummary>,
-        memory_types: Option<&[MemoryType]>,
-        limit: usize,
-    ) -> Result<crate::community::CommunityScopedRecallResult, StrataError> {
-        let router = crate::community::CommunityMemoryRouter::new(
-            self.config.min_community_memories_for_isolation,
-            self.config.include_cross_cluster_bridges,
-        );
-        router
-            .retrieve_scoped(
-                self,
-                store,
-                embedding_provider,
-                query,
-                community_id,
-                summary,
-                memory_types,
-                limit,
-            )
-            .await
     }
 }
 

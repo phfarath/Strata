@@ -277,7 +277,7 @@ impl PreferenceMiner {
                     None
                 };
                 samples.push(
-                    KtoSample::new(&prompt, &ep.outcomes.join("; "), true, &ep.session_id)
+                    KtoSample::new(&prompt, ep.outcomes.join("; "), true, &ep.session_id)
                         .with_verification(is_verified, v_source),
                 );
             }
@@ -292,7 +292,7 @@ impl PreferenceMiner {
                     None
                 };
                 samples.push(
-                    KtoSample::new(&prompt, &ep.obstacles.join("; "), false, &ep.session_id)
+                    KtoSample::new(&prompt, ep.obstacles.join("; "), false, &ep.session_id)
                         .with_verification(is_verified, v_source),
                 );
             }

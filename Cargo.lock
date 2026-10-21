@@ -3163,7 +3163,6 @@ dependencies = [
  "strata-memory",
  "strata-reasoning",
  "strata-tools",
- "thiserror",
  "tokio",
  "toml",
  "tracing",
@@ -3179,7 +3178,6 @@ dependencies = [
  "blake3",
  "chrono",
  "dirs",
- "hex",
  "serde",
  "serde_json",
  "thiserror",
@@ -3222,7 +3220,6 @@ dependencies = [
  "sha2",
  "strata-core",
  "strata-reasoning",
- "thiserror",
  "tokio",
  "tracing",
  "tree-sitter",
@@ -3244,7 +3241,6 @@ dependencies = [
  "serde",
  "serde_json",
  "strata-core",
- "thiserror",
  "tokio",
  "tracing",
  "uuid",
@@ -3254,7 +3250,6 @@ dependencies = [
 name = "strata-tools"
 version = "0.1.2"
 dependencies = [
- "anyhow",
  "async-trait",
  "chrono",
  "serde",
@@ -3262,7 +3257,6 @@ dependencies = [
  "strata-core",
  "strata-memory",
  "strata-reasoning",
- "thiserror",
  "tokio",
  "tracing",
  "uuid",

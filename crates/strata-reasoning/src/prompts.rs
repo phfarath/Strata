@@ -463,7 +463,6 @@ pub fn build_jtms_arbitration_prompt(old_fact: &SemanticFact, new_fact: &Semanti
     prompt
 }
 
-/// Helper to parse a distillation JSON string into a structured `DistillationOutput`.
 pub fn parse_distillation_output(raw_json: &str) -> Result<DistillationOutput, StrataError> {
     let cleaned = clean_json_string(raw_json);
     serde_json::from_str::<DistillationOutput>(&cleaned).map_err(|e| {
@@ -473,7 +472,6 @@ pub fn parse_distillation_output(raw_json: &str) -> Result<DistillationOutput, S
     })
 }
 
-/// Helper to parse a JTMS arbitration JSON string into `JtmsArbitrationResult`.
 pub fn parse_jtms_arbitration(raw_json: &str) -> Result<JtmsArbitrationResult, StrataError> {
     let cleaned = clean_json_string(raw_json);
     serde_json::from_str::<JtmsArbitrationResult>(&cleaned).map_err(|e| {

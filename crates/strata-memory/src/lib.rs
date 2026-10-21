@@ -267,14 +267,6 @@ impl SqliteMemoryEngine {
         Ok(results)
     }
 
-    /// Automatically detects monorepo workspace boundaries in the repository.
-    pub fn detect_workspace_boundaries(
-        &self,
-        root_dir: &Path,
-    ) -> Result<WorkspaceBoundary, StrataError> {
-        WorkspaceBoundaryDetector::detect(root_dir)
-    }
-
     /// Performs hierarchical, package-isolated memory search for a specific file.
     pub async fn search_scoped_to_file(
         &self,
@@ -554,7 +546,7 @@ impl SqliteMemoryEngine {
                 let matches_summary = memory
                     .summary
                     .as_deref()
-                    .map_or(false, |s| s.to_lowercase().contains(&q_lower));
+                    .is_some_and(|s| s.to_lowercase().contains(&q_lower));
                 if !matches_content && !matches_summary {
                     continue;
                 }
@@ -602,21 +594,6 @@ impl SqliteMemoryEngine {
         }
 
         Ok(report)
-    }
-
-    /// Evaluates whether a user prompt and task type require memory recall using the deterministic gating classifier (< 1ms).
-    pub fn should_recall(&self, prompt: &str, task_type: TaskType) -> bool {
-        crate::gating::should_recall(prompt, task_type)
-    }
-
-    /// Produces a full deterministic gating classification report for a prompt and task type (< 1ms).
-    pub fn classify_recall(&self, prompt: &str, task_type: TaskType) -> RecallDecision {
-        crate::gating::RecallGatingClassifier::classify(prompt, task_type)
-    }
-
-    /// Access the underlying HybridRanker.
-    pub fn ranker(&self) -> &HybridRanker {
-        &self.ranker
     }
 
     /// Performs hybrid memory recall biased by the developer's active files and their

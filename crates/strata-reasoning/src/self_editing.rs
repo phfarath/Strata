@@ -143,7 +143,6 @@ impl ProceduralRule {
 /// Hyperparameters for procedural rule optimization via text gradients.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct ProceduralOptimizerConfig {
-    pub learning_rate_guidance: String,
     pub max_versions: usize,
     pub temperature: f32,
 }
@@ -151,8 +150,6 @@ pub struct ProceduralOptimizerConfig {
 impl Default for ProceduralOptimizerConfig {
     fn default() -> Self {
         Self {
-            learning_rate_guidance:
-                "conservative incremental edits preserving core semantics and structure".to_string(),
             max_versions: 50,
             temperature: 0.2,
         }
@@ -162,16 +159,6 @@ impl Default for ProceduralOptimizerConfig {
 impl ProceduralOptimizerConfig {
     pub fn new() -> Self {
         Self::default()
-    }
-
-    pub fn with_learning_rate_guidance(mut self, guidance: impl Into<String>) -> Self {
-        self.learning_rate_guidance = guidance.into();
-        self
-    }
-
-    pub fn with_max_versions(mut self, max: usize) -> Self {
-        self.max_versions = max;
-        self
     }
 
     pub fn with_temperature(mut self, temp: f32) -> Self {

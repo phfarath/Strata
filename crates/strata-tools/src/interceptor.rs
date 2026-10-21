@@ -101,9 +101,9 @@ impl AntiPatternParser {
                     if !f.is_empty() {
                         file = Some(normalize_file_path(f));
                     }
-                } else if trimmed.starts_with("File \"") {
-                    if let Some(end_quote) = trimmed[6..].find('\"') {
-                        let f = &trimmed[6..6 + end_quote];
+                } else if let Some(after_prefix) = trimmed.strip_prefix("File \"") {
+                    if let Some(end_quote) = after_prefix.find('\"') {
+                        let f = &after_prefix[..end_quote];
                         file = Some(normalize_file_path(f));
                     }
                 } else if trimmed.contains(".py::") {

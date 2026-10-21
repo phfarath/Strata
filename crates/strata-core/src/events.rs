@@ -15,10 +15,6 @@ impl EventId {
     pub fn from_uuid(uuid: Uuid) -> Self {
         Self(uuid)
     }
-
-    pub fn as_uuid(&self) -> &Uuid {
-        &self.0
-    }
 }
 
 impl Default for EventId {
@@ -240,8 +236,6 @@ pub struct Event {
     pub git_branch: Option<String>,
 }
 
-pub type CanonicalEvent = Event;
-
 impl Event {
     pub fn new(
         session_id: impl Into<String>,
@@ -284,11 +278,6 @@ impl Event {
 
     pub fn with_retention(mut self, retention: RetentionPolicy) -> Self {
         self.retention = retention;
-        self
-    }
-
-    pub fn with_organization(mut self, organization_id: impl Into<String>) -> Self {
-        self.organization_id = Some(organization_id.into());
         self
     }
 

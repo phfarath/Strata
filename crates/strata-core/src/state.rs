@@ -153,17 +153,6 @@ impl Scope {
         Scope::Branch(id.into())
     }
 
-    pub fn as_branch(&self) -> Option<&str> {
-        match self {
-            Scope::Branch(id) => Some(id.as_str()),
-            _ => None,
-        }
-    }
-
-    pub fn is_branch(&self) -> bool {
-        matches!(self, Scope::Branch(_))
-    }
-
     pub fn as_community(&self) -> Option<&str> {
         match self {
             Scope::Community(id) => Some(id.as_str()),
@@ -306,18 +295,6 @@ impl MemoryRecord {
         }
     }
 
-    pub fn with_embedding_and_model(
-        mut self,
-        embedding: Vec<f32>,
-        model: Option<String>,
-        version: Option<String>,
-    ) -> Self {
-        self.embedding = Some(embedding);
-        self.embedding_model = model;
-        self.embedding_version = version;
-        self
-    }
-
     pub fn with_tier(mut self, tier: MemoryTier) -> Self {
         self.tier = tier;
         self
@@ -326,10 +303,6 @@ impl MemoryRecord {
     pub fn with_human_approval(mut self, approved: bool) -> Self {
         self.approved_by_human = approved;
         self
-    }
-
-    pub fn is_approved_by_human(&self) -> bool {
-        self.approved_by_human
     }
 
     pub fn is_core(&self) -> bool {
@@ -361,11 +334,6 @@ impl MemoryRecord {
 
     pub fn with_tags(mut self, tags: Vec<String>) -> Self {
         self.tags = tags;
-        self
-    }
-
-    pub fn with_embedding(mut self, embedding: Vec<f32>) -> Self {
-        self.embedding = Some(embedding);
         self
     }
 
@@ -478,12 +446,6 @@ impl MemoryRecord {
             Some(b) => b == branch || b == "main" || b == "master",
             None => true,
         }
-    }
-
-    pub fn with_human_approval_record(mut self, record: HumanApprovalRecord) -> Self {
-        self.approved_by_human = true;
-        self.human_approval = Some(record);
-        self
     }
 
     pub fn build_provenance(&self, selection_reason: Option<&str>) -> ProvenanceBlock {

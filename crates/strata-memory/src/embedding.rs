@@ -60,7 +60,7 @@ pub fn embedding_to_bytes(embedding: &[f32]) -> Vec<u8> {
 
 /// Convert byte slice from SQLite BLOB storage back into f32 embedding.
 pub fn bytes_to_embedding(bytes: &[u8]) -> Result<Vec<f32>, StrataError> {
-    if bytes.len() % 4 != 0 {
+    if !bytes.len().is_multiple_of(4) {
         return Err(StrataError::Validation(format!(
             "Invalid embedding byte length: {}",
             bytes.len()
@@ -114,7 +114,11 @@ impl EmbeddingProvider for MockEmbeddingProvider {
                 h = ((h << 5).wrapping_add(h)).wrapping_add(b as u64);
             }
             let idx = (h as usize) % dim;
-            let sign = if (h >> 32) % 2 == 0 { 1.0f32 } else { -1.0f32 };
+            let sign = if (h >> 32).is_multiple_of(2) {
+                1.0f32
+            } else {
+                -1.0f32
+            };
             let pos_weight = 1.0 / (1.0 + (i as f32) * 0.05);
             vector[idx] += sign * pos_weight;
 
@@ -313,14 +317,14 @@ impl EmbeddingProviderFactory {
     ///
     /// Rules:
     /// - If provider is explicitly Some("mock") / Some("mock-hash"):
-    ///     Creates `MockEmbeddingProvider`, `is_fallback: false`.
+    ///   Creates `MockEmbeddingProvider`, `is_fallback: false`.
     /// - If provider is explicitly Some("fastembed") / Some("onnx"):
-    ///     Tries to create `FastEmbedProvider`. If it fails, returns `Err(StrataError::Embedding(...))`
-    ///     (strict: explicit user configuration is not silently downgraded).
+    ///   Tries to create `FastEmbedProvider`. If it fails, returns `Err(StrataError::Embedding(...))`
+    ///   (strict: explicit user configuration is not silently downgraded).
     /// - If provider is None (auto-detect / default):
-    ///     Attempts to create `FastEmbedProvider`.
-    ///     If successful -> `is_fallback: false`.
-    ///     If it fails -> Falls back to `MockEmbeddingProvider`, `is_fallback: true`, logs warning.
+    ///   Attempts to create `FastEmbedProvider`.
+    ///   If successful -> `is_fallback: false`.
+    ///   If it fails -> Falls back to `MockEmbeddingProvider`, `is_fallback: true`, logs warning.
     pub fn create(
         provider: Option<&str>,
         model: Option<&str>,
@@ -401,30 +405,10 @@ impl EmbeddingProviderFactory {
         let env_prov = std::env::var("STRATA_EMBEDDING_PROVIDER").ok();
         let env_model = std::env::var("STRATA_EMBEDDING_MODEL").ok();
 
-        let provider = config
-            .embedding_provider
-            .as_deref()
-            .or_else(|| env_prov.as_deref());
-        let model = config
-            .embedding_model
-            .as_deref()
-            .or_else(|| env_model.as_deref());
+        let provider = config.embedding_provider.as_deref().or(env_prov.as_deref());
+        let model = config.embedding_model.as_deref().or(env_model.as_deref());
 
         Self::create(provider, model)
-    }
-
-    /// Helper to create a Mock provider for testing without disk/network dependencies.
-    pub fn create_mock(dimension: usize) -> ResolvedEmbeddingProvider {
-        let dim = if dimension == 0 { 384 } else { dimension };
-        ResolvedEmbeddingProvider {
-            provider: std::sync::Arc::new(MockEmbeddingProvider::new(dim)),
-            kind: EmbeddingProviderKind::Mock,
-            model_name: "mock-hash".to_string(),
-            model_version: "1".to_string(),
-            dimension: dim,
-            is_fallback: false,
-            fallback_reason: None,
-        }
     }
 }
 

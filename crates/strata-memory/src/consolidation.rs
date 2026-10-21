@@ -91,21 +91,6 @@ impl Consolidator {
         }
     }
 
-    /// Dereference memory handles to full MemoryRecords.
-    pub fn dereference_handles(
-        &self,
-        store: &SqliteStore,
-        handles: &[MemoryHandle],
-    ) -> Result<Vec<MemoryRecord>, StrataError> {
-        let mut records = Vec::with_capacity(handles.len());
-        for handle in handles {
-            if let Some(record) = store.get_memory(&handle.id)? {
-                records.push(record);
-            }
-        }
-        Ok(records)
-    }
-
     /// Stable signature for a tool failure: tool name plus normalized error message.
     pub fn failure_signature(tool_name: &str, error_msg: &str) -> String {
         let normalized_error = normalize_error_message(error_msg);
@@ -220,12 +205,11 @@ impl Consolidator {
                         ));
                     }
                 }
-                EventPayload::ObservationReceived(obs) => {
-                    if obs.observation_type.contains("hypothesis")
-                        || obs.observation_type.contains("plan")
-                    {
-                        active_hypotheses.push(format!("{}: {}", obs.source, obs.content));
-                    }
+                EventPayload::ObservationReceived(obs)
+                    if (obs.observation_type.contains("hypothesis")
+                        || obs.observation_type.contains("plan")) =>
+                {
+                    active_hypotheses.push(format!("{}: {}", obs.source, obs.content));
                 }
                 _ => {}
             }
@@ -247,7 +231,7 @@ impl Consolidator {
                     || m.metadata
                         .get("status")
                         .and_then(|v| v.as_str())
-                        .map_or(false, |s| {
+                        .is_some_and(|s| {
                             s.eq_ignore_ascii_case("quarantined")
                                 || s.eq_ignore_ascii_case("suppressed")
                         });
@@ -278,7 +262,7 @@ impl Consolidator {
                     || m.metadata
                         .get("status")
                         .and_then(|v| v.as_str())
-                        .map_or(false, |s| {
+                        .is_some_and(|s| {
                             s.eq_ignore_ascii_case("quarantined")
                                 || s.eq_ignore_ascii_case("suppressed")
                         });
@@ -441,7 +425,7 @@ fn estimate_digest_tokens(digest: &DigestOutput) -> usize {
     for f in &digest.failure_warnings {
         total_chars += f.description.len() + f.mitigation.len();
     }
-    (total_chars + 3) / 4
+    total_chars.div_ceil(4)
 }
 
 // ============================================================================
@@ -478,8 +462,7 @@ pub fn calculate_act_r_activation(
     // Frequency boost from access count (ACT-R frequency component)
     let access_boost = ((1.0 + record.access_count as f32).ln() * 0.15).min(0.4);
 
-    let activation = (record.importance * power_law_factor + access_boost).clamp(0.0, 1.0);
-    activation
+    (record.importance * power_law_factor + access_boost).clamp(0.0, 1.0)
 }
 
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize, PartialEq)]
@@ -525,6 +508,12 @@ pub fn prune_decayed_memories(
 // ============================================================================
 
 pub struct JtmsEngine;
+
+impl Default for JtmsEngine {
+    fn default() -> Self {
+        Self::new()
+    }
+}
 
 impl JtmsEngine {
     pub fn new() -> Self {
@@ -838,10 +827,6 @@ impl ConsolidationPipeline {
 
         Ok(total_report)
     }
-
-    pub async fn prune_decayed(&self, threshold: f32) -> Result<PruneReport, StrataError> {
-        prune_decayed_memories(&self.store, threshold, None, chrono::Utc::now())
-    }
 }
 
 fn count_deprecated_memories(store: &SqliteStore, scope: &Scope) -> Result<usize, StrataError> {
@@ -958,9 +943,11 @@ impl NeuroSymbolicConsolidator {
         session_id: &str,
     ) -> Result<ConsolidationResult, StrataError> {
         let events = self.store.get_events(session_id, None, None)?;
-        let mut result = ConsolidationResult::default();
-        result.events_processed = events.len();
-        result.session_id = Some(session_id.to_string());
+        let mut result = ConsolidationResult {
+            events_processed: events.len(),
+            session_id: Some(session_id.to_string()),
+            ..Default::default()
+        };
 
         if events.is_empty() {
             return Ok(result);
@@ -1086,7 +1073,7 @@ impl NeuroSymbolicConsolidator {
         let recovery_skills = self.trajectory_miner.mine_recovery_trajectories(&events);
         let task_skills = self.trajectory_miner.mine_successful_task_patterns(&events);
 
-        for skill in recovery_skills.into_iter().chain(task_skills.into_iter()) {
+        for skill in recovery_skills.into_iter().chain(task_skills) {
             let skill_text = format!("{} {}", skill.name, skill.description);
             if let Ok(skill_emb) = self.embedder.embed_text(&skill_text).await {
                 self.store.insert_or_update_procedural_skill(&skill)?;
@@ -1248,30 +1235,10 @@ impl DreamConfig {
             ..Default::default()
         }
     }
-
-    pub fn with_idle_timeout(mut self, idle_timeout: std::time::Duration) -> Self {
-        self.idle_timeout = idle_timeout;
-        self
-    }
-
-    pub fn with_session_threshold(mut self, session_threshold: usize) -> Self {
-        self.session_threshold = session_threshold;
-        self
-    }
-
-    pub fn with_merge_similarity_threshold(mut self, threshold: f32) -> Self {
-        self.merge_similarity_threshold = threshold.clamp(0.1, 1.0);
-        self
-    }
-
-    pub fn with_prune_threshold(mut self, threshold: f32) -> Self {
-        self.prune_threshold = threshold.clamp(0.0, 1.0);
-        self
-    }
 }
 
 /// Reason why a background dream cycle was triggered.
-#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize, Default)]
 pub enum DreamTriggerReason {
     /// Triggered because the workspace remained idle for at least `idle_timeout`.
     IdleTimeout { idle_ms: u64 },
@@ -1281,13 +1248,8 @@ pub enum DreamTriggerReason {
         threshold: usize,
     },
     /// Explicitly invoked dream cycle.
+    #[default]
     Manual,
-}
-
-impl Default for DreamTriggerReason {
-    fn default() -> Self {
-        Self::Manual
-    }
 }
 
 /// Telemetry report emitted after a background Auto-Dreaming cycle completes.
@@ -1344,22 +1306,6 @@ impl DreamEngine {
 
     pub fn config(&self) -> &DreamConfig {
         &self.config
-    }
-
-    /// Record an explicit session identifier observed by the daemon.
-    pub fn record_session(&mut self, session_id: impl Into<String>) {
-        let sid = session_id.into();
-        if !sid.trim().is_empty() {
-            self.explicit_sessions.insert(sid);
-        }
-    }
-
-    /// Notify the dream engine of agent activity at the given timestamp.
-    pub fn notify_activity(&mut self, timestamp: chrono::DateTime<Utc>) {
-        self.last_activity_override = Some(match self.last_activity_override {
-            Some(prev) if prev > timestamp => prev,
-            _ => timestamp,
-        });
     }
 
     /// Collect all distinct session IDs across events, episodes, memories, and explicit notifications.
@@ -1918,9 +1864,7 @@ fn is_memory_deprecated(record: &MemoryRecord) -> bool {
         .metadata
         .get("status")
         .and_then(|v| v.as_str())
-        .map_or(false, |s| {
-            s.eq_ignore_ascii_case("deprecated") || s.eq_ignore_ascii_case("archived")
-        })
+        .is_some_and(|s| s.eq_ignore_ascii_case("deprecated") || s.eq_ignore_ascii_case("archived"))
 }
 
 fn scopes_compatible(a: &Scope, b: &Scope) -> bool {

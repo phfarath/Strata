@@ -127,15 +127,6 @@ impl GoalDag {
         self.graph.node_weight_mut(idx)
     }
 
-    /// Update a node's lifecycle status.
-    pub fn update_node_status(&mut self, id: &str, status: GoalStatus) -> Result<()> {
-        let node = self
-            .get_node_mut(id)
-            .ok_or_else(|| anyhow::anyhow!("Goal node not found: '{id}'"))?;
-        node.status = status;
-        Ok(())
-    }
-
     /// Total number of goal nodes in the DAG.
     pub fn node_count(&self) -> usize {
         self.graph.node_count()
@@ -188,20 +179,6 @@ impl GoalDag {
         }
         prereqs.sort();
         prereqs
-    }
-
-    /// Returns the list of dependent node IDs that depend on `node_id` completing.
-    pub fn get_dependents(&self, node_id: &str) -> Vec<String> {
-        let mut dependents = Vec::new();
-        if let Some(&idx) = self.node_indices.get(node_id) {
-            for neighbor_idx in self.graph.neighbors_directed(idx, Direction::Outgoing) {
-                if let Some(id) = self.index_to_id.get(&neighbor_idx) {
-                    dependents.push(id.clone());
-                }
-            }
-        }
-        dependents.sort();
-        dependents
     }
 
     /// Converts this Goal DAG into persistent multi-agent TaskRecords for the blackboard.

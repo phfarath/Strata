@@ -1,6 +1,5 @@
 use async_trait::async_trait;
 use chrono::{DateTime, Utc};
-use std::sync::Arc;
 use uuid::Uuid;
 
 use crate::errors::StrataError;
@@ -10,14 +9,6 @@ use crate::state::{DigestOutput, FailurePattern, MemoryHandle, MemoryRecord, Sco
 #[async_trait]
 pub trait EventStore: Send + Sync {
     async fn append(&self, event: &Event) -> Result<EventId, StrataError>;
-
-    async fn append_batch(&self, events: &[Event]) -> Result<Vec<EventId>, StrataError> {
-        let mut ids = Vec::with_capacity(events.len());
-        for event in events {
-            ids.push(self.append(event).await?);
-        }
-        Ok(ids)
-    }
 
     async fn read_stream(
         &self,
@@ -105,18 +96,6 @@ pub trait Tool: Send + Sync {
     fn description(&self) -> &str;
     fn parameters_schema(&self) -> serde_json::Value;
     async fn execute(&self, input: serde_json::Value) -> Result<serde_json::Value, StrataError>;
-}
-
-#[async_trait]
-pub trait ToolGateway: Send + Sync {
-    async fn register_tool(&self, tool: Arc<dyn Tool>) -> Result<(), StrataError>;
-    async fn get_tool(&self, name: &str) -> Result<Option<Arc<dyn Tool>>, StrataError>;
-    async fn list_tools(&self) -> Result<Vec<String>, StrataError>;
-    async fn invoke(
-        &self,
-        tool_name: &str,
-        input: serde_json::Value,
-    ) -> Result<serde_json::Value, StrataError>;
 }
 
 #[async_trait]
