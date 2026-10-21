@@ -227,11 +227,11 @@ impl PreferenceMiner {
             let src_session = c.task_id.clone();
             // Oracle verification requires an actual verification_command; completed without verification is unverified
             let is_verified = c.verification_command.is_some();
-            let v_source = if let Some(ref cmd) = c.verification_command {
-                Some(format!("delegation_contract_oracle:{}", cmd))
-            } else {
-                None
-            };
+            let v_source = c
+                .verification_command
+                .as_ref()
+                .map(|cmd| format!("delegation_contract_oracle:{}", cmd))
+                .or_else(|| Some("delegation_contract_unverified".to_string()));
 
             pairs.push(
                 PreferencePair::new(prompt, chosen, rejected, src_session)
@@ -505,7 +505,7 @@ impl PreferenceMiner {
                     None
                 };
                 samples.push(
-                    KtoSample::new(&prompt, &ep.outcomes.join("; "), true, &ep.session_id)
+                    KtoSample::new(&prompt, ep.outcomes.join("; "), true, &ep.session_id)
                         .with_verification(is_verified, v_source),
                 );
             }
@@ -520,7 +520,7 @@ impl PreferenceMiner {
                     None
                 };
                 samples.push(
-                    KtoSample::new(&prompt, &ep.obstacles.join("; "), false, &ep.session_id)
+                    KtoSample::new(&prompt, ep.obstacles.join("; "), false, &ep.session_id)
                         .with_verification(is_verified, v_source),
                 );
             }
@@ -649,11 +649,11 @@ impl PreferenceMiner {
                     }
                     let completion = comp_parts.join("\n");
                     let is_verified = c.verification_command.is_some();
-                    let v_source = if let Some(ref cmd) = c.verification_command {
-                        Some(format!("delegation_contract_oracle:{}", cmd))
-                    } else {
-                        None
-                    };
+                    let v_source = c
+                        .verification_command
+                        .as_ref()
+                        .map(|cmd| format!("delegation_contract_oracle:{}", cmd))
+                        .or_else(|| Some("delegation_contract_unverified".to_string()));
                     samples.push(
                         KtoSample::new(&prompt, &completion, true, &src_session)
                             .with_verification(is_verified, v_source),
