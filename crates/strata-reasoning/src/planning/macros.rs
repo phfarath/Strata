@@ -195,6 +195,49 @@ impl CompiledMacro {
             .collect();
         skill
     }
+
+    /// Reconstructs a CompiledMacro from a persisted ProceduralSkill.
+    pub fn from_procedural_skill(skill: &ProceduralSkill) -> Self {
+        let tool_sequence: Vec<String> = skill.steps.iter().map(|s| s.tool.clone()).collect();
+        let parameters: Vec<MacroParameter> = skill
+            .parameters
+            .iter()
+            .map(|p| MacroParameter {
+                name: p.name.clone(),
+                description: p.description.clone(),
+                default_value: p.example.as_ref().and_then(|ex| serde_json::from_str(ex).ok()),
+                required: true,
+            })
+            .collect();
+
+        let steps: Vec<MacroStep> = skill
+            .steps
+            .iter()
+            .map(|s| MacroStep {
+                step_index: s.order,
+                tool_name: s.tool.clone(),
+                action: s.action.clone(),
+                input_template: s.arguments.clone(),
+                expected_output: s.expected_result.clone(),
+            })
+            .collect();
+
+        let est = steps.len() * 450;
+        Self {
+            id: skill.id,
+            name: skill.name.clone(),
+            description: skill.description.clone(),
+            tool_sequence,
+            parameters,
+            steps,
+            preconditions: skill.preconditions.clone(),
+            postconditions: skill.postconditions.clone(),
+            support_count: 1,
+            estimated_tokens_saved: est,
+            success_rate: skill.success_rate,
+            created_at: skill.created_at,
+        }
+    }
 }
 
 /// Result of a single step within a 1-step macro execution.
