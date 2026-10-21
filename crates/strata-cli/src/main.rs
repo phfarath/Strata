@@ -21,6 +21,7 @@ use strata_cli::{
         config::{run_config, ConfigArgs},
         consolidate::{run_consolidate, ConsolidateOptions},
         daemon::{run_daemon, DaemonArgs},
+        distill::{run_distill, DistillArgs},
         doctor::run_doctor,
         episode::{run_episode, EpisodeArgs},
         export::{run_export, ExportArgs},
@@ -294,6 +295,10 @@ enum Commands {
 
     /// Log out from Strata Cloud and clear stored credentials
     Logout,
+
+    /// Self-supervised distillation & LoRA curriculum fine-tuning pipeline
+    #[command(name = "distill", alias = "curriculum")]
+    Distill(DistillArgs),
 
     /// One-click local LoRA fine-tuning via Unsloth and Ollama deployment
     #[command(name = "train", alias = "lora", alias = "finetune")]
@@ -850,6 +855,11 @@ async fn main() -> Result<()> {
         Commands::BlastRadius(args) => {
             let store = engine.store_arc();
             run_blast_radius(args, store.as_ref()).await?;
+        }
+
+        Commands::Distill(args) => {
+            let store = engine.store_arc();
+            run_distill(args, store).await?;
         }
 
         Commands::Train(args) => {

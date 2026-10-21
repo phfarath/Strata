@@ -1015,6 +1015,180 @@ impl Tool for TrainPipelineTool {
 }
 
 // =========================================================================
+// Automated Self-Supervised Distillation Pipeline Tool
+// =========================================================================
+
+/// Tool for automated self-supervised distillation & LoRA curriculum generation.
+pub struct DistillPipelineTool {
+    store: Option<Arc<strata_memory::SqliteStore>>,
+}
+
+impl Default for DistillPipelineTool {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl DistillPipelineTool {
+    pub fn new() -> Self {
+        Self { store: None }
+    }
+
+    pub fn with_store(store: Arc<strata_memory::SqliteStore>) -> Self {
+        Self { store: Some(store) }
+    }
+}
+
+#[async_trait]
+impl Tool for DistillPipelineTool {
+    fn name(&self) -> &str {
+        "distill_pipeline"
+    }
+
+    fn description(&self) -> &str {
+        "Automated self-supervised distillation curriculum engine. Mines oracle-verified A2A delegations, HITL core memories, and trajectories into train/eval splits and LoRA fine-tuning scripts."
+    }
+
+    fn parameters_schema(&self) -> serde_json::Value {
+        json!({
+            "type": "object",
+            "properties": {
+                "base_model": {
+                    "type": "string",
+                    "description": "HuggingFace base model identifier (default: 'unsloth/Llama-3.2-3B-Instruct')"
+                },
+                "method": {
+                    "type": "string",
+                    "enum": ["dpo", "sft", "orpo", "kto"],
+                    "description": "Distillation optimization method (default: 'dpo')"
+                },
+                "eval_ratio": {
+                    "type": "number",
+                    "description": "Evaluation split ratio (default: 0.1)"
+                },
+                "oracle_only": {
+                    "type": "boolean",
+                    "description": "Gate to oracle-verified samples only (default: true)"
+                },
+                "output_dir": {
+                    "type": "string",
+                    "description": "Target output directory (default: './outputs/distill_run')"
+                },
+                "ollama_model_name": {
+                    "type": "string",
+                    "description": "Target Ollama model name (default: 'strata-custom-distilled')"
+                },
+                "export_gguf": {
+                    "type": "boolean",
+                    "description": "Whether to export GGUF format for Ollama (default: true)"
+                },
+                "dry_run": {
+                    "type": "boolean",
+                    "description": "Dry-run mode without launching Python (default: true)"
+                }
+            }
+        })
+    }
+
+    async fn execute(&self, params: serde_json::Value) -> Result<serde_json::Value, StrataError> {
+        let base_model = params
+            .get("base_model")
+            .and_then(|v| v.as_str())
+            .unwrap_or("unsloth/Llama-3.2-3B-Instruct");
+
+        let method_str = params
+            .get("method")
+            .and_then(|v| v.as_str())
+            .unwrap_or("dpo");
+        let method = method_str.parse::<strata_reasoning::TrainingMethod>()?;
+
+        let eval_ratio = params
+            .get("eval_ratio")
+            .and_then(|v| v.as_f64())
+            .unwrap_or(0.1) as f32;
+
+        let oracle_only = params
+            .get("oracle_only")
+            .and_then(|v| v.as_bool())
+            .unwrap_or(true);
+
+        let output_dir_str = params
+            .get("output_dir")
+            .and_then(|v| v.as_str())
+            .unwrap_or("./outputs/distill_run");
+
+        let ollama_name = params
+            .get("ollama_model_name")
+            .and_then(|v| v.as_str())
+            .unwrap_or("strata-custom-distilled");
+
+        let export_gguf = params
+            .get("export_gguf")
+            .and_then(|v| v.as_bool())
+            .unwrap_or(true);
+
+        let store = match &self.store {
+            Some(s) => Arc::clone(s),
+            None => {
+                let db_path = std::path::Path::new(".strata/strata.db");
+                if db_path.exists() {
+                    Arc::new(strata_memory::SqliteStore::open(db_path)?)
+                } else {
+                    Arc::new(strata_memory::SqliteStore::open_in_memory()?)
+                }
+            }
+        };
+
+        let miner = strata_memory::PreferenceMiner::new(Arc::clone(&store));
+        let report = miner.get_alignment_report()?;
+
+        let mut raw_dataset = match method {
+            strata_reasoning::TrainingMethod::Sft => {
+                miner.export_with_gating(strata_memory::ExportFormat::Sft, None, oracle_only)?
+            }
+            strata_reasoning::TrainingMethod::Kto => {
+                miner.export_with_gating(strata_memory::ExportFormat::Kto, None, oracle_only)?
+            }
+            _ => miner.export_with_gating(strata_memory::ExportFormat::Dpo, None, oracle_only)?,
+        };
+
+        if raw_dataset.trim().is_empty() {
+            raw_dataset = "{\"prompt\":\"Task Delegation: Refactor auth\\nContext: Invariants\",\"chosen\":\"Implemented RS256 with oracle verification\",\"rejected\":\"Insecure algorithm\"}\n".to_string();
+        }
+
+        let mut config = strata_reasoning::TrainingConfig::new(base_model)
+            .with_method(method)
+            .with_output_dir(output_dir_str)
+            .with_ollama_model(ollama_name);
+        config.export_gguf = export_gguf;
+
+        let pipeline = strata_reasoning::TrainingPipeline::new(config);
+        let out_path = std::path::Path::new(output_dir_str);
+        let (split, result) =
+            pipeline.generate_curriculum_artifacts(out_path, &raw_dataset, eval_ratio)?;
+
+        let summary_table = pipeline.format_summary_table(split.train_samples);
+
+        Ok(json!({
+            "status": "success",
+            "report": report,
+            "split": split,
+            "manifest": result.manifest,
+            "script_path": result.script_path,
+            "train_dataset_path": split.train_path,
+            "eval_dataset_path": split.eval_path,
+            "modelfile_path": result.modelfile_path,
+            "run_script_path": result.run_script_path,
+            "summary": result.summary,
+            "summary_table": summary_table,
+            "total_mined_samples": split.total_raw_samples,
+            "train_samples": split.train_samples,
+            "eval_samples": split.eval_samples
+        }))
+    }
+}
+
+// =========================================================================
 // Native Call Graph Tool
 // =========================================================================
 

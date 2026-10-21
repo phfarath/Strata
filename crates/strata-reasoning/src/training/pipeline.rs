@@ -1,4 +1,5 @@
 use chrono::Utc;
+use serde::{Deserialize, Serialize};
 use std::fs;
 use std::path::{Path, PathBuf};
 use strata_core::errors::StrataError;
@@ -13,6 +14,18 @@ use super::types::{TrainingConfig, TrainingManifest, TrainingResult};
 /// Ollama Modelfile compilation, and artifact management.
 pub struct TrainingPipeline {
     config: TrainingConfig,
+}
+
+/// Summary of a curriculum dataset split into training and evaluation sets.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct CurriculumSplitResult {
+    pub total_raw_samples: usize,
+    pub unique_samples: usize,
+    pub train_samples: usize,
+    pub eval_samples: usize,
+    pub eval_ratio: f32,
+    pub train_path: String,
+    pub eval_path: String,
 }
 
 impl TrainingPipeline {
@@ -210,5 +223,96 @@ impl TrainingPipeline {
             summary,
             preview_code: Some(script_content),
         })
+    }
+
+    /// Split a raw JSONL dataset into deduplicated train and eval splits deterministically.
+    pub fn split_dataset_curriculum(
+        raw_jsonl: &str,
+        eval_ratio: f32,
+        seed: u64,
+    ) -> (Vec<String>, Vec<String>) {
+        let mut seen = std::collections::HashSet::new();
+        let mut unique = Vec::new();
+
+        for line in raw_jsonl.lines() {
+            let trimmed = line.trim();
+            if !trimmed.is_empty() && seen.insert(trimmed.to_string()) {
+                unique.push(trimmed.to_string());
+            }
+        }
+
+        if unique.is_empty() {
+            return (Vec::new(), Vec::new());
+        }
+
+        // Deterministic Fisher-Yates shuffle using simple 64-bit LCG
+        let mut rng_state = if seed == 0 { 42 } else { seed };
+        let mut shuffled = unique;
+        let n = shuffled.len();
+        for i in (1..n).rev() {
+            rng_state = rng_state
+                .wrapping_mul(6364136223846793005)
+                .wrapping_add(1442695040888963407);
+            let j = (rng_state >> 33) as usize % (i + 1);
+            shuffled.swap(i, j);
+        }
+
+        let clamped_ratio = eval_ratio.clamp(0.0, 0.5);
+        let mut eval_count = ((shuffled.len() as f32) * clamped_ratio).round() as usize;
+        if eval_count == 0 && clamped_ratio > 0.0 && shuffled.len() > 1 {
+            eval_count = 1;
+        }
+        if eval_count >= shuffled.len() {
+            eval_count = shuffled.len().saturating_sub(1);
+        }
+
+        let train_count = shuffled.len() - eval_count;
+        let eval_samples = shuffled.split_off(train_count);
+        let train_samples = shuffled;
+
+        (train_samples, eval_samples)
+    }
+
+    /// Synthesize self-supervised distillation curriculum artifacts:
+    /// splits raw dataset into train.jsonl and eval.jsonl, and generates training scripts.
+    pub fn generate_curriculum_artifacts(
+        &self,
+        output_dir: &Path,
+        raw_dataset: &str,
+        eval_ratio: f32,
+    ) -> Result<(CurriculumSplitResult, TrainingResult), StrataError> {
+        self.validate_config()?;
+
+        fs::create_dir_all(output_dir)
+            .map_err(|e| StrataError::Io(format!("Failed to create output dir: {e}")))?;
+
+        let raw_lines_count = raw_dataset.lines().filter(|l| !l.trim().is_empty()).count();
+        let (train_lines, eval_lines) =
+            Self::split_dataset_curriculum(raw_dataset, eval_ratio, self.config.seed);
+
+        let train_path = output_dir.join("train.jsonl");
+        let train_content = train_lines.join("\n") + if train_lines.is_empty() { "" } else { "\n" };
+        fs::write(&train_path, &train_content)
+            .map_err(|e| StrataError::Io(format!("Failed to write train.jsonl: {e}")))?;
+
+        let eval_path = output_dir.join("eval.jsonl");
+        let eval_content = eval_lines.join("\n") + if eval_lines.is_empty() { "" } else { "\n" };
+        fs::write(&eval_path, &eval_content)
+            .map_err(|e| StrataError::Io(format!("Failed to write eval.jsonl: {e}")))?;
+
+        let split_result = CurriculumSplitResult {
+            total_raw_samples: raw_lines_count,
+            unique_samples: train_lines.len() + eval_lines.len(),
+            train_samples: train_lines.len(),
+            eval_samples: eval_lines.len(),
+            eval_ratio,
+            train_path: train_path.to_string_lossy().to_string(),
+            eval_path: eval_path.to_string_lossy().to_string(),
+        };
+
+        let training_result =
+            self.generate_artifacts(output_dir, Some(&train_content), train_lines.len())?;
+
+        Ok((split_result, training_result))
     }
 }

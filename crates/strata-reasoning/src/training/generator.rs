@@ -175,14 +175,15 @@ pub fn generate_unsloth_training_script(config: &TrainingConfig, dataset_path: &
 
     dataset = raw_dataset.map(format_kto)
 
-    # --- DPO/KTO Trainer Setup ---
-    dpo_config = DPOConfig(
+    # --- KTO Trainer Setup ---
+    kto_config = KTOConfig(
         output_dir = "{out_dir}",
         learning_rate = {lr},
         per_device_train_batch_size = {batch_size},
         gradient_accumulation_steps = {grad_accum},
         max_steps = {max_steps},
         max_length = {max_seq_len},
+        max_prompt_length = {max_seq_len} // 2,
         beta = {beta},
         seed = {seed},
         fp16 = not is_bfloat16_supported(),
@@ -191,9 +192,10 @@ pub fn generate_unsloth_training_script(config: &TrainingConfig, dataset_path: &
         optim = "adamw_8bit",
     )
 
-    trainer = DPOTrainer(
+    trainer = KTOTrainer(
         model = model,
-        args = dpo_config,
+        ref_model = None,
+        args = kto_config,
         train_dataset = dataset,
         tokenizer = tokenizer,
     )"####,
@@ -243,7 +245,7 @@ import os
 import sys
 import torch
 from datasets import load_dataset
-from trl import DPOTrainer, DPOConfig, SFTTrainer, SFTConfig, ORPOTrainer, ORPOConfig
+from trl import DPOTrainer, DPOConfig, SFTTrainer, SFTConfig, ORPOTrainer, ORPOConfig, KTOTrainer, KTOConfig
 from unsloth import FastLanguageModel, is_bfloat16_supported
 
 def main():
