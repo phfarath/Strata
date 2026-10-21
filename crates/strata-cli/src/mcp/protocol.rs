@@ -3,17 +3,8 @@ use std::fmt;
 use std::str::FromStr;
 
 pub const JSONRPC_VERSION: &str = "2.0";
-pub const MCP_PROTOCOL_VERSION: &str = "2024-11-05";
 pub const DEFAULT_PROTOCOL_VERSION: &str = "2024-11-05";
 pub const LATEST_PROTOCOL_VERSION: &str = "2026-07-28";
-
-pub const SUPPORTED_PROTOCOL_VERSIONS: &[&str] = &[
-    "2024-11-05",
-    "2025-03-26",
-    "2025-06-18",
-    "2025-11-25",
-    "2026-07-28",
-];
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub enum ProtocolVersion {
@@ -115,20 +106,6 @@ impl JsonRpcResponse {
         }
     }
 
-    pub fn success_with_meta(
-        id: serde_json::Value,
-        result: serde_json::Value,
-        meta: serde_json::Value,
-    ) -> Self {
-        Self {
-            jsonrpc: JSONRPC_VERSION.to_string(),
-            id,
-            result: Some(result),
-            error: None,
-            meta: Some(meta),
-        }
-    }
-
     pub fn error(id: serde_json::Value, error: JsonRpcError) -> Self {
         Self {
             jsonrpc: JSONRPC_VERSION.to_string(),
@@ -157,14 +134,6 @@ impl JsonRpcError {
         }
     }
 
-    pub fn invalid_request(msg: impl Into<String>) -> Self {
-        Self {
-            code: -32600,
-            message: msg.into(),
-            data: None,
-        }
-    }
-
     pub fn method_not_found(method: &str) -> Self {
         Self {
             code: -32601,
@@ -180,24 +149,6 @@ impl JsonRpcError {
             data: None,
         }
     }
-
-    pub fn internal_error(msg: impl Into<String>) -> Self {
-        Self {
-            code: -32603,
-            message: msg.into(),
-            data: None,
-        }
-    }
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct JsonRpcNotification {
-    pub jsonrpc: String,
-    pub method: String,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub params: Option<serde_json::Value>,
-    #[serde(rename = "_meta", skip_serializing_if = "Option::is_none")]
-    pub meta: Option<serde_json::Value>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

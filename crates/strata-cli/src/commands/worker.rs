@@ -232,7 +232,7 @@ pub async fn run_worker(
                 let tid_hb = task_id.clone();
                 let aid_hb = agent_id.clone();
                 let hb_interval = args.heartbeat_interval.max(1);
-                let lease_ttl = args.lease_ttl.max(10) as i64;
+                let lease_ttl = args.lease_ttl.max(10);
                 let task_gen = task.claim_generation;
 
                 let hb_handle = tokio::spawn(async move {

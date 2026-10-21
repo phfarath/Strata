@@ -43,11 +43,6 @@ impl WorldModel {
         }
     }
 
-    /// Access inner Causal Graph with read lock.
-    pub async fn read_graph(&self) -> tokio::sync::RwLockReadGuard<'_, CausalGraph> {
-        self.graph.read().await
-    }
-
     /// Scan and index a workspace directory into the causal world model.
     pub async fn index_workspace(&self, root_dir: &Path) -> Result<usize> {
         let mut graph = self.graph.write().await;

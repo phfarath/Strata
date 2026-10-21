@@ -14,15 +14,8 @@ impl Theme {
     pub const TEXT_MUTED: Color = Color::Rgb(148, 163, 184); // Slate 400
     pub const BORDER: Color = Color::Rgb(71, 85, 105); // Slate 600
     pub const BORDER_FOCUS: Color = Color::Rgb(129, 140, 248); // Indigo light
-    pub const CARD_BG: Color = Color::Rgb(30, 41, 59); // Slate 800
 
     // Common styles
-    pub fn title_style() -> Style {
-        Style::default()
-            .fg(Self::PRIMARY)
-            .add_modifier(Modifier::BOLD)
-    }
-
     pub fn active_tab_style() -> Style {
         Style::default()
             .fg(Self::TEXT)

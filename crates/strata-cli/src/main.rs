@@ -977,10 +977,6 @@ fn detect_workspace_db_path() -> PathBuf {
     local.join("strata.db")
 }
 
-pub fn resolve_db_path(explicit: Option<PathBuf>) -> PathBuf {
-    resolve_stores(explicit, false).local_path
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;

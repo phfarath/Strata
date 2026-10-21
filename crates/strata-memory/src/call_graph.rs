@@ -609,13 +609,6 @@ impl CrossFileResolver {
         parts.join("/")
     }
 
-    /// Registers all known workspace files for path resolution
-    pub fn register_workspace_files(&mut self, files: impl IntoIterator<Item = String>) {
-        for f in files {
-            self.workspace_files.insert(Self::normalize_path(&f));
-        }
-    }
-
     /// Registers extracted AST symbols for a file
     pub fn register_file_symbols(&mut self, file_path: &str, symbols: &[ExtractedSymbol]) {
         let norm_path = Self::normalize_path(file_path);
@@ -669,8 +662,6 @@ impl CrossFileResolver {
         for ext in extensions {
             let candidate = if ext.is_empty() {
                 target_base.clone()
-            } else if ext.starts_with('/') {
-                format!("{}{}", target_base, ext)
             } else {
                 format!("{}{}", target_base, ext)
             };
@@ -1342,7 +1333,7 @@ impl HeuristicIndexer {
         }
 
         // Also add ReferencesSymbol edges for all indexed symbols in files
-        for ((file_path, sym_name), _sym) in &resolver.file_symbols {
+        for (file_path, sym_name) in resolver.file_symbols.keys() {
             let file_node = format!("file:{}", file_path);
             let sym_node = format!("sym:{}::{}", file_path, sym_name);
             kg_edges_map
@@ -1383,7 +1374,7 @@ impl HeuristicIndexer {
     ) -> Result<HeuristicIndexReport, StrataError> {
         let mut paths = Vec::new();
         let mut contents = Vec::new();
-        self.collect_source_files(workspace_root, workspace_root, &mut paths, &mut contents)?;
+        self.collect_source_files(workspace_root, &mut paths, &mut contents)?;
 
         let mut relative_files = Vec::new();
         for (p, c) in paths.iter().zip(contents.iter()) {
@@ -1406,7 +1397,6 @@ impl HeuristicIndexer {
     fn collect_source_files(
         &self,
         current_dir: &Path,
-        root_dir: &Path,
         out_paths: &mut Vec<PathBuf>,
         out_contents: &mut Vec<String>,
     ) -> Result<(), StrataError> {
@@ -1442,7 +1432,7 @@ impl HeuristicIndexer {
             }
 
             if path.is_dir() {
-                self.collect_source_files(&path, root_dir, out_paths, out_contents)?;
+                self.collect_source_files(&path, out_paths, out_contents)?;
             } else if path.is_file() {
                 let ext = path.extension().and_then(|e| e.to_str()).unwrap_or("");
                 match ext {

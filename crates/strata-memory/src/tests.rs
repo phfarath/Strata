@@ -1402,7 +1402,7 @@ async fn test_multi_host_compiler_context_and_sync() {
     fs::create_dir_all(&temp_workspace).expect("create temp dir");
 
     // Seed existing CLAUDE.md with markers
-    let initial_claude = format!("<!-- STRATA_MEMORY_START -->\nOld Context\n<!-- STRATA_MEMORY_END -->\n\n## Custom User Rules\n- Custom rule 1\n");
+    let initial_claude = "<!-- STRATA_MEMORY_START -->\nOld Context\n<!-- STRATA_MEMORY_END -->\n\n## Custom User Rules\n- Custom rule 1\n".to_string();
     fs::write(temp_workspace.join("CLAUDE.md"), initial_claude).expect("write claude.md");
 
     // Seed existing .cursor/rules/strata.mdc with frontmatter
@@ -3197,9 +3197,9 @@ async fn test_cross_project_transfer() {
     );
     source_store.upsert_failure_pattern(&fail).unwrap();
 
-    let mut skill = ProceduralSkill::new("fly_deploy", "Deploy app to Fly.io with zero downtime");
+    let skill = ProceduralSkill::new("fly_deploy", "Deploy app to Fly.io with zero downtime");
     source_store
-        .insert_or_update_procedural_skill(&mut skill)
+        .insert_or_update_procedural_skill(&skill)
         .unwrap();
 
     // 2. Target engine

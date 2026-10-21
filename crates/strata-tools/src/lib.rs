@@ -1,9 +1,7 @@
 pub mod builtin;
-pub mod gateway;
 pub mod interceptor;
 
 pub use builtin::*;
-pub use gateway::*;
 pub use interceptor::*;
 
 #[cfg(test)]
@@ -18,9 +16,8 @@ mod tests {
 
     use strata_core::{
         errors::StrataError,
-        events::{Event, EventId, EventPayload},
         state::{DigestOutput, FailurePattern, FailureSeverity, MemoryHandle, MemoryRecord, Scope},
-        traits::{EventStore, MemoryEngine, Tool},
+        traits::{MemoryEngine, Tool},
     };
 
     // --- Mock Memory Engine for Testing ---
@@ -196,201 +193,6 @@ mod tests {
                 .collect();
             Ok(filtered)
         }
-    }
-
-    // --- Mock Event Store for Testing ---
-    struct MockEventStore {
-        events: Arc<Mutex<Vec<Event>>>,
-    }
-
-    impl MockEventStore {
-        fn new() -> Self {
-            Self {
-                events: Arc::new(Mutex::new(Vec::new())),
-            }
-        }
-    }
-
-    #[async_trait]
-    impl EventStore for MockEventStore {
-        async fn append(&self, event: &Event) -> Result<EventId, StrataError> {
-            let mut evs = self.events.lock().await;
-            let id = event.id;
-            evs.push(event.clone());
-            Ok(id)
-        }
-
-        async fn read_stream(
-            &self,
-            _session_id: &str,
-            _from_seq: Option<u64>,
-            _limit: Option<usize>,
-        ) -> Result<Vec<Event>, StrataError> {
-            let evs = self.events.lock().await;
-            Ok(evs.clone())
-        }
-    }
-
-    // --- Mock Tool for Testing ---
-    struct EchoTool;
-
-    #[async_trait]
-    impl Tool for EchoTool {
-        fn name(&self) -> &str {
-            "echo"
-        }
-
-        fn description(&self) -> &str {
-            "Echoes back input"
-        }
-
-        fn parameters_schema(&self) -> serde_json::Value {
-            json!({ "type": "object", "properties": { "msg": { "type": "string" } } })
-        }
-
-        async fn execute(
-            &self,
-            params: serde_json::Value,
-        ) -> Result<serde_json::Value, StrataError> {
-            Ok(params)
-        }
-    }
-
-    struct FailingTool;
-
-    #[async_trait]
-    impl Tool for FailingTool {
-        fn name(&self) -> &str {
-            "failing_tool"
-        }
-
-        fn description(&self) -> &str {
-            "Always fails"
-        }
-
-        fn parameters_schema(&self) -> serde_json::Value {
-            json!({})
-        }
-
-        async fn execute(
-            &self,
-            _params: serde_json::Value,
-        ) -> Result<serde_json::Value, StrataError> {
-            Err(StrataError::ToolError(
-                "Simulated database connection error".to_string(),
-            ))
-        }
-    }
-
-    #[tokio::test]
-    async fn test_gateway_invocation_and_audit() {
-        let mem = Arc::new(MockMemoryEngine::new());
-        let store = Arc::new(MockEventStore::new());
-
-        let gateway = DefaultToolGateway::new()
-            .with_event_store(store.clone())
-            .with_memory_engine(mem.clone());
-
-        gateway.register(Arc::new(EchoTool)).await;
-
-        let result = gateway
-            .invoke_with_session("echo", json!({ "msg": "hello world" }), Some("sess_123"))
-            .await
-            .unwrap();
-
-        assert_eq!(result["msg"], "hello world");
-
-        let events = store.events.lock().await;
-        assert_eq!(events.len(), 2); // ToolInvoked and ToolResultReceived
-        match &events[0].payload {
-            EventPayload::ToolInvoked(t) => assert_eq!(t.tool_name, "echo"),
-            _ => panic!("Expected ToolInvoked"),
-        }
-        match &events[1].payload {
-            EventPayload::ToolResultReceived(t) => {
-                assert_eq!(t.tool_name, "echo");
-                assert!(!t.is_error);
-            }
-            _ => panic!("Expected ToolResultReceived"),
-        }
-    }
-
-    #[tokio::test]
-    async fn test_gateway_blocked_tool_permission() {
-        let policy = PermissionPolicy::default().with_blocked_tool("dangerous_tool");
-        let gateway = DefaultToolGateway::new().with_policy(policy);
-
-        gateway.register(Arc::new(EchoTool)).await;
-
-        let err = gateway
-            .invoke_with_session("dangerous_tool", json!({}), None)
-            .await
-            .unwrap_err();
-
-        match err {
-            StrataError::PermissionDenied(msg) => {
-                assert!(msg.contains("blocked by security policy"));
-            }
-            _ => panic!("Expected PermissionDenied"),
-        }
-    }
-
-    #[tokio::test]
-    async fn test_gateway_rate_limiting() {
-        let policy = PermissionPolicy::default().with_rate_limit(2);
-        let gateway = DefaultToolGateway::new().with_policy(policy);
-        gateway.register(Arc::new(EchoTool)).await;
-
-        assert!(gateway
-            .invoke_with_session("echo", json!({}), None)
-            .await
-            .is_ok());
-        assert!(gateway
-            .invoke_with_session("echo", json!({}), None)
-            .await
-            .is_ok());
-
-        let err = gateway
-            .invoke_with_session("echo", json!({}), None)
-            .await
-            .unwrap_err();
-        match err {
-            StrataError::RateLimitExceeded(_) => {}
-            _ => panic!("Expected RateLimitExceeded"),
-        }
-    }
-
-    #[tokio::test]
-    async fn test_automatic_failure_capture_out_of_band() {
-        let mem = Arc::new(MockMemoryEngine::new());
-        let store = Arc::new(MockEventStore::new());
-
-        let gateway = DefaultToolGateway::new()
-            .with_event_store(store.clone())
-            .with_memory_engine(mem.clone());
-
-        gateway.register(Arc::new(FailingTool)).await;
-
-        let err = gateway
-            .invoke_with_session(
-                "failing_tool",
-                json!({ "target": "prod_db" }),
-                Some("sess_99"),
-            )
-            .await
-            .unwrap_err();
-
-        match err {
-            StrataError::ToolError(msg) => assert!(msg.contains("Simulated database")),
-            _ => panic!("Expected ToolError"),
-        }
-
-        // Check that failure was recorded into memory silently out-of-band
-        let fails = mem.failures.lock().await;
-        assert_eq!(fails.len(), 1);
-        assert_eq!(fails[0].pattern_name, "failing_tool Failure");
-        assert_eq!(fails[0].error_type, "ToolExecutionError");
-        assert!(fails[0].description.contains("Simulated database"));
     }
 
     #[tokio::test]

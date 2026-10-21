@@ -82,11 +82,6 @@ impl CausalGraph {
             .and_then(|&idx| self.graph.node_weight(idx))
     }
 
-    /// Lookup a node ID by its file path.
-    pub fn get_node_by_path(&self, path: &str) -> Option<&CausalNode> {
-        self.path_to_id.get(path).and_then(|id| self.get_node(id))
-    }
-
     /// Number of nodes registered in the graph.
     pub fn node_count(&self) -> usize {
         self.graph.node_count()
@@ -112,28 +107,6 @@ impl CausalGraph {
         let mut walker = self
             .graph
             .neighbors_directed(idx, Direction::Incoming)
-            .detach();
-        while let Some((edge_idx, neighbor_idx)) = walker.next(&self.graph) {
-            if let (Some(node), Some(edge)) = (
-                self.graph.node_weight(neighbor_idx),
-                self.graph.edge_weight(edge_idx),
-            ) {
-                results.push((node, edge));
-            }
-        }
-        results
-    }
-
-    /// Outgoing dependencies: nodes that this node depends on / calls.
-    pub fn outgoing_dependencies(&self, id: &str) -> Vec<(&CausalNode, &CausalEdge)> {
-        let Some(&idx) = self.node_indices.get(id) else {
-            return Vec::new();
-        };
-
-        let mut results = Vec::new();
-        let mut walker = self
-            .graph
-            .neighbors_directed(idx, Direction::Outgoing)
             .detach();
         while let Some((edge_idx, neighbor_idx)) = walker.next(&self.graph) {
             if let (Some(node), Some(edge)) = (

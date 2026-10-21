@@ -60,23 +60,6 @@ impl std::fmt::Display for GoalStatus {
     }
 }
 
-impl GoalStatus {
-    pub fn is_final(&self) -> bool {
-        matches!(
-            self,
-            GoalStatus::Completed | GoalStatus::Failed | GoalStatus::Skipped
-        )
-    }
-
-    pub fn is_successful(&self) -> bool {
-        matches!(self, GoalStatus::Completed)
-    }
-
-    pub fn is_failed(&self) -> bool {
-        matches!(self, GoalStatus::Failed)
-    }
-}
-
 /// Categorization of relationships between goals in the DAG.
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, Hash)]
 #[serde(rename_all = "snake_case")]
@@ -181,11 +164,6 @@ impl GoalNode {
         self
     }
 
-    pub fn with_estimated_duration(mut self, ms: u64) -> Self {
-        self.estimated_duration_ms = ms;
-        self
-    }
-
     pub fn with_metadata(mut self, metadata: serde_json::Value) -> Self {
         self.metadata = metadata;
         self
@@ -212,10 +190,6 @@ impl GoalNode {
         self.status = GoalStatus::Skipped;
         self.error = Some(reason.into());
     }
-
-    pub fn mark_blocked(&mut self) {
-        self.status = GoalStatus::Blocked;
-    }
 }
 
 /// A directed relationship edge between goals in the planning DAG.
@@ -239,20 +213,8 @@ impl GoalEdge {
         Self::new(GoalEdgeKind::DependsOn, true)
     }
 
-    pub fn non_critical_dependency() -> Self {
-        Self::new(GoalEdgeKind::DependsOn, false)
-    }
-
-    pub fn subgoal_of() -> Self {
-        Self::new(GoalEdgeKind::SubgoalOf, true)
-    }
-
     pub fn verifies() -> Self {
         Self::new(GoalEdgeKind::Verifies, true)
-    }
-
-    pub fn rollback_for() -> Self {
-        Self::new(GoalEdgeKind::RollbackFor, false)
     }
 
     pub fn with_description(mut self, desc: impl Into<String>) -> Self {

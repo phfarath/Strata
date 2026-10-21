@@ -67,11 +67,6 @@ impl MonorepoPackage {
         self.version = Some(version.into());
         self
     }
-
-    pub fn with_internal_deps(mut self, deps: Vec<String>) -> Self {
-        self.internal_dependencies = deps;
-        self
-    }
 }
 
 /// Representation of monorepo boundaries and member package isolation hierarchy.
@@ -155,9 +150,9 @@ impl WorkspaceBoundary {
                 || absolute_target == normalized_pkg_root
                 || normalized_target.starts_with(&prefix)
                 || normalized_target == normalized_pkg_root
-                || canonical_target_str.as_ref().map_or(false, |c| {
-                    c.starts_with(&prefix) || c == &normalized_pkg_root
-                });
+                || canonical_target_str
+                    .as_ref()
+                    .is_some_and(|c| c.starts_with(&prefix) || c == &normalized_pkg_root);
 
             if matches && normalized_pkg_root.len() > best_len {
                 best_len = normalized_pkg_root.len();

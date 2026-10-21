@@ -26,11 +26,6 @@ pub fn estimate_bpe_tokens(text: &str) -> usize {
     ((chars as f64 / 3.8).ceil() as usize).max(words)
 }
 
-/// Backwards-compatible alias for `estimate_bpe_tokens`.
-pub fn count_exact_tokens(text: &str) -> usize {
-    estimate_bpe_tokens(text)
-}
-
 /// Execution mode for the A/B evaluation benchmark engine.
 #[derive(Debug, Clone)]
 pub enum BenchmarkEngineMode {

@@ -49,13 +49,6 @@ impl GraphNode {
         }
     }
 
-    pub fn as_fact_id(&self) -> Option<Uuid> {
-        match self {
-            GraphNode::Fact(id) => Some(*id),
-            _ => None,
-        }
-    }
-
     /// Formats a persistent, unique string identifier for SQLite storage and tripartite modulation.
     pub fn canonical_id(&self) -> String {
         match self {
@@ -230,16 +223,6 @@ impl KnowledgeGraph {
             }
         }
         false
-    }
-
-    /// Retrieves current synaptic conductance/weight for a directed edge.
-    pub fn get_edge_weight(&self, from: &GraphNode, to: &GraphNode, kind: EdgeKind) -> Option<f32> {
-        self.adj.get(from).and_then(|edges| {
-            edges
-                .iter()
-                .find(|e| &e.target == to && e.kind == kind)
-                .map(|e| e.weight)
-        })
     }
 
     pub fn neighbors(&self, node: &GraphNode) -> &[GraphEdge] {

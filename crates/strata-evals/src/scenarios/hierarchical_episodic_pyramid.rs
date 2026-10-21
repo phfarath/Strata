@@ -39,7 +39,7 @@ fn estimate_step_tokens(step: &EpisodeStep) -> usize {
     if let Some(ref err) = step.error {
         chars += err.len();
     }
-    (chars + 3) / 4
+    chars.div_ceil(4)
 }
 
 /// Helper function to estimate token count from a Tier 2 Rollup EpisodeRecord.
@@ -51,7 +51,7 @@ fn estimate_rollup_tokens(rollup: &EpisodeRecord) -> usize {
     if let Some(ref prov) = rollup.causal_provenance {
         chars += prov.len();
     }
-    (chars + 3) / 4
+    chars.div_ceil(4)
 }
 
 fn deterministic_uuid(prefix: u128, index: usize) -> Uuid {
@@ -1207,12 +1207,6 @@ pub async fn run_hierarchical_episodic_pyramid_eval() -> Result<HierarchicalPyra
         total_steps,
         latency_ms,
     })
-}
-
-/// Scenario wrapper returning Result<()> for eval runner integration
-pub async fn run_hierarchical_episodic_pyramid_scenario() -> Result<()> {
-    run_hierarchical_episodic_pyramid_eval().await?;
-    Ok(())
 }
 
 #[cfg(test)]

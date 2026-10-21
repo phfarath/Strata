@@ -951,37 +951,4 @@ impl TruthMaintenanceSystem {
 
         Ok(true)
     }
-
-    /// Recomputes truth maintenance justifications across all semantic facts in SQLite.
-    /// Traverses the dependency graph and marks any fact Stale if its prerequisites are no longer Active.
-    pub fn recompute_justifications(&self, store: &SqliteStore) -> Result<usize, StrataError> {
-        let all_active = store.get_all_semantic_facts(None, Some(FactStatus::Active), 10000)?;
-        let mut invalidated_count = 0;
-
-        for fact in all_active {
-            let is_valid = self.is_belief_valid(store, &fact.id)?;
-            if !is_valid {
-                let mut invalidated_fact = fact.clone();
-                invalidated_fact.mark_stale();
-                store.insert_or_update_semantic_fact(&invalidated_fact)?;
-
-                let audit = JtmsAuditRow::new(
-                    fact.id,
-                    fact.id,
-                    "invalidation",
-                    "Periodic justification recomputation detected invalid/inactive prerequisites",
-                );
-                store.insert_jtms_audit(&audit)?;
-
-                self.propagate_downstream_invalidation(
-                    store,
-                    &fact.id,
-                    "Prerequisites invalidated during global justification sweep",
-                )?;
-                invalidated_count += 1;
-            }
-        }
-
-        Ok(invalidated_count)
-    }
 }

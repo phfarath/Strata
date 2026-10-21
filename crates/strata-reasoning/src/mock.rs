@@ -23,14 +23,6 @@ impl MockReasoningEngine {
         }
     }
 
-    pub fn with_responses(responses: Vec<ReasoningOutput>) -> Self {
-        Self {
-            canned_responses: Arc::new(Mutex::new(responses)),
-            recorded_contexts: Arc::new(Mutex::new(Vec::new())),
-            error_on_next: Arc::new(Mutex::new(None)),
-        }
-    }
-
     pub async fn push_response(&self, response: ReasoningOutput) {
         let mut canned = self.canned_responses.lock().await;
         canned.push(response);
@@ -46,10 +38,6 @@ impl MockReasoningEngine {
             .await;
     }
 
-    pub async fn push_tool_calls(&self, calls: Vec<ToolCall>) {
-        self.push_response(ReasoningOutput::tool_calls(calls)).await;
-    }
-
     pub async fn push_json<T: serde::Serialize>(&self, value: &T) {
         let json_str = serde_json::to_string_pretty(value).unwrap_or_else(|_| "{}".to_string());
         self.push_text(json_str).await;
@@ -57,15 +45,6 @@ impl MockReasoningEngine {
 
     pub async fn push_distillation_output(&self, output: &crate::prompts::DistillationOutput) {
         self.push_json(output).await;
-    }
-
-    pub async fn push_jtms_response(&self, classification: &str, reason: &str, confidence: f32) {
-        let payload = serde_json::json!({
-            "classification": classification,
-            "reason": reason,
-            "confidence": confidence
-        });
-        self.push_text(payload.to_string()).await;
     }
 
     pub async fn set_error(&self, error_message: impl Into<String>) {
