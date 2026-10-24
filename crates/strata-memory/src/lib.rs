@@ -95,7 +95,7 @@ pub use pipeline::{
     compute_minhash_signature, minhash_jaccard_similarity, AudnConfig, AudnDecision, AudnOperation,
     AudnPipeline, ConsolidationPipeline, ConsolidationResult, PipelineConfig,
 };
-pub use procedural_mining::TrajectoryMiner;
+pub use procedural_mining::{FrequentToolSequence, MacroSynthesizer, TrajectoryMiner};
 pub use pyramid::{
     DrillDownTree, EpisodicPyramidEngine, EpisodicPyramidStore, PyramidConfig,
     PyramidDrillDownReport, PyramidFilter, RollupSummary, SlmBridgeConfig, SlmInferenceResult,

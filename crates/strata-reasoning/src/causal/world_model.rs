@@ -5,8 +5,11 @@ use tokio::sync::RwLock;
 
 use super::graph::CausalGraph;
 use super::indexer::CodebaseCausalIndexer;
+use super::prediction_error::CausalPredictionEngine;
 use super::types::{
-    BlastRadiusReport, CausalEdge, CausalNode, CausalNodeKind, PatchSimulationResult,
+    ActionExpectation, BlastRadiusReport, CausalBeliefUpdate, CausalEdge, CausalNode,
+    CausalNodeKind, CounterfactualAttribution, CounterfactualHypothesis,
+    CounterfactualSimulationResult, ObservedOutcome, PatchSimulationResult, PredictionError,
 };
 
 /// Cognitive World Model managing the causal architectural graph and pre-flight change simulations.
@@ -14,6 +17,7 @@ use super::types::{
 pub struct WorldModel {
     graph: Arc<RwLock<CausalGraph>>,
     indexer: Arc<CodebaseCausalIndexer>,
+    prediction_engine: Arc<CausalPredictionEngine>,
 }
 
 impl Default for WorldModel {
@@ -32,6 +36,7 @@ impl WorldModel {
         Self {
             graph: Arc::new(RwLock::new(graph)),
             indexer: Arc::new(indexer),
+            prediction_engine: Arc::new(CausalPredictionEngine::new()),
         }
     }
 
@@ -40,6 +45,7 @@ impl WorldModel {
         Self {
             graph: Arc::new(RwLock::new(graph)),
             indexer: Arc::new(CodebaseCausalIndexer::new()),
+            prediction_engine: Arc::new(CausalPredictionEngine::new()),
         }
     }
 
@@ -179,5 +185,71 @@ impl WorldModel {
             safe_to_apply,
             blast_reports: reports,
         })
+    }
+
+    /// Predicts action feasibility and expected success rate prior to execution.
+    pub async fn predict_action(
+        &self,
+        expectation: &ActionExpectation,
+    ) -> (bool, f32, Vec<String>) {
+        let graph = self.graph.read().await;
+        self.prediction_engine.predict_action(expectation, &graph)
+    }
+
+    /// Evaluates expected vs observed outcome and calculates prediction error.
+    pub fn evaluate_prediction_error(
+        &self,
+        expectation: &ActionExpectation,
+        outcome: &ObservedOutcome,
+    ) -> Option<PredictionError> {
+        self.prediction_engine
+            .calculate_prediction_error(expectation, outcome)
+    }
+
+    /// Core continual learning cycle: processes action feedback, detects prediction errors,
+    /// performs counterfactual attribution, and dynamically applies belief updates to the causal graph.
+    pub async fn process_action_feedback(
+        &self,
+        expectation: &ActionExpectation,
+        outcome: &ObservedOutcome,
+    ) -> Result<(
+        Option<PredictionError>,
+        Option<CounterfactualAttribution>,
+        Option<CausalBeliefUpdate>,
+    )> {
+        let maybe_error = self
+            .prediction_engine
+            .calculate_prediction_error(expectation, outcome);
+        let Some(error) = maybe_error else {
+            return Ok((None, None, None));
+        };
+
+        let (attribution, update) = {
+            let mut graph = self.graph.write().await;
+            let attribution = self.prediction_engine.perform_counterfactual_attribution(
+                &error,
+                expectation,
+                outcome,
+                &graph,
+            );
+            let update =
+                self.prediction_engine
+                    .synthesize_belief_update(&attribution, &error, &graph);
+            graph.apply_belief_update(&update)?;
+            (attribution, update)
+        };
+
+        Ok((Some(error), Some(attribution), Some(update)))
+    }
+
+    /// Simulates whether a counterfactual intervention would resolve an error.
+    pub async fn simulate_counterfactual(
+        &self,
+        action_id: &str,
+        intervention: &CounterfactualHypothesis,
+    ) -> CounterfactualSimulationResult {
+        let graph = self.graph.read().await;
+        self.prediction_engine
+            .simulate_counterfactual(action_id, intervention, &graph)
     }
 }

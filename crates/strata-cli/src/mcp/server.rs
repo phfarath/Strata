@@ -776,6 +776,62 @@ impl McpServer {
                     }
                 }),
             },
+            ToolDefinition {
+                name: "macro_list".to_string(),
+                description: "List compiled procedural macros synthesized from recurrent successful execution patterns. Returns parameters, steps count, and estimated tokens saved.".to_string(),
+                input_schema: serde_json::json!({
+                    "type": "object",
+                    "properties": {
+                        "tag": {
+                            "type": "string",
+                            "description": "Optional tag filter (e.g. 'compiled_macro', 'refactor', 'git')"
+                        },
+                        "limit": {
+                            "type": "integer",
+                            "description": "Maximum number of macros to return (default: 20)"
+                        }
+                    }
+                }),
+            },
+            ToolDefinition {
+                name: "macro_execute".to_string(),
+                description: "Execute a multi-step compiled macro natively in 1 single turn with dynamic parameter interpolation, eliminating LLM round trips and token overhead.".to_string(),
+                input_schema: serde_json::json!({
+                    "type": "object",
+                    "properties": {
+                        "macro_id": {
+                            "type": "string",
+                            "description": "Optional UUID of the macro to execute"
+                        },
+                        "macro_name": {
+                            "type": "string",
+                            "description": "Optional unique name of the macro to execute"
+                        },
+                        "parameters": {
+                            "type": "object",
+                            "description": "Dynamic execution arguments mapping parameter keys to values"
+                        }
+                    }
+                }),
+            },
+            ToolDefinition {
+                name: "causal_explain".to_string(),
+                description: "Inspect the causal belief graph and world model for an action/tool. Explains why an action failed, active preconditions, stale assumptions, and counterfactual interventions.".to_string(),
+                input_schema: serde_json::json!({
+                    "type": "object",
+                    "properties": {
+                        "action": {
+                            "type": "string",
+                            "description": "Action or tool name to diagnose causally (e.g. 'cargo_test', 'edit_file')"
+                        },
+                        "error": {
+                            "type": "string",
+                            "description": "Optional observed error text or failure symptom"
+                        }
+                    },
+                    "required": ["action"]
+                }),
+            },
         ];
         defs.extend(super::blackboard::definitions());
         defs
@@ -2522,6 +2578,281 @@ impl McpServer {
                     }
                     Err(e) => CallToolResult::error(format!("Pyramid drill-down error: {e}")),
                 }
+            }
+            "macro_list" => {
+                let sqlite = match &self.sqlite_engine {
+                    Some(s) => s,
+                    None => {
+                        return CallToolResult::error(
+                            "Macro operations require a local SQLite storage engine",
+                        )
+                    }
+                };
+
+                let tag_filter = args.get("tag").and_then(|v| v.as_str());
+                let limit = args.get("limit").and_then(|v| v.as_u64()).unwrap_or(20) as usize;
+
+                match sqlite.store().get_all_procedural_skills(None, limit) {
+                    Ok(all_skills) => {
+                        let macros: Vec<_> = all_skills
+                            .into_iter()
+                            .filter(|s| {
+                                let has_macro_tag = s
+                                    .tags
+                                    .iter()
+                                    .any(|t| t == "compiled_macro" || t == "macro");
+                                if let Some(tag) = tag_filter {
+                                    has_macro_tag && s.tags.iter().any(|t| t == tag)
+                                } else {
+                                    has_macro_tag
+                                }
+                            })
+                            .map(|s| {
+                                let compiled =
+                                    strata_reasoning::planning::macros::CompiledMacro::from_procedural_skill(&s);
+                                serde_json::json!({
+                                    "id": compiled.id,
+                                    "name": compiled.name,
+                                    "description": compiled.description,
+                                    "tool_sequence": compiled.tool_sequence,
+                                    "parameters": compiled.parameters,
+                                    "step_count": compiled.steps.len(),
+                                    "estimated_tokens_saved": compiled.estimated_tokens_saved,
+                                    "success_rate": compiled.success_rate,
+                                    "tags": s.tags,
+                                })
+                            })
+                            .collect();
+
+                        let names: Vec<_> = macros
+                            .iter()
+                            .filter_map(|m| m.get("name").and_then(|n| n.as_str()))
+                            .collect();
+                        let summary = format!(
+                            "Found {} compiled procedural macros: [{}]",
+                            macros.len(),
+                            names.join(", ")
+                        );
+                        CallToolResult::structured(
+                            summary,
+                            serde_json::to_value(&macros).unwrap_or_default(),
+                        )
+                    }
+                    Err(e) => CallToolResult::error(format!("Failed to list macros: {e}")),
+                }
+            }
+            "macro_execute" => {
+                let sqlite = match &self.sqlite_engine {
+                    Some(s) => s,
+                    None => {
+                        return CallToolResult::error(
+                            "Macro operations require a local SQLite storage engine",
+                        )
+                    }
+                };
+
+                let macro_id_str = args.get("macro_id").and_then(|v| v.as_str());
+                let macro_name_str = args.get("macro_name").and_then(|v| v.as_str());
+
+                let skill = if let Some(id_str) = macro_id_str {
+                    match Uuid::parse_str(id_str) {
+                        Ok(u) => sqlite.store().get_procedural_skill(&u),
+                        Err(e) => {
+                            return CallToolResult::error(format!(
+                                "Invalid macro_id UUID '{id_str}': {e}"
+                            ))
+                        }
+                    }
+                } else if let Some(name) = macro_name_str {
+                    sqlite.store().get_procedural_skill_by_name(name)
+                } else {
+                    return CallToolResult::error("Must provide either 'macro_id' or 'macro_name'");
+                };
+
+                let skill = match skill {
+                    Ok(Some(s)) => s,
+                    Ok(None) => return CallToolResult::error("Macro not found"),
+                    Err(e) => return CallToolResult::error(format!("Failed to load macro: {e}")),
+                };
+
+                let compiled =
+                    strata_reasoning::planning::macros::CompiledMacro::from_procedural_skill(
+                        &skill,
+                    );
+
+                let raw_params = args
+                    .get("parameters")
+                    .and_then(|v| v.as_object())
+                    .cloned()
+                    .unwrap_or_default();
+                let mut execution_params = std::collections::HashMap::new();
+                for (k, v) in raw_params {
+                    execution_params.insert(k, v);
+                }
+
+                let invoker = strata_reasoning::planning::macros::CallbackToolInvoker::new(
+                    |tool_name: &str,
+                     input: &serde_json::Value|
+                     -> anyhow::Result<serde_json::Value> {
+                        match tool_name {
+                            "read_file" => {
+                                let path_str =
+                                    input.get("path").and_then(|v| v.as_str()).unwrap_or("");
+                                match std::fs::read_to_string(path_str) {
+                                    Ok(content) => Ok(
+                                        serde_json::json!({ "status": "ok", "path": path_str, "content": content }),
+                                    ),
+                                    Err(e) => {
+                                        anyhow::bail!("Failed to read file '{path_str}': {e}")
+                                    }
+                                }
+                            }
+                            "write_file" | "edit_file" => {
+                                let path_str =
+                                    input.get("path").and_then(|v| v.as_str()).unwrap_or("");
+                                let content =
+                                    input.get("content").and_then(|v| v.as_str()).unwrap_or("");
+                                match std::fs::write(path_str, content) {
+                                    Ok(_) => Ok(
+                                        serde_json::json!({ "status": "ok", "path": path_str, "bytes_written": content.len() }),
+                                    ),
+                                    Err(e) => {
+                                        anyhow::bail!("Failed to write file '{path_str}': {e}")
+                                    }
+                                }
+                            }
+                            "cargo_check" => {
+                                let flags =
+                                    input.get("flags").and_then(|v| v.as_str()).unwrap_or("");
+                                let pkg = input.get("package").and_then(|v| v.as_str());
+                                let mut cmd = std::process::Command::new("cargo");
+                                cmd.arg("check");
+                                if let Some(p) = pkg {
+                                    cmd.arg("-p").arg(p);
+                                }
+                                for f in flags.split_whitespace() {
+                                    cmd.arg(f);
+                                }
+                                let output = cmd.output()?;
+                                if output.status.success() {
+                                    Ok(serde_json::json!({ "status": "ok", "exit_code": 0 }))
+                                } else {
+                                    let err = String::from_utf8_lossy(&output.stderr);
+                                    anyhow::bail!("cargo check failed: {err}");
+                                }
+                            }
+                            other => anyhow::bail!("Unsupported tool in macro execution: {other}"),
+                        }
+                    },
+                );
+
+                let engine = strata_reasoning::planning::macros::MacroExecutionEngine::new();
+                match engine
+                    .execute_macro_1step(&compiled, &execution_params, &invoker)
+                    .await
+                {
+                    Ok(report) => {
+                        let summary = format!(
+                            "Macro '{}' executed: success={}, completed {}/{} steps in {}ms (estimated {} tokens saved)",
+                            report.macro_name,
+                            report.success,
+                            report.steps_completed,
+                            report.total_steps,
+                            report.total_duration_ms,
+                            report.tokens_saved
+                        );
+                        CallToolResult::structured(
+                            summary,
+                            serde_json::to_value(&report).unwrap_or_default(),
+                        )
+                    }
+                    Err(e) => CallToolResult::error(format!("Macro execution engine failed: {e}")),
+                }
+            }
+            "causal_explain" => {
+                let action = match args.get("action").and_then(|v| v.as_str()) {
+                    Some(a) => a,
+                    None => return CallToolResult::error("Missing required parameter: action"),
+                };
+                let error_observed = args.get("error").and_then(|v| v.as_str()).unwrap_or("");
+
+                let sqlite = match &self.sqlite_engine {
+                    Some(s) => s,
+                    None => {
+                        return CallToolResult::error(
+                            "Causal operations require a local SQLite storage engine",
+                        )
+                    }
+                };
+
+                let patterns = sqlite
+                    .store()
+                    .search_failures(Some(action), None, 50)
+                    .unwrap_or_default();
+                let relevant_patterns: Vec<_> = patterns
+                    .into_iter()
+                    .filter(|p| {
+                        p.pattern_name
+                            .to_lowercase()
+                            .contains(&action.to_lowercase())
+                            || p.error_type.to_lowercase().contains(&action.to_lowercase())
+                            || (!error_observed.is_empty()
+                                && p.description
+                                    .to_lowercase()
+                                    .contains(&error_observed.to_lowercase()))
+                    })
+                    .collect();
+
+                let facts = sqlite
+                    .store()
+                    .get_all_semantic_facts(None, None, 100)
+                    .unwrap_or_default();
+                let relevant_facts: Vec<_> = facts
+                    .into_iter()
+                    .filter(|f| {
+                        f.tags
+                            .iter()
+                            .any(|t| t.to_lowercase().contains(&action.to_lowercase()))
+                            || f.statement.to_lowercase().contains(&action.to_lowercase())
+                    })
+                    .collect();
+
+                let mut active_preconditions = Vec::new();
+                let mut invalidated_assumptions = Vec::new();
+                let mut counterfactual_recommendations = Vec::new();
+
+                for p in &relevant_patterns {
+                    counterfactual_recommendations.push(format!(
+                        "[{}] {} -> Mitigation: {}",
+                        p.error_type, p.pattern_name, p.mitigation
+                    ));
+                }
+
+                for f in &relevant_facts {
+                    if f.status == strata_core::schemas::FactStatus::Active {
+                        active_preconditions.push(f.statement.clone());
+                    } else {
+                        invalidated_assumptions.push(f.statement.clone());
+                    }
+                }
+
+                let explanation = serde_json::json!({
+                    "action": action,
+                    "error_observed": if error_observed.is_empty() { None } else { Some(error_observed) },
+                    "active_preconditions": active_preconditions,
+                    "invalidated_assumptions": invalidated_assumptions,
+                    "counterfactual_recommendations": counterfactual_recommendations,
+                });
+
+                let summary = format!(
+                    "Causal Explanation for '{}': {} preconditions, {} dependencies, {} recommendations",
+                    action,
+                    explanation["active_preconditions"].as_array().map(|a| a.len()).unwrap_or(0),
+                    explanation["invalidated_assumptions"].as_array().map(|a| a.len()).unwrap_or(0),
+                    explanation["counterfactual_recommendations"].as_array().map(|a| a.len()).unwrap_or(0)
+                );
+
+                CallToolResult::structured(summary, explanation)
             }
             name if name.starts_with("task_") || name.starts_with("a2a_") => {
                 let Some(coordinator) = &self.stigmergy else {

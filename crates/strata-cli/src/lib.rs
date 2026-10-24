@@ -129,7 +129,7 @@ mod tests {
         use strata_core::traits::MemoryEngine;
         use strata_memory::SqliteMemoryEngine;
 
-        let engine = Arc::new(SqliteMemoryEngine::open_in_memory(None).unwrap());
+        let engine = Arc::new(strata_memory::SqliteMemoryEngine::open_in_memory(None).unwrap());
 
         // 1. Test PostTool with compilation error
         let post_tool = HookCommand::PostTool {
@@ -253,7 +253,7 @@ export function login(username: string): boolean {
         )
         .unwrap();
 
-        let engine = Arc::new(SqliteMemoryEngine::open_in_memory(None).unwrap());
+        let engine = Arc::new(strata_memory::SqliteMemoryEngine::open_in_memory(None).unwrap());
         let store = engine.store_arc();
 
         // 1. Test CLI run_callgraph with --index
@@ -337,7 +337,7 @@ export function login(username: string): boolean {
         use strata_core::traits::MemoryEngine;
         use strata_memory::SqliteMemoryEngine;
 
-        let engine = Arc::new(SqliteMemoryEngine::open_in_memory(None).unwrap());
+        let engine = Arc::new(strata_memory::SqliteMemoryEngine::open_in_memory(None).unwrap());
 
         // 1. Write working memory record
         let mem = MemoryRecord::new(
@@ -790,7 +790,7 @@ export function login(username: string): boolean {
     async fn test_mcp_a2a_delegation_tools() {
         use strata_memory::SqliteMemoryEngine;
 
-        let engine = Arc::new(SqliteMemoryEngine::open_in_memory(None).unwrap());
+        let engine = Arc::new(strata_memory::SqliteMemoryEngine::open_in_memory(None).unwrap());
         let server = McpServer::new_with_engine(Arc::clone(&engine));
 
         // 1. Call a2a_delegate via MCP
@@ -864,7 +864,7 @@ export function login(username: string): boolean {
     async fn test_mcp_stigmergy_tools_execution() {
         use strata_memory::SqliteMemoryEngine;
 
-        let engine = Arc::new(SqliteMemoryEngine::open_in_memory(None).unwrap());
+        let engine = Arc::new(strata_memory::SqliteMemoryEngine::open_in_memory(None).unwrap());
 
         let test_id = uuid::Uuid::new_v4();
         #[cfg(windows)]
@@ -1110,7 +1110,7 @@ export function login(username: string): boolean {
         use strata_core::events::{Event, EventPayload, ObservationReceived};
         use strata_memory::SqliteMemoryEngine;
 
-        let engine = Arc::new(SqliteMemoryEngine::open_in_memory(None).unwrap());
+        let engine = Arc::new(strata_memory::SqliteMemoryEngine::open_in_memory(None).unwrap());
         let store = engine.store_arc();
         let session_id = "test-mcp-consolidate";
 
@@ -1159,7 +1159,7 @@ export function login(username: string): boolean {
         use strata_core::traits::MemoryEngine;
         use strata_memory::SqliteMemoryEngine;
 
-        let engine = Arc::new(SqliteMemoryEngine::open_in_memory(None).unwrap());
+        let engine = Arc::new(strata_memory::SqliteMemoryEngine::open_in_memory(None).unwrap());
 
         // Insert connected memories in Knowledge Graph
         let mut mem1 = MemoryRecord::new(
@@ -1230,7 +1230,7 @@ export function login(username: string): boolean {
         use strata_core::schemas::FactStatus;
         use strata_memory::SqliteMemoryEngine;
 
-        let engine = Arc::new(SqliteMemoryEngine::open_in_memory(None).unwrap());
+        let engine = Arc::new(strata_memory::SqliteMemoryEngine::open_in_memory(None).unwrap());
         let store = engine.store_arc();
         let session_id = "test-hook-session-end";
 
@@ -1273,7 +1273,7 @@ export function login(username: string): boolean {
         use crate::commands::task::{run_task, TaskAction, TaskArgs};
         use strata_memory::SqliteMemoryEngine;
 
-        let engine = Arc::new(SqliteMemoryEngine::open_in_memory(None).unwrap());
+        let engine = Arc::new(strata_memory::SqliteMemoryEngine::open_in_memory(None).unwrap());
         let coordinator = engine.stigmergy();
 
         // 1. Create a persistent plan with --persist
@@ -1428,7 +1428,7 @@ export function login(username: string): boolean {
         use strata_core::blackboard::{TaskRecord, TaskStatus};
         use strata_memory::SqliteMemoryEngine;
 
-        let engine = Arc::new(SqliteMemoryEngine::open_in_memory(None).unwrap());
+        let engine = Arc::new(strata_memory::SqliteMemoryEngine::open_in_memory(None).unwrap());
         let coordinator = engine.stigmergy();
         let server = McpServer::new_with_engine(Arc::clone(&engine));
 
@@ -1601,7 +1601,7 @@ export function login(username: string): boolean {
         use crate::mcp::server::McpServer;
         use strata_memory::SqliteMemoryEngine;
 
-        let engine = Arc::new(SqliteMemoryEngine::open_in_memory(None).unwrap());
+        let engine = Arc::new(strata_memory::SqliteMemoryEngine::open_in_memory(None).unwrap());
         let store = engine.store_arc();
         let server = McpServer::new_with_engine(Arc::clone(&engine));
 
@@ -1740,7 +1740,7 @@ export function login(username: string): boolean {
         use strata_core::schemas::{EpisodeRecord, EpisodeStep};
         use strata_memory::SqliteMemoryEngine;
 
-        let engine = Arc::new(SqliteMemoryEngine::open_in_memory(None).unwrap());
+        let engine = Arc::new(strata_memory::SqliteMemoryEngine::open_in_memory(None).unwrap());
         let store = engine.store_arc();
         let server = McpServer::new_with_engine(Arc::clone(&engine));
 
@@ -1965,7 +1965,7 @@ export function login(username: string): boolean {
         use strata_core::blackboard::{TaskRecord, TaskStatus};
         use strata_memory::SqliteMemoryEngine;
 
-        let engine = Arc::new(SqliteMemoryEngine::open_in_memory(None).unwrap());
+        let engine = Arc::new(strata_memory::SqliteMemoryEngine::open_in_memory(None).unwrap());
         let coordinator = engine.stigmergy();
 
         // 1. Setup a DAG on the blackboard: task1 -> task2 (depends on task1)
@@ -2087,7 +2087,7 @@ export function login(username: string): boolean {
         use strata_core::blackboard::{TaskRecord, TaskStatus};
         use strata_memory::SqliteMemoryEngine;
 
-        let engine = Arc::new(SqliteMemoryEngine::open_in_memory(None).unwrap());
+        let engine = Arc::new(strata_memory::SqliteMemoryEngine::open_in_memory(None).unwrap());
         let coordinator = engine.stigmergy();
 
         #[cfg(target_os = "windows")]
@@ -2709,5 +2709,120 @@ pub fn verify_token(token: &str) -> bool {
         assert_eq!(stats.distinct_models_count, 1);
 
         let _ = std::fs::remove_dir_all(&temp_dir);
+    }
+
+    #[tokio::test]
+    async fn test_mcp_macro_and_causal_tools() {
+        let engine = Arc::new(strata_memory::SqliteMemoryEngine::open_in_memory(None).unwrap());
+
+        // 1. Seed a compiled macro into the store
+        let skill = strata_core::schemas::ProceduralSkill::new(
+            "automated_file_patch",
+            "Read a target file, apply updates, and check compilation",
+        )
+        .with_parameters(vec![strata_core::schemas::ParameterDef {
+            name: "path".to_string(),
+            param_type: "string".to_string(),
+            description: "Path to file".to_string(),
+            example: None,
+        }])
+        .with_preconditions(vec!["workspace_clean".to_string()])
+        .with_postconditions(vec!["code_compiles".to_string()]);
+
+        let mut skill_with_tag = skill;
+        skill_with_tag.tags = vec!["compiled_macro".to_string(), "refactor".to_string()];
+        skill_with_tag.steps = vec![strata_core::schemas::ProceduralStep::new(
+            1,
+            "read_file",
+            "Read file",
+            serde_json::json!({ "path": "{{path}}" }),
+        )];
+        engine
+            .store()
+            .insert_or_update_procedural_skill(&skill_with_tag)
+            .unwrap();
+
+        // 2. Seed a semantic fact and failure pattern for causal explanation
+        let mut fact = strata_core::schemas::SemanticFact::new(
+            "cargo test requires all-targets flag for integration tests",
+            "toolchain",
+            strata_core::state::Scope::Global,
+        );
+        fact.tags = vec!["cargo_test".to_string()];
+        engine
+            .store()
+            .insert_or_update_semantic_fact(&fact)
+            .unwrap();
+
+        let pattern = strata_core::state::FailurePattern::new(
+            "cargo_test:missing_flag",
+            "Missing --all-targets flag",
+            "Integration test binaries fail to compile when flag omitted",
+            "Always include --all-targets when running integration tests",
+        );
+        engine.store().upsert_failure_pattern(&pattern).unwrap();
+
+        // 3. Test McpServer macro_list
+        let server = McpServer::new_with_engine(Arc::clone(&engine));
+        let list_res = server
+            .execute_tool("macro_list", serde_json::json!({}))
+            .await;
+        assert_ne!(list_res.is_error, Some(true));
+        assert!(list_res.content[0].text.contains("automated_file_patch"));
+
+        // 3b. Test McpServer macro_execute
+        let test_file = std::env::temp_dir().join("strata_macro_test.txt");
+        std::fs::write(&test_file, "hello macro world").unwrap();
+
+        let exec_res = server
+            .execute_tool(
+                "macro_execute",
+                serde_json::json!({
+                    "macro_name": "automated_file_patch",
+                    "parameters": {
+                        "path": test_file.to_str().unwrap()
+                    }
+                }),
+            )
+            .await;
+        assert_ne!(exec_res.is_error, Some(true));
+        assert!(exec_res.content[0]
+            .text
+            .contains("Macro 'automated_file_patch' executed"));
+        let _ = std::fs::remove_file(&test_file);
+
+        // 4. Test McpServer causal_explain
+        let causal_res = server
+            .execute_tool(
+                "causal_explain",
+                serde_json::json!({
+                    "action": "cargo_test",
+                    "error": "failed to link integration test"
+                }),
+            )
+            .await;
+        assert_ne!(causal_res.is_error, Some(true));
+        assert!(causal_res.content[0].text.contains("cargo_test"));
+
+        // 5. Test CLI macro list and causal explain commands
+        let list_args = MacroArgs {
+            command: MacroCommand::List {
+                tag: None,
+                limit: 10,
+                json: true,
+            },
+        };
+        let cli_macro_res = run_macro(list_args, engine.store_arc()).await;
+        assert!(cli_macro_res.is_ok());
+
+        let causal_args = CausalArgs {
+            command: CausalCommand::Explain {
+                action: "cargo_test".to_string(),
+                error: Some("missing flag".to_string()),
+                json: true,
+            },
+        };
+        let cli_causal_res = run_causal(causal_args, engine.store_arc()).await;
+        assert!(cli_causal_res.is_ok());
     }
 }

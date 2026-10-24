@@ -4,7 +4,8 @@ use petgraph::Direction;
 use std::collections::{HashMap, HashSet, VecDeque};
 
 use super::types::{
-    BlastRadiusReport, CausalEdge, CausalEdgeKind, CausalNode, CausalNodeKind, ImpactedNode,
+    BlastRadiusReport, CausalBeliefUpdate, CausalEdge, CausalEdgeKind, CausalNode, CausalNodeKind,
+    ImpactedNode,
 };
 
 /// Directed Causal Graph of Code Architecture, Data Flows, and Invariant Contracts.
@@ -85,6 +86,74 @@ impl CausalGraph {
     /// Lookup a node ID by its file path.
     pub fn get_node_by_path(&self, path: &str) -> Option<&CausalNode> {
         self.path_to_id.get(path).and_then(|id| self.get_node(id))
+    }
+
+    /// Dynamically applies a causal belief update: adjusts node confidence penalties,
+    /// creates new learned causal edges, and adds or updates assumption/invariant nodes.
+    pub fn apply_belief_update(&mut self, update: &CausalBeliefUpdate) -> Result<Vec<String>> {
+        let mut affected = Vec::new();
+
+        // 1. Penalize confidence of nodes
+        for (node_id, penalty) in &update.node_confidence_penalties {
+            if let Some(&idx) = self.node_indices.get(node_id) {
+                let node = &mut self.graph[idx];
+                node.confidence = (node.confidence - penalty).clamp(0.05, 1.0);
+                affected.push(format!(
+                    "node_confidence_downgrade:{node_id}:{:.2}",
+                    node.confidence
+                ));
+            }
+        }
+
+        // 2. Invalidate assumptions
+        for assumption_id in &update.invalidated_assumptions {
+            if let Some(&idx) = self.node_indices.get(assumption_id) {
+                let node = &mut self.graph[idx];
+                node.confidence = 0.0;
+                affected.push(format!("assumption_invalidated:{assumption_id}"));
+            }
+        }
+
+        // 3. Register new causal edges
+        for (source_id, target_id, edge) in &update.new_causal_edges {
+            if !self.node_indices.contains_key(source_id) {
+                let source_node =
+                    CausalNode::new(source_id.clone(), source_id.clone(), CausalNodeKind::Action);
+                self.add_node(source_node);
+            }
+            if !self.node_indices.contains_key(target_id) {
+                let target_node = CausalNode::new(
+                    target_id.clone(),
+                    target_id.clone(),
+                    CausalNodeKind::EnvironmentVariable,
+                );
+                self.add_node(target_node);
+            }
+
+            self.add_edge(source_id, target_id, edge.clone())?;
+            affected.push(format!(
+                "causal_edge_added:{source_id}->{target_id}:{}",
+                edge.kind
+            ));
+        }
+
+        // 4. Register learned invariants
+        for inv in &update.learned_invariants {
+            let inv_id = format!(
+                "invariant:learned:{}",
+                inv.replace(|c: char| !c.is_alphanumeric(), "_")
+                    .to_lowercase()
+            );
+            let node = CausalNode::new(
+                inv_id.clone(),
+                inv.clone(),
+                CausalNodeKind::ContractInvariant,
+            );
+            self.add_node(node);
+            affected.push(format!("learned_invariant_registered:{inv_id}"));
+        }
+
+        Ok(affected)
     }
 
     /// Number of nodes registered in the graph.
