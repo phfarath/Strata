@@ -8,6 +8,7 @@ use uuid::Uuid;
 use super::generator::{
     generate_ollama_modelfile, generate_run_script, generate_unsloth_training_script,
 };
+use super::replay::ExperienceReplayBuffer;
 use super::types::{TrainingConfig, TrainingManifest, TrainingResult};
 
 /// End-to-end orchestrator for dataset formatting, Unsloth Python script synthesis,
@@ -370,6 +371,18 @@ impl TrainingPipeline {
         )?;
 
         Ok((split_result, training_result))
+    }
+
+    /// Synthesize training artifacts from a curated experience replay buffer batch.
+    pub fn generate_rehearsal_curriculum_artifacts(
+        &self,
+        output_dir: &Path,
+        replay_buffer: &ExperienceReplayBuffer,
+        batch_size: usize,
+        eval_ratio: f32,
+    ) -> Result<(CurriculumSplitResult, TrainingResult), StrataError> {
+        let rehearsal_jsonl = replay_buffer.export_rehearsal_jsonl(batch_size);
+        self.generate_curriculum_artifacts(output_dir, &rehearsal_jsonl, eval_ratio)
     }
 }
 
