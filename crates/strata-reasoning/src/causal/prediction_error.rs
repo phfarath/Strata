@@ -4,9 +4,9 @@ use uuid::Uuid;
 
 use super::graph::CausalGraph;
 use super::types::{
-    ActionExpectation, CausalBeliefUpdate, CausalEdge, CausalNodeKind,
-    CounterfactualAttribution, CounterfactualHypothesis,
-    CounterfactualSimulationResult, ObservedOutcome, PredictionError, PredictionMismatchType,
+    ActionExpectation, CausalBeliefUpdate, CausalEdge, CausalNodeKind, CounterfactualAttribution,
+    CounterfactualHypothesis, CounterfactualSimulationResult, ObservedOutcome, PredictionError,
+    PredictionMismatchType,
 };
 
 /// Motor de Causal Prediction-Error e Atribuição Contrafactual (Phase 4.1).
@@ -129,8 +129,8 @@ impl CausalPredictionEngine {
         }
 
         if !expectation.preconditions.is_empty() {
-            let pre_ratio = violated_preconditions.len() as f32
-                / expectation.preconditions.len() as f32;
+            let pre_ratio =
+                violated_preconditions.len() as f32 / expectation.preconditions.len() as f32;
             discrepancy += pre_ratio * 0.15;
         } else if !violated_preconditions.is_empty() {
             discrepancy += 0.15;
@@ -332,7 +332,10 @@ impl CausalPredictionEngine {
         let mut learned_invariants = Vec::new();
 
         // 1. Invalidate naive assumption that action could succeed without the pivot variable
-        let assumption_id = format!("assumption:{}:{}", error.action_id, attribution.pivot_variable);
+        let assumption_id = format!(
+            "assumption:{}:{}",
+            error.action_id, attribution.pivot_variable
+        );
         invalidated_assumptions.push(assumption_id.clone());
 
         // Also check if any existing Assumption nodes in graph connect to this action
@@ -343,12 +346,11 @@ impl CausalPredictionEngine {
         }
 
         // 2. Add new causal dependency edge: action depends on pivot variable
-        let edge = CausalEdge::depends_on(attribution.attribution_confidence).with_description(
-            format!(
+        let edge =
+            CausalEdge::depends_on(attribution.attribution_confidence).with_description(format!(
                 "Learned dependency: action '{}' requires '{}' (attribution confidence {:.2})",
                 error.action_id, attribution.pivot_variable, attribution.attribution_confidence
-            ),
-        );
+            ));
         new_causal_edges.push((
             error.action_id.clone(),
             attribution.pivot_variable.clone(),
@@ -425,12 +427,14 @@ mod tests {
     #[test]
     fn test_perfect_prediction_returns_no_error() {
         let engine = CausalPredictionEngine::new();
-        let expectation = ActionExpectation::new("cargo_check")
-            .with_expected_success(true);
+        let expectation = ActionExpectation::new("cargo_check").with_expected_success(true);
         let outcome = ObservedOutcome::success(serde_json::json!({ "status": "ok" }));
 
         let error = engine.calculate_prediction_error(&expectation, &outcome);
-        assert!(error.is_none(), "Matching expectation and outcome must produce no error");
+        assert!(
+            error.is_none(),
+            "Matching expectation and outcome must produce no error"
+        );
     }
 
     #[test]
@@ -438,7 +442,10 @@ mod tests {
         let engine = CausalPredictionEngine::new();
         let expectation = ActionExpectation::new("cargo_build")
             .with_expected_success(true)
-            .with_expected_postcondition(CausalPostcondition::new("target_binary", "Binary created"));
+            .with_expected_postcondition(CausalPostcondition::new(
+                "target_binary",
+                "Binary created",
+            ));
 
         let outcome = ObservedOutcome::failure("error[E0432]: unresolved import", Some(101));
 
@@ -466,7 +473,10 @@ mod tests {
         let error = engine.calculate_prediction_error(&expectation, &outcome);
         assert!(error.is_some());
         let pe = error.unwrap();
-        assert_eq!(pe.mismatch_type, PredictionMismatchType::UnsatisfiedPrecondition);
+        assert_eq!(
+            pe.mismatch_type,
+            PredictionMismatchType::UnsatisfiedPrecondition
+        );
         assert_eq!(pe.violated_preconditions.len(), 1);
         assert_eq!(pe.violated_preconditions[0].id, "db_ready");
     }
@@ -476,21 +486,31 @@ mod tests {
         let engine = CausalPredictionEngine::new();
         let expectation = ActionExpectation::new("generate_docs")
             .with_expected_success(true)
-            .with_expected_postcondition(CausalPostcondition::new("index_html", "HTML index file created"));
+            .with_expected_postcondition(CausalPostcondition::new(
+                "index_html",
+                "HTML index file created",
+            ));
 
         let outcome = ObservedOutcome::success(serde_json::json!({ "exit": 0 }));
 
         let error = engine.calculate_prediction_error(&expectation, &outcome);
         assert!(error.is_some());
         let pe = error.unwrap();
-        assert_eq!(pe.mismatch_type, PredictionMismatchType::PostconditionViolation);
+        assert_eq!(
+            pe.mismatch_type,
+            PredictionMismatchType::PostconditionViolation
+        );
     }
 
     #[test]
     fn test_counterfactual_attribution_isolates_pivot_variable() {
         let engine = CausalPredictionEngine::new();
         let mut graph = CausalGraph::new();
-        graph.add_node(CausalNode::new("flag_all_targets", "All Targets Flag", CausalNodeKind::ConfigOption));
+        graph.add_node(CausalNode::new(
+            "flag_all_targets",
+            "All Targets Flag",
+            CausalNodeKind::ConfigOption,
+        ));
 
         let expectation = ActionExpectation::new("cargo_test")
             .with_expected_success(true)
@@ -498,10 +518,16 @@ mod tests {
             .with_variable("opt_level", serde_json::json!(3))
             .with_variable("working_dir", serde_json::json!("."));
 
-        let outcome = ObservedOutcome::failure("error: test binary missing, flag --all-targets required", Some(1));
+        let outcome = ObservedOutcome::failure(
+            "error: test binary missing, flag --all-targets required",
+            Some(1),
+        );
 
-        let error = engine.calculate_prediction_error(&expectation, &outcome).expect("prediction error");
-        let attribution = engine.perform_counterfactual_attribution(&error, &expectation, &outcome, &graph);
+        let error = engine
+            .calculate_prediction_error(&expectation, &outcome)
+            .expect("prediction error");
+        let attribution =
+            engine.perform_counterfactual_attribution(&error, &expectation, &outcome, &graph);
 
         assert_eq!(attribution.pivot_variable, "flag_all_targets");
         assert!(attribution.attribution_confidence > 0.80);
@@ -521,23 +547,34 @@ mod tests {
             .with_expected_success(true)
             .with_variable("feature_ssl", serde_json::json!(false));
 
-        let outcome = ObservedOutcome::failure("openssl crate missing: enable feature_ssl", Some(1));
-        let error = engine.calculate_prediction_error(&expectation, &outcome).unwrap();
-        let attribution = engine.perform_counterfactual_attribution(&error, &expectation, &outcome, &graph);
+        let outcome =
+            ObservedOutcome::failure("openssl crate missing: enable feature_ssl", Some(1));
+        let error = engine
+            .calculate_prediction_error(&expectation, &outcome)
+            .unwrap();
+        let attribution =
+            engine.perform_counterfactual_attribution(&error, &expectation, &outcome, &graph);
         let update = engine.synthesize_belief_update(&attribution, &error, &graph);
 
         assert!(!update.invalidated_assumptions.is_empty());
         assert!(!update.new_causal_edges.is_empty());
         assert!(!update.learned_invariants.is_empty());
 
-        let affected = graph.apply_belief_update(&update).expect("apply belief update");
+        let affected = graph
+            .apply_belief_update(&update)
+            .expect("apply belief update");
         assert!(!affected.is_empty());
 
         let target_node = graph.get_node("feature_ssl");
-        assert!(target_node.is_some(), "Pivot variable node must be created in graph");
+        assert!(
+            target_node.is_some(),
+            "Pivot variable node must be created in graph"
+        );
 
         let incoming = graph.incoming_dependencies("feature_ssl");
-        assert!(incoming.iter().any(|(n, e)| n.id == "cargo_build" && e.kind == CausalEdgeKind::DependsOn));
+        assert!(incoming
+            .iter()
+            .any(|(n, e)| n.id == "cargo_build" && e.kind == CausalEdgeKind::DependsOn));
     }
 
     #[test]

@@ -441,7 +441,9 @@ impl std::fmt::Display for PredictionMismatchType {
             PredictionMismatchType::UnexpectedFailure => write!(f, "unexpected_failure"),
             PredictionMismatchType::UnexpectedSuccess => write!(f, "unexpected_success"),
             PredictionMismatchType::PostconditionViolation => write!(f, "postcondition_violation"),
-            PredictionMismatchType::UnsatisfiedPrecondition => write!(f, "unsatisfied_precondition"),
+            PredictionMismatchType::UnsatisfiedPrecondition => {
+                write!(f, "unsatisfied_precondition")
+            }
             PredictionMismatchType::InvariantBreach => write!(f, "invariant_breach"),
         }
     }

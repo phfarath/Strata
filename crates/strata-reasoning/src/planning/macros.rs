@@ -1,10 +1,10 @@
 use anyhow::{bail, Result};
-use serde::{Deserialize, Serialize};
 use chrono::{DateTime, Utc};
+use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::time::Instant;
-use uuid::Uuid;
 use strata_core::schemas::{ParameterDef, ProceduralSkill, ProceduralStep};
+use uuid::Uuid;
 
 use super::dag::GoalDag;
 use super::types::{GoalNode, GoalNodeKind, GoalStatus};
@@ -171,7 +171,12 @@ impl CompiledMacro {
         let mut skill = ProceduralSkill::new(self.name.clone(), self.description.clone())
             .with_preconditions(self.preconditions.clone())
             .with_postconditions(self.postconditions.clone())
-            .with_parameters(self.parameters.iter().map(|p| p.to_parameter_def()).collect());
+            .with_parameters(
+                self.parameters
+                    .iter()
+                    .map(|p| p.to_parameter_def())
+                    .collect(),
+            );
         skill.id = self.id;
         skill.success_rate = self.success_rate;
         skill.importance = 0.90;
@@ -205,7 +210,10 @@ impl CompiledMacro {
             .map(|p| MacroParameter {
                 name: p.name.clone(),
                 description: p.description.clone(),
-                default_value: p.example.as_ref().and_then(|ex| serde_json::from_str(ex).ok()),
+                default_value: p
+                    .example
+                    .as_ref()
+                    .and_then(|ex| serde_json::from_str(ex).ok()),
                 required: true,
             })
             .collect();
@@ -356,8 +364,13 @@ impl MacroExecutionEngine {
 
         // 1. Validate required parameters
         for param in &macro_def.parameters {
-            if param.required && !params.contains_key(&param.name) && param.default_value.is_none() {
-                bail!("Missing required parameter '{}' for macro '{}'", param.name, macro_def.name);
+            if param.required && !params.contains_key(&param.name) && param.default_value.is_none()
+            {
+                bail!(
+                    "Missing required parameter '{}' for macro '{}'",
+                    param.name,
+                    macro_def.name
+                );
             }
         }
 
@@ -374,7 +387,8 @@ impl MacroExecutionEngine {
         // 2. Execute each step sequentially
         for step in &macro_def.steps {
             let step_start = Instant::now();
-            let resolved_input = Self::interpolate_template(&step.input_template, &effective_params);
+            let resolved_input =
+                Self::interpolate_template(&step.input_template, &effective_params);
 
             match invoker.invoke(&step.tool_name, &resolved_input).await {
                 Ok(output) => {
@@ -401,7 +415,10 @@ impl MacroExecutionEngine {
                         duration_ms: duration,
                     });
                     success = false;
-                    failure_err = Some(format!("Step {} ({}) failed: {}", step.step_index, step.tool_name, err_str));
+                    failure_err = Some(format!(
+                        "Step {} ({}) failed: {}",
+                        step.step_index, step.tool_name, err_str
+                    ));
                     break;
                 }
             }
@@ -954,5 +971,5 @@ mod tests {
         assert!(!report.success);
         assert_eq!(report.steps_completed, 1);
         assert!(report.error.unwrap().contains("Disk full"));
-        }
+    }
 }

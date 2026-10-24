@@ -7,9 +7,9 @@ use super::graph::CausalGraph;
 use super::indexer::CodebaseCausalIndexer;
 use super::prediction_error::CausalPredictionEngine;
 use super::types::{
-    ActionExpectation, BlastRadiusReport, CausalBeliefUpdate, CausalEdge, CausalNode, CausalNodeKind,
-    CounterfactualAttribution, CounterfactualHypothesis, CounterfactualSimulationResult,
-    ObservedOutcome, PatchSimulationResult, PredictionError,
+    ActionExpectation, BlastRadiusReport, CausalBeliefUpdate, CausalEdge, CausalNode,
+    CausalNodeKind, CounterfactualAttribution, CounterfactualHypothesis,
+    CounterfactualSimulationResult, ObservedOutcome, PatchSimulationResult, PredictionError,
 };
 
 /// Cognitive World Model managing the causal architectural graph and pre-flight change simulations.
@@ -185,7 +185,6 @@ impl WorldModel {
             safe_to_apply,
             blast_reports: reports,
         })
-
     }
 
     /// Predicts action feasibility and expected success rate prior to execution.
@@ -203,7 +202,8 @@ impl WorldModel {
         expectation: &ActionExpectation,
         outcome: &ObservedOutcome,
     ) -> Option<PredictionError> {
-        self.prediction_engine.calculate_prediction_error(expectation, outcome)
+        self.prediction_engine
+            .calculate_prediction_error(expectation, outcome)
     }
 
     /// Core continual learning cycle: processes action feedback, detects prediction errors,
@@ -217,7 +217,9 @@ impl WorldModel {
         Option<CounterfactualAttribution>,
         Option<CausalBeliefUpdate>,
     )> {
-        let maybe_error = self.prediction_engine.calculate_prediction_error(expectation, outcome);
+        let maybe_error = self
+            .prediction_engine
+            .calculate_prediction_error(expectation, outcome);
         let Some(error) = maybe_error else {
             return Ok((None, None, None));
         };
@@ -230,7 +232,9 @@ impl WorldModel {
                 outcome,
                 &graph,
             );
-            let update = self.prediction_engine.synthesize_belief_update(&attribution, &error, &graph);
+            let update =
+                self.prediction_engine
+                    .synthesize_belief_update(&attribution, &error, &graph);
             graph.apply_belief_update(&update)?;
             (attribution, update)
         };
@@ -245,6 +249,7 @@ impl WorldModel {
         intervention: &CounterfactualHypothesis,
     ) -> CounterfactualSimulationResult {
         let graph = self.graph.read().await;
-        self.prediction_engine.simulate_counterfactual(action_id, intervention, &graph)
+        self.prediction_engine
+            .simulate_counterfactual(action_id, intervention, &graph)
     }
 }

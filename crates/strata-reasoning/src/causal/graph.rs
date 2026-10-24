@@ -98,7 +98,10 @@ impl CausalGraph {
             if let Some(&idx) = self.node_indices.get(node_id) {
                 let node = &mut self.graph[idx];
                 node.confidence = (node.confidence - penalty).clamp(0.05, 1.0);
-                affected.push(format!("node_confidence_downgrade:{node_id}:{:.2}", node.confidence));
+                affected.push(format!(
+                    "node_confidence_downgrade:{node_id}:{:.2}",
+                    node.confidence
+                ));
             }
         }
 
@@ -114,22 +117,38 @@ impl CausalGraph {
         // 3. Register new causal edges
         for (source_id, target_id, edge) in &update.new_causal_edges {
             if !self.node_indices.contains_key(source_id) {
-                let source_node = CausalNode::new(source_id.clone(), source_id.clone(), CausalNodeKind::Action);
+                let source_node =
+                    CausalNode::new(source_id.clone(), source_id.clone(), CausalNodeKind::Action);
                 self.add_node(source_node);
             }
             if !self.node_indices.contains_key(target_id) {
-                let target_node = CausalNode::new(target_id.clone(), target_id.clone(), CausalNodeKind::EnvironmentVariable);
+                let target_node = CausalNode::new(
+                    target_id.clone(),
+                    target_id.clone(),
+                    CausalNodeKind::EnvironmentVariable,
+                );
                 self.add_node(target_node);
             }
 
             self.add_edge(source_id, target_id, edge.clone())?;
-            affected.push(format!("causal_edge_added:{source_id}->{target_id}:{}", edge.kind));
+            affected.push(format!(
+                "causal_edge_added:{source_id}->{target_id}:{}",
+                edge.kind
+            ));
         }
 
         // 4. Register learned invariants
         for inv in &update.learned_invariants {
-            let inv_id = format!("invariant:learned:{}", inv.replace(|c: char| !c.is_alphanumeric(), "_").to_lowercase());
-            let node = CausalNode::new(inv_id.clone(), inv.clone(), CausalNodeKind::ContractInvariant);
+            let inv_id = format!(
+                "invariant:learned:{}",
+                inv.replace(|c: char| !c.is_alphanumeric(), "_")
+                    .to_lowercase()
+            );
+            let node = CausalNode::new(
+                inv_id.clone(),
+                inv.clone(),
+                CausalNodeKind::ContractInvariant,
+            );
             self.add_node(node);
             affected.push(format!("learned_invariant_registered:{inv_id}"));
         }

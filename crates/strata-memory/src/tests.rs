@@ -2572,7 +2572,10 @@ async fn test_autonomous_procedural_skill_mining_and_macro_synthesis() {
 
     // 3. Synthesize compiled macro
     let macros = miner.mine_and_compile_macros(&episodes, 2, 0.95);
-    assert!(!macros.is_empty(), "Parameterized macros must be synthesized");
+    assert!(
+        !macros.is_empty(),
+        "Parameterized macros must be synthesized"
+    );
 
     let compiled_macro = macros
         .iter()

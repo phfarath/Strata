@@ -67,12 +67,23 @@ impl MacroSynthesizer {
                             let placeholder = format!("{{{{{param_name}}}}}");
                             template_obj.insert(k.clone(), serde_json::Value::String(placeholder));
 
-                            if !parameters.iter().any(|p: &MacroParameter| p.name == param_name) {
-                                parameters.push(MacroParameter::new(
-                                    param_name,
-                                    format!("Dynamic argument for step {} ({}.{})", step_idx + 1, tool_name, k),
-                                    true,
-                                ).with_default(v.clone()));
+                            if !parameters
+                                .iter()
+                                .any(|p: &MacroParameter| p.name == param_name)
+                            {
+                                parameters.push(
+                                    MacroParameter::new(
+                                        param_name,
+                                        format!(
+                                            "Dynamic argument for step {} ({}.{})",
+                                            step_idx + 1,
+                                            tool_name,
+                                            k
+                                        ),
+                                        true,
+                                    )
+                                    .with_default(v.clone()),
+                                );
                             }
                         } else {
                             template_obj.insert(k.clone(), v.clone());
@@ -94,8 +105,14 @@ impl MacroSynthesizer {
         let mut compiled = CompiledMacro::new(macro_name, description)
             .with_steps(steps)
             .with_parameters(parameters)
-            .with_preconditions(vec![format!("Tool dependencies available: {}", seq.tools.join(", "))])
-            .with_postconditions(vec![format!("Sequence completed: {}", seq.tools.join(" -> "))]);
+            .with_preconditions(vec![format!(
+                "Tool dependencies available: {}",
+                seq.tools.join(", ")
+            )])
+            .with_postconditions(vec![format!(
+                "Sequence completed: {}",
+                seq.tools.join(" -> ")
+            )]);
 
         compiled.support_count = seq.occurrence_count;
         compiled.success_rate = (seq.average_salience).clamp(0.5, 1.0);
@@ -125,8 +142,10 @@ impl TrajectoryMiner {
         min_support: usize,
         min_salience: f32,
     ) -> Vec<FrequentToolSequence> {
-        let mut sequence_instances: HashMap<Vec<String>, (Vec<Uuid>, Vec<f32>, Vec<Vec<serde_json::Value>>)> =
-            HashMap::new();
+        let mut sequence_instances: HashMap<
+            Vec<String>,
+            (Vec<Uuid>, Vec<f32>, Vec<Vec<serde_json::Value>>),
+        > = HashMap::new();
 
         for ep in episodes {
             if ep.salience_score < min_salience || ep.event_trace.is_empty() {
@@ -139,7 +158,10 @@ impl TrajectoryMiner {
                 .iter()
                 .filter_map(|step| {
                     step.tool.as_ref().map(|t| {
-                        (t.clone(), step.input.clone().unwrap_or(serde_json::json!({})))
+                        (
+                            t.clone(),
+                            step.input.clone().unwrap_or(serde_json::json!({})),
+                        )
                     })
                 })
                 .collect();

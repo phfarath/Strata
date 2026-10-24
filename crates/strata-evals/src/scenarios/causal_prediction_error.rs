@@ -46,15 +46,29 @@ pub async fn run_causal_prediction_error_scenario() -> Result<()> {
     // 3. Register nodes in World Model causal graph
     {
         let mut graph = world_model.read_graph().await.clone();
-        graph.add_node(CausalNode::new("cargo_test", "Cargo Test Runner", CausalNodeKind::Action));
-        graph.add_node(CausalNode::new("flag_all_targets", "All Targets Flag", CausalNodeKind::ConfigOption));
+        graph.add_node(CausalNode::new(
+            "cargo_test",
+            "Cargo Test Runner",
+            CausalNodeKind::Action,
+        ));
+        graph.add_node(CausalNode::new(
+            "flag_all_targets",
+            "All Targets Flag",
+            CausalNodeKind::ConfigOption,
+        ));
     }
 
     // 4. Formulate ActionExpectation
     let expectation = ActionExpectation::new("cargo_test")
         .with_expected_success(true)
-        .with_precondition(CausalPrecondition::new("rust_installed", "Rust toolchain available"))
-        .with_expected_postcondition(CausalPostcondition::new("test_suite_passed", "All integration tests pass"))
+        .with_precondition(CausalPrecondition::new(
+            "rust_installed",
+            "Rust toolchain available",
+        ))
+        .with_expected_postcondition(CausalPostcondition::new(
+            "test_suite_passed",
+            "All integration tests pass",
+        ))
         .with_variable("flag_all_targets", serde_json::json!(false))
         .with_variable("target_profile", serde_json::json!("dev"));
 
@@ -120,7 +134,8 @@ pub async fn run_causal_prediction_error_scenario() -> Result<()> {
     }
 
     // 8. Feed CausalBeliefUpdate to JTMS: invalidation cascade
-    let invalidated = jtms.apply_causal_invalidation_cascade(&store, &update, "Prediction Error Feedback")?;
+    let invalidated =
+        jtms.apply_causal_invalidation_cascade(&store, &update, "Prediction Error Feedback")?;
     if !invalidated.contains(&fact_baseline.id) {
         bail!("Baseline fact must be invalidated by JTMS causal cascade");
     }
@@ -156,8 +171,14 @@ pub async fn run_causal_prediction_error_scenario() -> Result<()> {
     // 10. Re-run action with counterfactual intervention applied
     let corrected_expectation = ActionExpectation::new("cargo_test")
         .with_expected_success(true)
-        .with_expected_postcondition(CausalPostcondition::new("test_suite_passed", "All integration tests pass"))
-        .with_variable("flag_all_targets", intervention.counterfactual_value.clone());
+        .with_expected_postcondition(CausalPostcondition::new(
+            "test_suite_passed",
+            "All integration tests pass",
+        ))
+        .with_variable(
+            "flag_all_targets",
+            intervention.counterfactual_value.clone(),
+        );
 
     let mut ok_post = CausalPostcondition::new("test_suite_passed", "All integration tests pass");
     ok_post.satisfied = true;

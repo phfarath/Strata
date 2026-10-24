@@ -2633,7 +2633,10 @@ impl McpServer {
                             macros.len(),
                             names.join(", ")
                         );
-                        CallToolResult::structured(summary, serde_json::to_value(&macros).unwrap_or_default())
+                        CallToolResult::structured(
+                            summary,
+                            serde_json::to_value(&macros).unwrap_or_default(),
+                        )
                     }
                     Err(e) => CallToolResult::error(format!("Failed to list macros: {e}")),
                 }
@@ -2654,7 +2657,11 @@ impl McpServer {
                 let skill = if let Some(id_str) = macro_id_str {
                     match Uuid::parse_str(id_str) {
                         Ok(u) => sqlite.store().get_procedural_skill(&u),
-                        Err(e) => return CallToolResult::error(format!("Invalid macro_id UUID '{id_str}': {e}")),
+                        Err(e) => {
+                            return CallToolResult::error(format!(
+                                "Invalid macro_id UUID '{id_str}': {e}"
+                            ))
+                        }
                     }
                 } else if let Some(name) = macro_name_str {
                     sqlite.store().get_procedural_skill_by_name(name)
@@ -2669,7 +2676,9 @@ impl McpServer {
                 };
 
                 let compiled =
-                    strata_reasoning::planning::macros::CompiledMacro::from_procedural_skill(&skill);
+                    strata_reasoning::planning::macros::CompiledMacro::from_procedural_skill(
+                        &skill,
+                    );
 
                 let raw_params = args
                     .get("parameters")
@@ -2682,25 +2691,39 @@ impl McpServer {
                 }
 
                 let invoker = strata_reasoning::planning::macros::CallbackToolInvoker::new(
-                    |tool_name: &str, input: &serde_json::Value| -> anyhow::Result<serde_json::Value> {
+                    |tool_name: &str,
+                     input: &serde_json::Value|
+                     -> anyhow::Result<serde_json::Value> {
                         match tool_name {
                             "read_file" => {
-                                let path_str = input.get("path").and_then(|v| v.as_str()).unwrap_or("");
+                                let path_str =
+                                    input.get("path").and_then(|v| v.as_str()).unwrap_or("");
                                 match std::fs::read_to_string(path_str) {
-                                    Ok(content) => Ok(serde_json::json!({ "status": "ok", "path": path_str, "content": content })),
-                                    Err(e) => anyhow::bail!("Failed to read file '{path_str}': {e}"),
+                                    Ok(content) => Ok(
+                                        serde_json::json!({ "status": "ok", "path": path_str, "content": content }),
+                                    ),
+                                    Err(e) => {
+                                        anyhow::bail!("Failed to read file '{path_str}': {e}")
+                                    }
                                 }
                             }
                             "write_file" | "edit_file" => {
-                                let path_str = input.get("path").and_then(|v| v.as_str()).unwrap_or("");
-                                let content = input.get("content").and_then(|v| v.as_str()).unwrap_or("");
+                                let path_str =
+                                    input.get("path").and_then(|v| v.as_str()).unwrap_or("");
+                                let content =
+                                    input.get("content").and_then(|v| v.as_str()).unwrap_or("");
                                 match std::fs::write(path_str, content) {
-                                    Ok(_) => Ok(serde_json::json!({ "status": "ok", "path": path_str, "bytes_written": content.len() })),
-                                    Err(e) => anyhow::bail!("Failed to write file '{path_str}': {e}"),
+                                    Ok(_) => Ok(
+                                        serde_json::json!({ "status": "ok", "path": path_str, "bytes_written": content.len() }),
+                                    ),
+                                    Err(e) => {
+                                        anyhow::bail!("Failed to write file '{path_str}': {e}")
+                                    }
                                 }
                             }
                             "cargo_check" => {
-                                let flags = input.get("flags").and_then(|v| v.as_str()).unwrap_or("");
+                                let flags =
+                                    input.get("flags").and_then(|v| v.as_str()).unwrap_or("");
                                 let pkg = input.get("package").and_then(|v| v.as_str());
                                 let mut cmd = std::process::Command::new("cargo");
                                 cmd.arg("check");
@@ -2724,7 +2747,10 @@ impl McpServer {
                 );
 
                 let engine = strata_reasoning::planning::macros::MacroExecutionEngine::new();
-                match engine.execute_macro_1step(&compiled, &execution_params, &invoker).await {
+                match engine
+                    .execute_macro_1step(&compiled, &execution_params, &invoker)
+                    .await
+                {
                     Ok(report) => {
                         let summary = format!(
                             "Macro '{}' executed: success={}, completed {}/{} steps in {}ms (estimated {} tokens saved)",
@@ -2735,7 +2761,10 @@ impl McpServer {
                             report.total_duration_ms,
                             report.tokens_saved
                         );
-                        CallToolResult::structured(summary, serde_json::to_value(&report).unwrap_or_default())
+                        CallToolResult::structured(
+                            summary,
+                            serde_json::to_value(&report).unwrap_or_default(),
+                        )
                     }
                     Err(e) => CallToolResult::error(format!("Macro execution engine failed: {e}")),
                 }
@@ -2763,7 +2792,9 @@ impl McpServer {
                 let relevant_patterns: Vec<_> = patterns
                     .into_iter()
                     .filter(|p| {
-                        p.pattern_name.to_lowercase().contains(&action.to_lowercase())
+                        p.pattern_name
+                            .to_lowercase()
+                            .contains(&action.to_lowercase())
                             || p.error_type.to_lowercase().contains(&action.to_lowercase())
                             || (!error_observed.is_empty()
                                 && p.description
@@ -2779,7 +2810,9 @@ impl McpServer {
                 let relevant_facts: Vec<_> = facts
                     .into_iter()
                     .filter(|f| {
-                        f.tags.iter().any(|t| t.to_lowercase().contains(&action.to_lowercase()))
+                        f.tags
+                            .iter()
+                            .any(|t| t.to_lowercase().contains(&action.to_lowercase()))
                             || f.statement.to_lowercase().contains(&action.to_lowercase())
                     })
                     .collect();

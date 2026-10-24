@@ -32,7 +32,9 @@ pub async fn run_autonomous_procedural_macro_scenario() -> Result<()> {
             .with_input(json!({ "path": "crates/auth/src/token.rs" })),
         EpisodeStep::new(2, "Update token ttl")
             .with_tool("edit_file")
-            .with_input(json!({ "path": "crates/auth/src/token.rs", "content": "const TTL: u64 = 7200;" })),
+            .with_input(
+                json!({ "path": "crates/auth/src/token.rs", "content": "const TTL: u64 = 7200;" }),
+            ),
         EpisodeStep::new(3, "Check compilation")
             .with_tool("cargo_check")
             .with_input(json!({ "package": "strata-auth", "flags": "--all-targets" })),
@@ -89,7 +91,9 @@ pub async fn run_autonomous_procedural_macro_scenario() -> Result<()> {
 
     let found_seq = match target_seq {
         Some(s) => s,
-        None => bail!("Expected frequent sequence ['read_file', 'edit_file', 'cargo_check'] was not mined"),
+        None => bail!(
+            "Expected frequent sequence ['read_file', 'edit_file', 'cargo_check'] was not mined"
+        ),
     };
 
     println!(
@@ -107,7 +111,9 @@ pub async fn run_autonomous_procedural_macro_scenario() -> Result<()> {
         .find(|m| m.tool_sequence == vec!["read_file", "edit_file", "cargo_check"])
     {
         Some(m) => m.clone(),
-        None => bail!("Compiled macro for ['read_file', 'edit_file', 'cargo_check'] was not synthesized"),
+        None => bail!(
+            "Compiled macro for ['read_file', 'edit_file', 'cargo_check'] was not synthesized"
+        ),
     };
 
     println!(
@@ -192,12 +198,17 @@ pub async fn run_autonomous_procedural_macro_scenario() -> Result<()> {
     }
 
     // 6. Fault tolerance test: verify execution halts immediately on intermediate failure
-    let failing_invoker = CallbackToolInvoker::new(|tool_name: &str, _args: &serde_json::Value| match tool_name {
-        "read_file" => Ok(json!({ "status": "ok" })),
-        "edit_file" => bail!("Disk I/O error: permission denied writing to target file"),
-        "cargo_check" => panic!("cargo_check should never be called after edit_file failed!"),
-        other => bail!("Unexpected tool: {}", other),
-    });
+    let failing_invoker =
+        CallbackToolInvoker::new(
+            |tool_name: &str, _args: &serde_json::Value| match tool_name {
+                "read_file" => Ok(json!({ "status": "ok" })),
+                "edit_file" => bail!("Disk I/O error: permission denied writing to target file"),
+                "cargo_check" => {
+                    panic!("cargo_check should never be called after edit_file failed!")
+                }
+                other => bail!("Unexpected tool: {}", other),
+            },
+        );
 
     let failing_engine = MacroExecutionEngine::new();
     let fail_report = failing_engine

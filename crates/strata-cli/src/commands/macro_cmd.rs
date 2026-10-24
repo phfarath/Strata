@@ -40,7 +40,11 @@ pub enum MacroCommand {
         macro_id_or_name: String,
 
         /// Dynamic execution parameters as a JSON object: '{"path": "src/main.rs", ...}'
-        #[arg(long, default_value = "{}", help = "JSON dictionary of execution parameters")]
+        #[arg(
+            long,
+            default_value = "{}",
+            help = "JSON dictionary of execution parameters"
+        )]
         params: String,
 
         /// Output execution report as raw JSON
@@ -89,7 +93,10 @@ pub async fn run_macro(args: MacroArgs, store: Arc<SqliteStore>) -> Result<()> {
             for m in &macros {
                 println!(
                     "\n• [{}] {} ({} steps, ~{} tokens saved)",
-                    m.id, m.name, m.steps.len(), m.estimated_tokens_saved
+                    m.id,
+                    m.name,
+                    m.steps.len(),
+                    m.estimated_tokens_saved
                 );
                 println!("  Description: {}", m.description);
                 println!("  Sequence:    {}", m.tool_sequence.join(" -> "));
@@ -107,9 +114,12 @@ pub async fn run_macro(args: MacroArgs, store: Arc<SqliteStore>) -> Result<()> {
             json,
         } => {
             let skill = if let Ok(u) = Uuid::parse_str(&macro_id_or_name) {
-                store
-                    .get_procedural_skill(&u)?
-                    .or_else(|| store.get_procedural_skill_by_name(&macro_id_or_name).ok().flatten())
+                store.get_procedural_skill(&u)?.or_else(|| {
+                    store
+                        .get_procedural_skill_by_name(&macro_id_or_name)
+                        .ok()
+                        .flatten()
+                })
             } else {
                 store.get_procedural_skill_by_name(&macro_id_or_name)?
             };
@@ -121,8 +131,8 @@ pub async fn run_macro(args: MacroArgs, store: Arc<SqliteStore>) -> Result<()> {
 
             let compiled = CompiledMacro::from_procedural_skill(&skill);
 
-            let parsed_params: serde_json::Value = serde_json::from_str(&params)
-                .context("Failed to parse --params as JSON object")?;
+            let parsed_params: serde_json::Value =
+                serde_json::from_str(&params).context("Failed to parse --params as JSON object")?;
 
             let raw_obj = match parsed_params.as_object() {
                 Some(obj) => obj.clone(),
@@ -135,43 +145,48 @@ pub async fn run_macro(args: MacroArgs, store: Arc<SqliteStore>) -> Result<()> {
             }
 
             // Workspace-aware native tool invoker
-            let invoker = CallbackToolInvoker::new(|tool_name: &str, input: &serde_json::Value| -> Result<serde_json::Value> {
-                match tool_name {
-                    "read_file" => {
-                        let path_str = input.get("path").and_then(|v| v.as_str()).unwrap_or("");
-                        let content = std::fs::read_to_string(path_str)
-                            .with_context(|| format!("Failed to read file: {path_str}"))?;
-                        Ok(json!({ "status": "ok", "path": path_str, "content": content }))
-                    }
-                    "write_file" | "edit_file" => {
-                        let path_str = input.get("path").and_then(|v| v.as_str()).unwrap_or("");
-                        let content = input.get("content").and_then(|v| v.as_str()).unwrap_or("");
-                        std::fs::write(path_str, content)
-                            .with_context(|| format!("Failed to write file: {path_str}"))?;
-                        Ok(json!({ "status": "ok", "path": path_str, "bytes_written": content.len() }))
-                    }
-                    "cargo_check" => {
-                        let flags = input.get("flags").and_then(|v| v.as_str()).unwrap_or("");
-                        let pkg = input.get("package").and_then(|v| v.as_str());
-                        let mut cmd = std::process::Command::new("cargo");
-                        cmd.arg("check");
-                        if let Some(p) = pkg {
-                            cmd.arg("-p").arg(p);
+            let invoker = CallbackToolInvoker::new(
+                |tool_name: &str, input: &serde_json::Value| -> Result<serde_json::Value> {
+                    match tool_name {
+                        "read_file" => {
+                            let path_str = input.get("path").and_then(|v| v.as_str()).unwrap_or("");
+                            let content = std::fs::read_to_string(path_str)
+                                .with_context(|| format!("Failed to read file: {path_str}"))?;
+                            Ok(json!({ "status": "ok", "path": path_str, "content": content }))
                         }
-                        for f in flags.split_whitespace() {
-                            cmd.arg(f);
+                        "write_file" | "edit_file" => {
+                            let path_str = input.get("path").and_then(|v| v.as_str()).unwrap_or("");
+                            let content =
+                                input.get("content").and_then(|v| v.as_str()).unwrap_or("");
+                            std::fs::write(path_str, content)
+                                .with_context(|| format!("Failed to write file: {path_str}"))?;
+                            Ok(
+                                json!({ "status": "ok", "path": path_str, "bytes_written": content.len() }),
+                            )
                         }
-                        let output = cmd.output().context("Failed to execute cargo check")?;
-                        if output.status.success() {
-                            Ok(json!({ "status": "ok", "exit_code": 0 }))
-                        } else {
-                            let err = String::from_utf8_lossy(&output.stderr);
-                            bail!("cargo check failed: {err}");
+                        "cargo_check" => {
+                            let flags = input.get("flags").and_then(|v| v.as_str()).unwrap_or("");
+                            let pkg = input.get("package").and_then(|v| v.as_str());
+                            let mut cmd = std::process::Command::new("cargo");
+                            cmd.arg("check");
+                            if let Some(p) = pkg {
+                                cmd.arg("-p").arg(p);
+                            }
+                            for f in flags.split_whitespace() {
+                                cmd.arg(f);
+                            }
+                            let output = cmd.output().context("Failed to execute cargo check")?;
+                            if output.status.success() {
+                                Ok(json!({ "status": "ok", "exit_code": 0 }))
+                            } else {
+                                let err = String::from_utf8_lossy(&output.stderr);
+                                bail!("cargo check failed: {err}");
+                            }
                         }
+                        other => bail!("Unsupported tool for local macro execution: {other}"),
                     }
-                    other => bail!("Unsupported tool for local macro execution: {other}"),
-                }
-            });
+                },
+            );
 
             let engine = MacroExecutionEngine::new();
             let report = engine
@@ -192,7 +207,10 @@ pub async fn run_macro(args: MacroArgs, store: Arc<SqliteStore>) -> Result<()> {
             }
             println!("========================================================");
             println!("  Success:         {}", report.success);
-            println!("  Steps Executed:  {}/{}", report.steps_completed, report.total_steps);
+            println!(
+                "  Steps Executed:  {}/{}",
+                report.steps_completed, report.total_steps
+            );
             println!("  Tokens Saved:    ~{}", report.tokens_saved);
             println!("  Wall-clock:      {}ms", report.total_duration_ms);
 
@@ -203,7 +221,10 @@ pub async fn run_macro(args: MacroArgs, store: Arc<SqliteStore>) -> Result<()> {
             println!("\n  Step Telemetry:");
             for s in &report.step_results {
                 let status_icon = if s.success { "✅" } else { "❌" };
-                println!("    {} Step {}: {} ({}ms)", status_icon, s.step_index, s.tool_name, s.duration_ms);
+                println!(
+                    "    {} Step {}: {} ({}ms)",
+                    status_icon, s.step_index, s.tool_name, s.duration_ms
+                );
             }
             println!();
 

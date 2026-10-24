@@ -2720,28 +2720,27 @@ pub fn verify_token(token: &str) -> bool {
             "automated_file_patch",
             "Read a target file, apply updates, and check compilation",
         )
-        .with_parameters(vec![
-            strata_core::schemas::ParameterDef {
-                name: "path".to_string(),
-                param_type: "string".to_string(),
-                description: "Path to file".to_string(),
-                example: None,
-            },
-        ])
+        .with_parameters(vec![strata_core::schemas::ParameterDef {
+            name: "path".to_string(),
+            param_type: "string".to_string(),
+            description: "Path to file".to_string(),
+            example: None,
+        }])
         .with_preconditions(vec!["workspace_clean".to_string()])
         .with_postconditions(vec!["code_compiles".to_string()]);
 
         let mut skill_with_tag = skill;
         skill_with_tag.tags = vec!["compiled_macro".to_string(), "refactor".to_string()];
-        skill_with_tag.steps = vec![
-            strata_core::schemas::ProceduralStep::new(
-                1,
-                "read_file",
-                "Read file",
-                serde_json::json!({ "path": "{{path}}" }),
-            ),
-        ];
-        engine.store().insert_or_update_procedural_skill(&skill_with_tag).unwrap();
+        skill_with_tag.steps = vec![strata_core::schemas::ProceduralStep::new(
+            1,
+            "read_file",
+            "Read file",
+            serde_json::json!({ "path": "{{path}}" }),
+        )];
+        engine
+            .store()
+            .insert_or_update_procedural_skill(&skill_with_tag)
+            .unwrap();
 
         // 2. Seed a semantic fact and failure pattern for causal explanation
         let mut fact = strata_core::schemas::SemanticFact::new(
@@ -2750,7 +2749,10 @@ pub fn verify_token(token: &str) -> bool {
             strata_core::state::Scope::Global,
         );
         fact.tags = vec!["cargo_test".to_string()];
-        engine.store().insert_or_update_semantic_fact(&fact).unwrap();
+        engine
+            .store()
+            .insert_or_update_semantic_fact(&fact)
+            .unwrap();
 
         let pattern = strata_core::state::FailurePattern::new(
             "cargo_test:missing_flag",
@@ -2762,7 +2764,9 @@ pub fn verify_token(token: &str) -> bool {
 
         // 3. Test McpServer macro_list
         let server = McpServer::new_with_engine(Arc::clone(&engine));
-        let list_res = server.execute_tool("macro_list", serde_json::json!({})).await;
+        let list_res = server
+            .execute_tool("macro_list", serde_json::json!({}))
+            .await;
         assert_ne!(list_res.is_error, Some(true));
         assert!(list_res.content[0].text.contains("automated_file_patch"));
 
@@ -2782,14 +2786,21 @@ pub fn verify_token(token: &str) -> bool {
             )
             .await;
         assert_ne!(exec_res.is_error, Some(true));
-        assert!(exec_res.content[0].text.contains("Macro 'automated_file_patch' executed"));
+        assert!(exec_res.content[0]
+            .text
+            .contains("Macro 'automated_file_patch' executed"));
         let _ = std::fs::remove_file(&test_file);
 
         // 4. Test McpServer causal_explain
-        let causal_res = server.execute_tool("causal_explain", serde_json::json!({
-            "action": "cargo_test",
-            "error": "failed to link integration test"
-        })).await;
+        let causal_res = server
+            .execute_tool(
+                "causal_explain",
+                serde_json::json!({
+                    "action": "cargo_test",
+                    "error": "failed to link integration test"
+                }),
+            )
+            .await;
         assert_ne!(causal_res.is_error, Some(true));
         assert!(causal_res.content[0].text.contains("cargo_test"));
 

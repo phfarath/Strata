@@ -46,7 +46,9 @@ pub async fn run_causal(args: CausalArgs, store: Arc<SqliteStore>) -> Result<()>
             let relevant_patterns: Vec<_> = patterns
                 .into_iter()
                 .filter(|p| {
-                    p.pattern_name.to_lowercase().contains(&action.to_lowercase())
+                    p.pattern_name
+                        .to_lowercase()
+                        .contains(&action.to_lowercase())
                         || p.error_type.to_lowercase().contains(&action.to_lowercase())
                         || (!error_observed.is_empty()
                             && p.description
@@ -65,9 +67,7 @@ pub async fn run_causal(args: CausalArgs, store: Arc<SqliteStore>) -> Result<()>
                     f.tags
                         .iter()
                         .any(|t| t.to_lowercase().contains(&action.to_lowercase()))
-                        || f.statement
-                            .to_lowercase()
-                            .contains(&action.to_lowercase())
+                        || f.statement.to_lowercase().contains(&action.to_lowercase())
                 })
                 .collect();
 
