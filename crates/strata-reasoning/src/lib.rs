@@ -99,8 +99,7 @@ mod tests {
         let err = mock.complete(&ctx).await.unwrap_err();
 
         match err {
-            strata_core::errors::StrataError::Reasoning(msg)
-            | strata_core::errors::StrataError::ReasoningError(msg) => {
+            strata_core::errors::StrataError::Reasoning(msg) => {
                 assert!(msg.contains("Rate limit from upstream"));
             }
             _ => panic!("Expected Reasoning error, got {:?}", err),

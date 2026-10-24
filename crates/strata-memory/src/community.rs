@@ -1053,6 +1053,7 @@ impl CommunityMemoryRouter {
     }
 
     /// Performs community-scoped retrieval with transparent global fallback and candidate pool reduction.
+    #[allow(clippy::too_many_arguments)]
     pub async fn retrieve_scoped(
         &self,
         ranker: &crate::retrieval::HybridRanker,

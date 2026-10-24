@@ -48,6 +48,59 @@ impl Default for ProximityBiasConfig {
     }
 }
 
+/// Scope, temporal, and file context filters for hybrid memory retrieval.
+#[derive(Debug, Clone, Copy, Default)]
+pub struct RetrievalFilter<'a> {
+    pub scope: Option<&'a Scope>,
+    pub memory_types: Option<&'a [MemoryType]>,
+    pub as_of_time: Option<DateTime<Utc>>,
+    pub as_of_commit: Option<&'a str>,
+    pub as_of_branch: Option<&'a str>,
+    pub active_files: &'a [String],
+}
+
+impl<'a> RetrievalFilter<'a> {
+    pub fn none() -> Self {
+        Self::default()
+    }
+
+    pub fn with_scope(mut self, scope: Option<&'a Scope>) -> Self {
+        self.scope = scope;
+        self
+    }
+
+    pub fn with_memory_types(mut self, memory_types: Option<&'a [MemoryType]>) -> Self {
+        self.memory_types = memory_types;
+        self
+    }
+
+    pub fn with_temporal(
+        mut self,
+        as_of_time: Option<DateTime<Utc>>,
+        as_of_commit: Option<&'a str>,
+        as_of_branch: Option<&'a str>,
+    ) -> Self {
+        self.as_of_time = as_of_time;
+        self.as_of_commit = as_of_commit;
+        self.as_of_branch = as_of_branch;
+        self
+    }
+
+    pub fn with_active_files(mut self, active_files: &'a [String]) -> Self {
+        self.active_files = active_files;
+        self
+    }
+}
+
+/// Context biasing inputs for tri-modal rank fusion.
+#[derive(Debug, Clone, Copy, Default)]
+pub struct TemporalBiasing<'a> {
+    pub proximity_engine: Option<&'a ProximityBiasEngine>,
+    pub active_files: &'a [String],
+    pub as_of_time: Option<DateTime<Utc>>,
+    pub as_of_branch: Option<&'a str>,
+}
+
 /// Engine that biases memory retrieval and session digests toward the developer's active files
 /// and their 1-hop / 2-hop import & call graph neighbors.
 #[derive(Debug, Clone, Default)]
@@ -510,18 +563,11 @@ impl HybridRanker {
         memory_types: Option<&[MemoryType]>,
         limit: usize,
     ) -> Result<Vec<MemoryRecord>, StrataError> {
-        self.retrieve_as_of(
-            store,
-            embedding_provider,
-            query,
-            scope,
-            memory_types,
-            None,
-            None,
-            None,
-            limit,
-        )
-        .await
+        let filter = RetrievalFilter::default()
+            .with_scope(scope)
+            .with_memory_types(memory_types);
+        self.retrieve_as_of(store, embedding_provider, query, filter, limit)
+            .await
     }
 
     /// Perform hybrid retrieval biased by active files and their 1-hop / 2-hop import graph neighbors.
@@ -530,24 +576,11 @@ impl HybridRanker {
         store: &SqliteStore,
         embedding_provider: Option<&dyn EmbeddingProvider>,
         query: &str,
-        scope: Option<&Scope>,
-        memory_types: Option<&[MemoryType]>,
-        active_files: &[String],
+        filter: RetrievalFilter<'_>,
         limit: usize,
     ) -> Result<Vec<MemoryRecord>, StrataError> {
-        self.retrieve_as_of_with_active_files(
-            store,
-            embedding_provider,
-            query,
-            scope,
-            memory_types,
-            None,
-            None,
-            None,
-            active_files,
-            limit,
-        )
-        .await
+        self.retrieve_as_of_with_active_files(store, embedding_provider, query, filter, limit)
+            .await
     }
 
     /// Perform hybrid retrieval combining FTS5 BM25, Vector Cosine Similarity,
@@ -557,26 +590,11 @@ impl HybridRanker {
         store: &SqliteStore,
         embedding_provider: Option<&dyn EmbeddingProvider>,
         query: &str,
-        scope: Option<&Scope>,
-        memory_types: Option<&[MemoryType]>,
-        as_of_time: Option<DateTime<Utc>>,
-        as_of_commit: Option<&str>,
-        as_of_branch: Option<&str>,
+        filter: RetrievalFilter<'_>,
         limit: usize,
     ) -> Result<Vec<MemoryRecord>, StrataError> {
-        self.retrieve_as_of_with_active_files(
-            store,
-            embedding_provider,
-            query,
-            scope,
-            memory_types,
-            as_of_time,
-            as_of_commit,
-            as_of_branch,
-            &[],
-            limit,
-        )
-        .await
+        self.retrieve_as_of_with_active_files(store, embedding_provider, query, filter, limit)
+            .await
     }
 
     /// Perform hybrid retrieval with bi-temporal, branch, and active file proximity biasing.
@@ -585,14 +603,15 @@ impl HybridRanker {
         store: &SqliteStore,
         embedding_provider: Option<&dyn EmbeddingProvider>,
         query: &str,
-        scope: Option<&Scope>,
-        memory_types: Option<&[MemoryType]>,
-        as_of_time: Option<DateTime<Utc>>,
-        as_of_commit: Option<&str>,
-        as_of_branch: Option<&str>,
-        active_files: &[String],
+        filter: RetrievalFilter<'_>,
         limit: usize,
     ) -> Result<Vec<MemoryRecord>, StrataError> {
+        let scope = filter.scope;
+        let memory_types = filter.memory_types;
+        let as_of_time = filter.as_of_time;
+        let as_of_commit = filter.as_of_commit;
+        let as_of_branch = filter.as_of_branch;
+        let active_files = filter.active_files;
         let candidate_limit = (limit * 3).max(20);
 
         // Transparent cold-start fallback if community has < k memories
@@ -774,14 +793,17 @@ impl HybridRanker {
         }
 
         // 4. Compute Tri-Modal Reciprocal Rank Fusion (RRF) with optional active file proximity bias, continuous recency weighting, and active branch priority
+        let biasing = TemporalBiasing {
+            proximity_engine: proximity_engine.as_ref(),
+            active_files,
+            as_of_time,
+            as_of_branch,
+        };
         let fused = self.fuse_tri_ranks_with_temporal(
             &fts_results,
             &vector_results,
             &graph_results,
-            proximity_engine.as_ref(),
-            active_files,
-            as_of_time,
-            as_of_branch,
+            biasing,
             limit,
         );
         Ok(fused)
@@ -816,16 +838,13 @@ impl HybridRanker {
         active_files: &[String],
         limit: usize,
     ) -> Vec<MemoryRecord> {
-        self.fuse_tri_ranks_with_temporal(
-            fts_ranked,
-            vector_ranked,
-            graph_ranked,
+        let biasing = TemporalBiasing {
             proximity_engine,
             active_files,
-            None,
-            None,
-            limit,
-        )
+            as_of_time: None,
+            as_of_branch: None,
+        };
+        self.fuse_tri_ranks_with_temporal(fts_ranked, vector_ranked, graph_ranked, biasing, limit)
     }
 
     /// Fuse BM25, Vector, and Spreading Activation rankings using Tri-Modal RRF,
@@ -836,12 +855,13 @@ impl HybridRanker {
         fts_ranked: &[(MemoryRecord, f32)],
         vector_ranked: &[(MemoryRecord, f32)],
         graph_ranked: &[(MemoryRecord, f32)],
-        proximity_engine: Option<&ProximityBiasEngine>,
-        active_files: &[String],
-        as_of_time: Option<DateTime<Utc>>,
-        as_of_branch: Option<&str>,
+        biasing: TemporalBiasing<'_>,
         limit: usize,
     ) -> Vec<MemoryRecord> {
+        let proximity_engine = biasing.proximity_engine;
+        let active_files = biasing.active_files;
+        let as_of_time = biasing.as_of_time;
+        let as_of_branch = biasing.as_of_branch;
         let mut score_map: HashMap<Uuid, f32> = HashMap::new();
         let mut record_map: HashMap<Uuid, MemoryRecord> = HashMap::new();
 
@@ -971,28 +991,14 @@ impl HybridRanker {
         global_store: Option<&SqliteStore>,
         embedding_provider: Option<&dyn EmbeddingProvider>,
         query: &str,
-        scope: Option<&Scope>,
-        memory_types: Option<&[MemoryType]>,
-        as_of_time: Option<DateTime<Utc>>,
-        as_of_commit: Option<&str>,
-        as_of_branch: Option<&str>,
+        filter: RetrievalFilter<'_>,
         limit: usize,
     ) -> Result<Vec<MemoryRecord>, StrataError> {
         let global = match global_store {
             Some(g) => g,
             None => {
                 return self
-                    .retrieve_as_of(
-                        local_store,
-                        embedding_provider,
-                        query,
-                        scope,
-                        memory_types,
-                        as_of_time,
-                        as_of_commit,
-                        as_of_branch,
-                        limit,
-                    )
+                    .retrieve_as_of(local_store, embedding_provider, query, filter, limit)
                     .await;
             }
         };
@@ -1004,26 +1010,26 @@ impl HybridRanker {
                 local_store,
                 embedding_provider,
                 query,
-                scope,
-                memory_types,
-                as_of_time,
-                as_of_commit,
-                as_of_branch,
+                filter,
                 candidate_limit,
             )
             .await?;
 
         // Fetch global candidates (scoped to Global, cross-branch canonical)
+        let global_filter = RetrievalFilter {
+            scope: Some(&Scope::Global),
+            memory_types: filter.memory_types,
+            as_of_time: filter.as_of_time,
+            as_of_commit: filter.as_of_commit,
+            as_of_branch: None,
+            active_files: filter.active_files,
+        };
         let global_results = self
             .retrieve_as_of(
                 global,
                 embedding_provider,
                 query,
-                Some(&Scope::Global),
-                memory_types,
-                as_of_time,
-                as_of_commit,
-                None,
+                global_filter,
                 candidate_limit,
             )
             .await?;
@@ -1264,14 +1270,15 @@ mod tests {
         let ranker = HybridRanker::with_default_config();
         let active_files = vec!["src/app.rs".to_string()];
 
+        let filter = RetrievalFilter::default()
+            .with_scope(Some(&Scope::Global))
+            .with_active_files(&active_files);
         let results = ranker
             .retrieve_with_active_files(
                 &store,
                 Some(&embedder),
                 "Token validation invariant",
-                Some(&Scope::Global),
-                None,
-                &active_files,
+                filter,
                 4,
             )
             .await

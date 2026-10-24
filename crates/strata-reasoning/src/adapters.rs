@@ -4,9 +4,7 @@ use serde_json::json;
 use strata_core::errors::StrataError;
 use uuid::Uuid;
 
-use crate::engine::{
-    ChatMessage, PromptContext, ReasoningEngine, ReasoningOutput, Role, TokenUsage, ToolCall,
-};
+use crate::engine::{PromptContext, ReasoningEngine, ReasoningOutput, Role, TokenUsage, ToolCall};
 
 // ============================================================================
 // OpenAI Adapter (also compatible with DeepSeek, Ollama, vLLM, OpenRouter)
@@ -209,26 +207,6 @@ impl ReasoningEngine for OpenAiAdapter {
             finish_reason,
             usage,
         })
-    }
-}
-
-#[async_trait]
-impl strata_core::traits::ReasoningEngine for OpenAiAdapter {
-    async fn prompt(
-        &self,
-        system: Option<&str>,
-        user: &str,
-        context: Option<serde_json::Value>,
-    ) -> Result<String, StrataError> {
-        let mut ctx = PromptContext::new().with_message(ChatMessage::user(user));
-        if let Some(sys) = system {
-            ctx = ctx.with_system(sys);
-        }
-        if let Some(meta) = context {
-            ctx.metadata = meta;
-        }
-        let output = self.complete(&ctx).await?;
-        Ok(output.content.unwrap_or_default())
     }
 }
 
@@ -435,26 +413,6 @@ impl ReasoningEngine for OpenRouterAdapter {
     }
 }
 
-#[async_trait]
-impl strata_core::traits::ReasoningEngine for OpenRouterAdapter {
-    async fn prompt(
-        &self,
-        system: Option<&str>,
-        user: &str,
-        context: Option<serde_json::Value>,
-    ) -> Result<String, StrataError> {
-        let mut ctx = PromptContext::new().with_message(ChatMessage::user(user));
-        if let Some(sys) = system {
-            ctx = ctx.with_system(sys);
-        }
-        if let Some(meta) = context {
-            ctx.metadata = meta;
-        }
-        let output = self.complete(&ctx).await?;
-        Ok(output.content.unwrap_or_default())
-    }
-}
-
 // ============================================================================
 // Anthropic Adapter (Claude 3.5 Sonnet / Haiku / Opus)
 // ============================================================================
@@ -648,26 +606,6 @@ impl ReasoningEngine for AnthropicAdapter {
             finish_reason: stop_reason,
             usage,
         })
-    }
-}
-
-#[async_trait]
-impl strata_core::traits::ReasoningEngine for AnthropicAdapter {
-    async fn prompt(
-        &self,
-        system: Option<&str>,
-        user: &str,
-        context: Option<serde_json::Value>,
-    ) -> Result<String, StrataError> {
-        let mut ctx = PromptContext::new().with_message(ChatMessage::user(user));
-        if let Some(sys) = system {
-            ctx = ctx.with_system(sys);
-        }
-        if let Some(meta) = context {
-            ctx.metadata = meta;
-        }
-        let output = self.complete(&ctx).await?;
-        Ok(output.content.unwrap_or_default())
     }
 }
 
@@ -867,26 +805,6 @@ impl ReasoningEngine for GeminiAdapter {
     }
 }
 
-#[async_trait]
-impl strata_core::traits::ReasoningEngine for GeminiAdapter {
-    async fn prompt(
-        &self,
-        system: Option<&str>,
-        user: &str,
-        context: Option<serde_json::Value>,
-    ) -> Result<String, StrataError> {
-        let mut ctx = PromptContext::new().with_message(ChatMessage::user(user));
-        if let Some(sys) = system {
-            ctx = ctx.with_system(sys);
-        }
-        if let Some(meta) = context {
-            ctx.metadata = meta;
-        }
-        let output = self.complete(&ctx).await?;
-        Ok(output.content.unwrap_or_default())
-    }
-}
-
 // ============================================================================
 // Ollama Adapter (Local-first offline LLM runtime: Qwen, Llama, DeepSeek)
 // ============================================================================
@@ -964,25 +882,5 @@ impl ReasoningEngine for OllamaAdapter {
         let v1_url = format!("{}/v1", self.base_url.trim_end_matches('/'));
         let inner = OpenAiAdapter::new("ollama", &self.model).with_base_url(v1_url);
         inner.complete(context).await
-    }
-}
-
-#[async_trait]
-impl strata_core::traits::ReasoningEngine for OllamaAdapter {
-    async fn prompt(
-        &self,
-        system: Option<&str>,
-        user: &str,
-        context: Option<serde_json::Value>,
-    ) -> Result<String, StrataError> {
-        let mut ctx = PromptContext::new().with_message(ChatMessage::user(user));
-        if let Some(sys) = system {
-            ctx = ctx.with_system(sys);
-        }
-        if let Some(meta) = context {
-            ctx.metadata = meta;
-        }
-        let output = self.complete(&ctx).await?;
-        Ok(output.content.unwrap_or_default())
     }
 }

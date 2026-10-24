@@ -103,7 +103,7 @@ pub use pyramid::{
 };
 pub use retrieval::{
     import_distance_decay_factor, HybridRanker, HybridRankerConfig, ProximityBiasConfig,
-    ProximityBiasEngine,
+    ProximityBiasEngine, RetrievalFilter, TemporalBiasing,
 };
 pub use spreading_activation::{
     EdgeKind, GraphEdge, GraphNode, KnowledgeGraph, SpreadingActivationConfig,
@@ -605,15 +605,16 @@ impl SqliteMemoryEngine {
         active_files: &[String],
         limit: usize,
     ) -> Result<Vec<MemoryRecord>, StrataError> {
+        let filter = RetrievalFilter::default()
+            .with_scope(scope)
+            .with_active_files(active_files);
         let mut results = self
             .ranker
             .retrieve_with_active_files(
                 &self.store,
                 Some(self.embedding_provider.as_ref()),
                 query,
-                scope,
-                None,
-                active_files,
+                filter,
                 limit,
             )
             .await?;
@@ -725,6 +726,11 @@ impl MemoryEngine for SqliteMemoryEngine {
         };
         let effective_branch = as_of_branch.or(detected_branch.as_deref());
 
+        let filter = RetrievalFilter::default().with_scope(scope).with_temporal(
+            as_of_time,
+            as_of_commit,
+            effective_branch,
+        );
         let mut results = self
             .ranker
             .retrieve_federated_as_of(
@@ -732,11 +738,7 @@ impl MemoryEngine for SqliteMemoryEngine {
                 self.global_store.as_deref(),
                 Some(self.embedding_provider.as_ref()),
                 query,
-                scope,
-                None,
-                as_of_time,
-                as_of_commit,
-                effective_branch,
+                filter,
                 limit,
             )
             .await?;

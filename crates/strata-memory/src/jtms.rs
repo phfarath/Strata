@@ -1029,33 +1029,31 @@ impl TruthMaintenanceSystem {
                             || part.split('_').all(|sub| stmt_lower.contains(sub))
                     });
 
-                if matches_tag || matches_stmt {
-                    if !all_invalidated.contains(&fact.id) {
-                        let mut invalidated_fact = fact.clone();
-                        invalidated_fact.mark_stale();
-                        store.insert_or_update_semantic_fact(&invalidated_fact)?;
+                if (matches_tag || matches_stmt) && !all_invalidated.contains(&fact.id) {
+                    let mut invalidated_fact = fact.clone();
+                    invalidated_fact.mark_stale();
+                    store.insert_or_update_semantic_fact(&invalidated_fact)?;
 
-                        let audit = JtmsAuditRow::new(
-                            fact.id,
-                            fact.id,
-                            "causal_invalidation",
-                            format!(
-                                "{reason_prefix}: Assumption '{invalid_pattern}' refuted by causal prediction error"
-                            ),
-                        );
-                        store.insert_jtms_audit(&audit)?;
-                        all_invalidated.push(fact.id);
+                    let audit = JtmsAuditRow::new(
+                        fact.id,
+                        fact.id,
+                        "causal_invalidation",
+                        format!(
+                            "{reason_prefix}: Assumption '{invalid_pattern}' refuted by causal prediction error"
+                        ),
+                    );
+                    store.insert_jtms_audit(&audit)?;
+                    all_invalidated.push(fact.id);
 
-                        // Propagate downstream invalidation to all dependent beliefs
-                        let downstream = self.propagate_downstream_invalidation(
-                            store,
-                            &fact.id,
-                            &format!(
-                                "Causal invalidation cascade: prerequisite assumption '{invalid_pattern}' was refuted"
-                            ),
-                        )?;
-                        all_invalidated.extend(downstream);
-                    }
+                    // Propagate downstream invalidation to all dependent beliefs
+                    let downstream = self.propagate_downstream_invalidation(
+                        store,
+                        &fact.id,
+                        &format!(
+                            "Causal invalidation cascade: prerequisite assumption '{invalid_pattern}' was refuted"
+                        ),
+                    )?;
+                    all_invalidated.extend(downstream);
                 }
             }
         }

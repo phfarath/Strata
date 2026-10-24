@@ -684,7 +684,7 @@ impl CommandInterceptor {
         scope: Option<Scope>,
     ) -> Result<InterceptionResult, StrataError> {
         if command_args.is_empty() {
-            return Err(StrataError::ValidationError(
+            return Err(StrataError::Validation(
                 "Command args must not be empty".to_string(),
             ));
         }

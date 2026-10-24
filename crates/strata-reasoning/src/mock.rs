@@ -3,7 +3,7 @@ use std::sync::Arc;
 use tokio::sync::Mutex;
 use uuid::Uuid;
 
-use crate::engine::{ChatMessage, PromptContext, ReasoningEngine, ReasoningOutput, ToolCall};
+use crate::engine::{PromptContext, ReasoningEngine, ReasoningOutput, ToolCall};
 use strata_core::errors::StrataError;
 
 /// Mock reasoning engine designed for deterministic, repeatable testing of cognitive loops.
@@ -140,25 +140,5 @@ impl ReasoningEngine for MockReasoningEngine {
                 last_content
             )))
         }
-    }
-}
-
-#[async_trait]
-impl strata_core::traits::ReasoningEngine for MockReasoningEngine {
-    async fn prompt(
-        &self,
-        system: Option<&str>,
-        user: &str,
-        context: Option<serde_json::Value>,
-    ) -> Result<String, StrataError> {
-        let mut ctx = PromptContext::new().with_message(ChatMessage::user(user));
-        if let Some(sys) = system {
-            ctx = ctx.with_system(sys);
-        }
-        if let Some(meta) = context {
-            ctx.metadata = meta;
-        }
-        let output = self.complete(&ctx).await?;
-        Ok(output.content.unwrap_or_default())
     }
 }

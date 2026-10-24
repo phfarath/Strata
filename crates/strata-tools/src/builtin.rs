@@ -70,7 +70,7 @@ impl Tool for MemorySearchTool {
         let query = params
             .get("query")
             .and_then(|v| v.as_str())
-            .ok_or_else(|| StrataError::ValidationError("Missing 'query' field".to_string()))?;
+            .ok_or_else(|| StrataError::Validation("Missing 'query' field".to_string()))?;
 
         let limit = params.get("limit").and_then(|v| v.as_u64()).unwrap_or(5) as usize;
 
@@ -79,7 +79,7 @@ impl Tool for MemorySearchTool {
             .and_then(|v| v.as_str())
             .map(|s| s.parse::<Scope>())
             .transpose()
-            .map_err(|e| StrataError::ValidationError(format!("Invalid scope: {:?}", e)))?;
+            .map_err(|e| StrataError::Validation(format!("Invalid scope: {:?}", e)))?;
 
         let as_of_time = params
             .get("as_of_time")
@@ -88,7 +88,7 @@ impl Tool for MemorySearchTool {
                 DateTime::parse_from_rfc3339(s)
                     .map(|dt| dt.with_timezone(&Utc))
                     .map_err(|e| {
-                        StrataError::ValidationError(format!(
+                        StrataError::Validation(format!(
                             "Invalid RFC3339 timestamp for as_of_time '{}': {}",
                             s, e
                         ))
@@ -165,11 +165,10 @@ impl Tool for MemoryGetTool {
         let id_str = params
             .get("id")
             .and_then(|v| v.as_str())
-            .ok_or_else(|| StrataError::ValidationError("Missing 'id' field".to_string()))?;
+            .ok_or_else(|| StrataError::Validation("Missing 'id' field".to_string()))?;
 
-        let uuid = Uuid::parse_str(id_str).map_err(|e| {
-            StrataError::ValidationError(format!("Invalid UUID '{}': {}", id_str, e))
-        })?;
+        let uuid = Uuid::parse_str(id_str)
+            .map_err(|e| StrataError::Validation(format!("Invalid UUID '{}': {}", id_str, e)))?;
 
         let as_of_time = params
             .get("as_of_time")
@@ -178,7 +177,7 @@ impl Tool for MemoryGetTool {
                 DateTime::parse_from_rfc3339(s)
                     .map(|dt| dt.with_timezone(&Utc))
                     .map_err(|e| {
-                        StrataError::ValidationError(format!(
+                        StrataError::Validation(format!(
                             "Invalid RFC3339 timestamp for as_of_time '{}': {}",
                             s, e
                         ))
@@ -263,14 +262,14 @@ impl Tool for MemoryWriteTool {
         let content = params
             .get("content")
             .and_then(|v| v.as_str())
-            .ok_or_else(|| StrataError::ValidationError("Missing 'content' field".to_string()))?;
+            .ok_or_else(|| StrataError::Validation("Missing 'content' field".to_string()))?;
 
         let memory_type = params
             .get("memory_type")
             .and_then(|v| v.as_str())
             .unwrap_or("semantic")
             .parse::<MemoryType>()
-            .map_err(|e| StrataError::ValidationError(format!("Invalid memory_type: {}", e)))?;
+            .map_err(|e| StrataError::Validation(format!("Invalid memory_type: {}", e)))?;
 
         let scope = params
             .get("scope")
@@ -441,7 +440,7 @@ impl Tool for SafeShellTool {
         let command = params
             .get("command")
             .and_then(|v| v.as_str())
-            .ok_or_else(|| StrataError::ValidationError("Missing 'command' field".to_string()))?;
+            .ok_or_else(|| StrataError::Validation("Missing 'command' field".to_string()))?;
 
         self.check_command_safety(command)?;
 
@@ -510,7 +509,7 @@ impl Tool for SafeShellTool {
                 };
                 Ok(json!(out))
             }
-            Ok(Err(e)) => Err(StrataError::ToolError(format!(
+            Ok(Err(e)) => Err(StrataError::Tool(format!(
                 "Failed to execute process: {}",
                 e
             ))),
@@ -564,7 +563,7 @@ impl Tool for CausalBlastRadiusTool {
         let target = params
             .get("target")
             .and_then(|v| v.as_str())
-            .ok_or_else(|| StrataError::ValidationError("Missing 'target' field".to_string()))?;
+            .ok_or_else(|| StrataError::Validation("Missing 'target' field".to_string()))?;
 
         let depth = params.get("depth").and_then(|v| v.as_u64()).unwrap_or(3) as usize;
 
@@ -572,7 +571,7 @@ impl Tool for CausalBlastRadiusTool {
             .world_model
             .predict_impact(target, depth)
             .await
-            .map_err(|e| StrataError::ReasoningError(e.to_string()))?;
+            .map_err(|e| StrataError::Reasoning(e.to_string()))?;
 
         Ok(json!(report))
     }
@@ -632,7 +631,7 @@ impl Tool for GoalDecomposeTool {
         let goal = params
             .get("goal")
             .and_then(|v| v.as_str())
-            .ok_or_else(|| StrataError::ValidationError("Missing 'goal' field".to_string()))?;
+            .ok_or_else(|| StrataError::Validation("Missing 'goal' field".to_string()))?;
 
         let include_verification = params
             .get("include_verification")
@@ -646,11 +645,11 @@ impl Tool for GoalDecomposeTool {
                 .with_verification_gates(false)
                 .decompose(goal)
         }
-        .map_err(|e| StrataError::ReasoningError(format!("Goal decomposition error: {e}")))?;
+        .map_err(|e| StrataError::Reasoning(format!("Goal decomposition error: {e}")))?;
 
         let waves = dag
             .compute_waves()
-            .map_err(|e| StrataError::ReasoningError(format!("Wave computation error: {e}")))?;
+            .map_err(|e| StrataError::Reasoning(format!("Wave computation error: {e}")))?;
 
         let ascii_tree = dag.to_ascii_tree();
         let export = dag.export();
@@ -734,19 +733,16 @@ impl Tool for DagExecuteTool {
         let dag = if let Some(dag_val) = params.get("dag") {
             let export: strata_reasoning::GoalDagExport = serde_json::from_value(dag_val.clone())
                 .map_err(|e| {
-                StrataError::ValidationError(format!("Invalid Goal DAG export: {e}"))
+                StrataError::Validation(format!("Invalid Goal DAG export: {e}"))
             })?;
-            strata_reasoning::GoalDag::from_export(export).map_err(|e| {
-                StrataError::ValidationError(format!("Invalid Goal DAG structure: {e}"))
-            })?
+            strata_reasoning::GoalDag::from_export(export)
+                .map_err(|e| StrataError::Validation(format!("Invalid Goal DAG structure: {e}")))?
         } else if let Some(goal) = params.get("goal").and_then(|v| v.as_str()) {
             strata_reasoning::GoalDecomposer::new()
                 .decompose(goal)
-                .map_err(|e| {
-                    StrataError::ReasoningError(format!("Goal decomposition error: {e}"))
-                })?
+                .map_err(|e| StrataError::Reasoning(format!("Goal decomposition error: {e}")))?
         } else {
-            return Err(StrataError::ValidationError(
+            return Err(StrataError::Validation(
                 "Either 'dag' or 'goal' parameter must be provided".to_string(),
             ));
         };
@@ -760,7 +756,7 @@ impl Tool for DagExecuteTool {
                 .execute(dag)
                 .await
         }
-        .map_err(|e| StrataError::ReasoningError(format!("DAG execution error: {e}")))?;
+        .map_err(|e| StrataError::Reasoning(format!("DAG execution error: {e}")))?;
 
         let ascii_tree = finished_dag.to_ascii_tree();
 
@@ -1128,7 +1124,7 @@ impl Tool for DistillPipelineTool {
         };
 
         if raw_dataset.trim().is_empty() {
-            return Err(StrataError::ValidationError(format!(
+            return Err(StrataError::Validation(format!(
                 "No alignment dataset samples found matching criteria (oracle_only: {}). \
                  Ensure completed A2A delegations, approved HITL memories, or failure patterns exist in SQLite store.",
                 oracle_only
@@ -1629,10 +1625,10 @@ impl Tool for CoreTierPromoteTool {
         let id_str = params
             .get("id")
             .and_then(|v| v.as_str())
-            .ok_or_else(|| StrataError::ValidationError("Missing 'id' parameter".to_string()))?;
+            .ok_or_else(|| StrataError::Validation("Missing 'id' parameter".to_string()))?;
 
         let id = Uuid::parse_str(id_str)
-            .map_err(|e| StrataError::ValidationError(format!("Invalid UUID format: {e}")))?;
+            .map_err(|e| StrataError::Validation(format!("Invalid UUID format: {e}")))?;
 
         let approved = params
             .get("approved_by_human")
@@ -1727,7 +1723,7 @@ impl Tool for SymbolGuardTool {
         let file = params
             .get("file")
             .and_then(|v| v.as_str())
-            .ok_or_else(|| StrataError::ValidationError("Missing 'file' parameter".to_string()))?;
+            .ok_or_else(|| StrataError::Validation("Missing 'file' parameter".to_string()))?;
 
         let symbol = params.get("symbol").and_then(|v| v.as_str());
         let limit = params.get("limit").and_then(|v| v.as_u64()).unwrap_or(3) as usize;
