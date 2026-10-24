@@ -30,6 +30,12 @@ use crate::community::ArchitectureGraphSummary;
 use crate::embedding::{bytes_to_embedding, embedding_to_bytes};
 use strata_reasoning::{ProceduralRule, ProceduralRuleVersion, TextGradientFeedback};
 
+/// A semantic fact paired with an optional vector embedding.
+pub type FactWithEmbedding = (SemanticFact, Option<Vec<f32>>);
+
+/// A semantic fact paired with an optional vector embedding and embedding model identifier.
+pub type FactWithEmbeddingAndModel = (SemanticFact, Option<Vec<f32>>, Option<String>);
+
 /// A modulated synaptic edge between two graph nodes in the Knowledge Graph.
 #[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
 pub struct MemoryEdgeRecord {
@@ -3720,7 +3726,7 @@ impl SqliteStore {
         &self,
         project: Option<&str>,
         status: Option<FactStatus>,
-    ) -> Result<Vec<(SemanticFact, Option<Vec<f32>>)>, StrataError> {
+    ) -> Result<Vec<FactWithEmbedding>, StrataError> {
         let conn = self
             .conn
             .lock()
@@ -3770,7 +3776,7 @@ impl SqliteStore {
         &self,
         project: Option<&str>,
         status: Option<FactStatus>,
-    ) -> Result<Vec<(SemanticFact, Option<Vec<f32>>, Option<String>)>, StrataError> {
+    ) -> Result<Vec<FactWithEmbeddingAndModel>, StrataError> {
         let conn = self
             .conn
             .lock()

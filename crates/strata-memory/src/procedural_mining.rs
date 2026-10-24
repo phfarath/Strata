@@ -7,6 +7,9 @@ use strata_core::events::{Event, EventPayload};
 use strata_core::schemas::{EpisodeRecord, ProceduralSkill, ProceduralStep};
 use strata_reasoning::{CompiledMacro, MacroParameter, MacroStep};
 
+/// Aggregated metadata for mined sequence instances: (episode IDs, salience scores, step inputs).
+pub type SequenceInstanceData = (Vec<Uuid>, Vec<f32>, Vec<Vec<serde_json::Value>>);
+
 /// A recurring sequential pattern of tool invocations mined from high-salience episodes.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct FrequentToolSequence {
@@ -142,10 +145,7 @@ impl TrajectoryMiner {
         min_support: usize,
         min_salience: f32,
     ) -> Vec<FrequentToolSequence> {
-        let mut sequence_instances: HashMap<
-            Vec<String>,
-            (Vec<Uuid>, Vec<f32>, Vec<Vec<serde_json::Value>>),
-        > = HashMap::new();
+        let mut sequence_instances: HashMap<Vec<String>, SequenceInstanceData> = HashMap::new();
 
         for ep in episodes {
             if ep.salience_score < min_salience || ep.event_trace.is_empty() {
