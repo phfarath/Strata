@@ -36,7 +36,10 @@ pub use state::{
     SessionStatus,
 };
 
-pub use traits::{EventStore, MemoryEngine, ReasoningEngine, Tool};
+pub use traits::{
+    ChatMessage, EventStore, MemoryEngine, PromptContext, ReasoningEngine, ReasoningOutput, Role,
+    TokenUsage, Tool, ToolCall, ToolDefinition, ToolResult,
+};
 
 #[cfg(test)]
 mod tests {

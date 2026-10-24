@@ -35,7 +35,7 @@ impl FromStr for TrainingMethod {
             "sft" => Ok(Self::Sft),
             "orpo" => Ok(Self::Orpo),
             "kto" => Ok(Self::Kto),
-            other => Err(StrataError::ValidationError(format!(
+            other => Err(StrataError::Validation(format!(
                 "Unknown training method '{}'. Supported: dpo, sft, orpo, kto",
                 other
             ))),
@@ -74,7 +74,7 @@ impl FromStr for QuantizationType {
             "8bit" | "8-bit" | "bits8" | "q8" => Ok(Self::Bits8),
             "16bit" | "16-bit" | "bits16" | "fp16" | "bf16" => Ok(Self::Bits16),
             "none" | "fp32" | "full" => Ok(Self::None),
-            other => Err(StrataError::ValidationError(format!(
+            other => Err(StrataError::Validation(format!(
                 "Unknown quantization type '{}'. Supported: 4bit, 8bit, 16bit, none",
                 other
             ))),
@@ -217,42 +217,42 @@ impl TrainingConfig {
 
     pub fn validate(&self) -> Result<(), StrataError> {
         if self.base_model.trim().is_empty() {
-            return Err(StrataError::ValidationError(
+            return Err(StrataError::Validation(
                 "Base model cannot be empty".to_string(),
             ));
         }
         if self.lora_r == 0 {
-            return Err(StrataError::ValidationError(
+            return Err(StrataError::Validation(
                 "LoRA rank (lora_r) must be greater than 0".to_string(),
             ));
         }
         if self.lora_alpha == 0 {
-            return Err(StrataError::ValidationError(
+            return Err(StrataError::Validation(
                 "LoRA alpha must be greater than 0".to_string(),
             ));
         }
         if self.learning_rate <= 0.0 || self.learning_rate.is_nan() {
-            return Err(StrataError::ValidationError(
+            return Err(StrataError::Validation(
                 "Learning rate must be positive and non-zero".to_string(),
             ));
         }
         if self.batch_size == 0 {
-            return Err(StrataError::ValidationError(
+            return Err(StrataError::Validation(
                 "Batch size must be at least 1".to_string(),
             ));
         }
         if self.gradient_accumulation_steps == 0 {
-            return Err(StrataError::ValidationError(
+            return Err(StrataError::Validation(
                 "Gradient accumulation steps must be at least 1".to_string(),
             ));
         }
         if self.max_seq_length < 128 {
-            return Err(StrataError::ValidationError(
+            return Err(StrataError::Validation(
                 "Max sequence length must be at least 128 tokens".to_string(),
             ));
         }
         if self.target_modules.is_empty() {
-            return Err(StrataError::ValidationError(
+            return Err(StrataError::Validation(
                 "At least one LoRA target module must be specified".to_string(),
             ));
         }

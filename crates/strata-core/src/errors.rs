@@ -5,9 +5,6 @@ pub enum StrataError {
     #[error("Database error: {0}")]
     Database(String),
 
-    #[error("Storage error: {0}")]
-    StorageError(String),
-
     #[error("Serialization error: {0}")]
     Serialization(String),
 
@@ -16,9 +13,6 @@ pub enum StrataError {
 
     #[error("Validation error: {0}")]
     Validation(String),
-
-    #[error("Validation error: {0}")]
-    ValidationError(String),
 
     #[error("Embedding error: {0}")]
     Embedding(String),
@@ -29,14 +23,8 @@ pub enum StrataError {
     #[error("Tool error: {0}")]
     Tool(String),
 
-    #[error("Tool execution error: {0}")]
-    ToolError(String),
-
     #[error("Reasoning error: {0}")]
     Reasoning(String),
-
-    #[error("Reasoning error: {0}")]
-    ReasoningError(String),
 
     #[error("Authentication error: {0}")]
     Authentication(String),
