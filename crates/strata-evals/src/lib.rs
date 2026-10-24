@@ -41,9 +41,10 @@ pub async fn run_all_scenarios() -> Result<()> {
     run_causal_prediction_error_scenario().await?;
     run_autonomous_procedural_macro_scenario().await?;
     run_experience_replay_continual_scenario().await?;
+    run_embodied_safety_control_scenario().await?;
 
     println!("\n========================================================");
-    println!("🎉 ALL EVAL SCENARIOS PASSED (31/31)");
+    println!("🎉 ALL EVAL SCENARIOS PASSED (32/32)");
     println!("========================================================\n");
 
     Ok(())
@@ -340,5 +341,12 @@ mod tests {
         run_experience_replay_continual_scenario()
             .await
             .expect("Experience replay continual scenario failed");
+    }
+
+    #[tokio::test]
+    async fn test_eval_embodied_safety_control() {
+        run_embodied_safety_control_scenario()
+            .await
+            .expect("Embodied safety control scenario failed");
     }
 }
