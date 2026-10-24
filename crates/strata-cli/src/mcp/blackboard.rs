@@ -8,7 +8,10 @@ use std::sync::Arc;
 use serde_json::{json, Value};
 use uuid::Uuid;
 
-use strata_core::a2a::{A2aMessage, AgentCard, DomainAuthority, IpcEvent, TransactiveQuery};
+use strata_core::a2a::{
+    A2aMessage, AgentCard, DelegationContract, DelegationStatus, DomainAuthority, IpcEvent,
+    TransactiveQuery,
+};
 use strata_core::blackboard::{TaskArtifact, TaskFilter, TaskStatus};
 use strata_memory::{IpcClient, StigmergyCoordinator};
 
@@ -136,6 +139,50 @@ pub fn definitions() -> Vec<ToolDefinition> {
                 ("question", "string", "Question or request for domain expertise"),
             ],
             &["domain", "question"],
+        ),
+        tool(
+            "a2a_delegate",
+            "Delegate a sub-task with verification contract to a peer agent or domain specialist. Automatically resolves specialist if 'to' is omitted.",
+            &[
+                ("objective", "string", "Task objective or prompt to execute"),
+                ("domain", "string", "Target code domain (e.g. 'crates/strata-memory')"),
+                ("to", "string", "Explicit delegatee agent; resolves via transactive directory if omitted"),
+                ("task_id", "string", "Blackboard task ID (auto-generated if omitted)"),
+                ("context", "string", "Additional context or instruction for the task"),
+                ("artifact", "string", "Expected output artifact path (comma-separated or single)"),
+                ("verify", "string", "Verification command (e.g. 'cargo test -p strata-memory')"),
+                ("timeout", "integer", "Timeout in seconds (default 60)"),
+            ],
+            &["objective"],
+        ),
+        tool(
+            "a2a_accept",
+            "Accept a pending A2A task delegation.",
+            &[
+                ("delegation_id", "string", "Delegation ID to accept"),
+            ],
+            &["delegation_id"],
+        ),
+        tool(
+            "a2a_delegations",
+            "List active or historical task delegations.",
+            &[
+                ("delegator", "string", "Filter by delegator agent"),
+                ("delegatee", "string", "Filter by delegatee agent"),
+                ("status", "string", "Filter by status: pending, accepted, completed, rejected, timed_out"),
+            ],
+            &[],
+        ),
+        tool(
+            "a2a_complete_delegation",
+            "Mark an A2A task delegation completed with verified summary and artifacts.",
+            &[
+                ("delegation_id", "string", "Delegation ID to complete"),
+                ("summary", "string", "Summary of delivered work"),
+                ("artifact", "string", "Produced artifact path (comma-separated or single)"),
+                ("success", "boolean", "Whether execution succeeded (default true)"),
+            ],
+            &["delegation_id", "summary"],
         ),
     ]
 }
@@ -498,6 +545,172 @@ async fn run(
                 "domain": domain,
                 "matched_authority": best_auth,
                 "status": if best_auth.is_some() { "routed" } else { "broadcast_unresolved" }
+            }))
+        }
+
+        "a2a_delegate" => {
+            let objective = req(args, "objective")?;
+            let domain = opt(args, "domain");
+            let to = opt(args, "to");
+            let task_id = opt(args, "task_id")
+                .map(|s| s.to_string())
+                .unwrap_or_else(|| new_id("task"));
+            let delegation_id = new_id("del");
+            let timeout = args.get("timeout").and_then(Value::as_u64).unwrap_or(60);
+
+            let delegatee_agent = if let Some(target) = to {
+                Some(target.to_string())
+            } else if let Some(d) = domain {
+                coordinator
+                    .find_best_authority_for_domain(d)
+                    .map_err(err)?
+                    .map(|auth| auth.authoritative_agent)
+            } else {
+                None
+            };
+
+            let mut contract = DelegationContract::new(&delegation_id, &agent, &task_id, objective)
+                .with_timeout(timeout);
+
+            if let Some(target) = &delegatee_agent {
+                contract = contract.with_delegatee(target);
+            }
+            if let Some(d) = domain {
+                contract = contract.with_domain_scope(d);
+            }
+            if let Some(ctx) = opt(args, "context") {
+                contract = contract.with_context(ctx);
+            }
+            if let Some(art) = opt(args, "artifact") {
+                let artifacts: Vec<String> = art
+                    .split(',')
+                    .map(|s| s.trim().to_string())
+                    .filter(|s| !s.is_empty())
+                    .collect();
+                contract = contract.with_artifacts(artifacts);
+            }
+            if let Some(cmd) = opt(args, "verify") {
+                contract = contract.with_verification(cmd);
+            }
+
+            coordinator.save_delegation(&contract).map_err(err)?;
+
+            // Also create blackboard task if needed
+            let mut task_record = strata_core::blackboard::TaskRecord::new(&task_id, objective);
+            if let Some(d) = domain {
+                task_record = task_record.with_required_resources(vec![d.to_string()]);
+            }
+            if let Some(ref target) = delegatee_agent {
+                task_record.assigned_agent = Some(target.clone());
+            }
+            let _ = coordinator.create_task(&task_record);
+
+            publish(
+                ipc,
+                IpcEvent::TaskDelegated {
+                    contract: contract.clone(),
+                    timestamp_us: chrono::Utc::now().timestamp_micros(),
+                },
+            )
+            .await;
+
+            Ok(json!({
+                "status": "delegated",
+                "contract": contract
+            }))
+        }
+
+        "a2a_accept" => {
+            let delegation_id = req(args, "delegation_id")?;
+            let updated = coordinator
+                .accept_delegation(delegation_id, &agent)
+                .map_err(err)?;
+            if !updated {
+                return Err(format!(
+                    "Could not accept delegation '{delegation_id}': not found or already accepted"
+                ));
+            }
+            publish(
+                ipc,
+                IpcEvent::DelegationAccepted {
+                    delegation_id: delegation_id.to_string(),
+                    delegatee_agent: agent.clone(),
+                    timestamp_us: chrono::Utc::now().timestamp_micros(),
+                },
+            )
+            .await;
+            Ok(json!({
+                "status": "accepted",
+                "delegation_id": delegation_id,
+                "delegatee": agent
+            }))
+        }
+
+        "a2a_delegations" => {
+            let delegator = opt(args, "delegator");
+            let delegatee = opt(args, "delegatee");
+            let status = opt(args, "status").and_then(|s| s.parse::<DelegationStatus>().ok());
+            let list = coordinator
+                .list_delegations(delegator, delegatee, status)
+                .map_err(err)?;
+            Ok(json!(list))
+        }
+
+        "a2a_complete_delegation" => {
+            let delegation_id = req(args, "delegation_id")?;
+            let summary = req(args, "summary")?;
+            let success = args.get("success").and_then(Value::as_bool).unwrap_or(true);
+            let artifact_path = opt(args, "artifact");
+
+            let contract_opt = coordinator.get_delegation(delegation_id).map_err(err)?;
+            let contract = match contract_opt {
+                Some(c) => c,
+                None => return Err(format!("Delegation ID '{delegation_id}' not found")),
+            };
+
+            let status = if success {
+                DelegationStatus::Completed
+            } else {
+                DelegationStatus::Rejected
+            };
+            coordinator
+                .update_delegation_status(delegation_id, status, Some(&agent), Some(summary), None)
+                .map_err(err)?;
+
+            let mut artifacts = Vec::new();
+            if let Some(p) = artifact_path {
+                for path in p.split(',').map(|s| s.trim()).filter(|s| !s.is_empty()) {
+                    let art_id = new_id("art");
+                    let art = TaskArtifact::new(art_id, &contract.task_id, &agent, "file", path);
+                    let _ = coordinator.save_task_artifact(&art);
+                    artifacts.push(path.to_string());
+                }
+            }
+
+            if success {
+                let _ = coordinator.complete_task(&contract.task_id, &agent, Some(summary), None);
+            } else {
+                let _ = coordinator.fail_task(&contract.task_id, &agent, summary);
+            }
+
+            publish(
+                ipc,
+                IpcEvent::DelegationCompleted {
+                    delegation_id: delegation_id.to_string(),
+                    delegatee_agent: agent.clone(),
+                    success,
+                    summary: summary.to_string(),
+                    artifacts: artifacts.clone(),
+                    timestamp_us: chrono::Utc::now().timestamp_micros(),
+                },
+            )
+            .await;
+
+            Ok(json!({
+                "status": status.as_str(),
+                "delegation_id": delegation_id,
+                "summary": summary,
+                "artifacts": artifacts
             }))
         }
 

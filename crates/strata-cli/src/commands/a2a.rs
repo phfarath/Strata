@@ -4,8 +4,8 @@ use std::time::Duration;
 use uuid::Uuid;
 
 use strata_core::a2a::{
-    A2aMessage, AgentCard, AgentPresence, DomainAuthority, IpcEvent, LeaseAcquireResult,
-    ResourceLease, TransactiveQuery, TransactiveResponse,
+    A2aMessage, AgentCard, AgentPresence, DelegationContract, DelegationStatus, DomainAuthority,
+    IpcEvent, LeaseAcquireResult, ResourceLease, TransactiveQuery, TransactiveResponse,
 };
 use strata_memory::StigmergyCoordinator;
 
@@ -221,6 +221,126 @@ pub enum A2aAction {
             help = "Synchronous wait timeout in ms (0 for async)"
         )]
         timeout_ms: u64,
+
+        #[arg(long)]
+        json: bool,
+    },
+
+    /// Delegate a sub-task with verification contract to a peer agent or domain specialist
+    Delegate {
+        #[arg(help = "Task objective or prompt to execute")]
+        objective: String,
+
+        #[arg(long, help = "Target code domain (e.g. 'crates/strata-memory')")]
+        domain: Option<String>,
+
+        #[arg(
+            long,
+            help = "Explicit delegatee agent (resolves via transactive directory if omitted)"
+        )]
+        to: Option<String>,
+
+        #[arg(long, help = "Task ID on blackboard (auto-generated if omitted)")]
+        task: Option<String>,
+
+        #[arg(long, help = "Additional context or instruction for the task")]
+        context: Option<String>,
+
+        #[arg(long, help = "Expected output artifact path (can specify multiple)")]
+        artifact: Vec<String>,
+
+        #[arg(
+            long,
+            help = "Verification command (e.g. 'cargo test -p strata-memory')"
+        )]
+        verify: Option<String>,
+
+        #[arg(long, default_value_t = 60, help = "Timeout in seconds (default: 60s)")]
+        timeout: u64,
+
+        #[arg(long, help = "Wait synchronously on IPC bus for delegation completion")]
+        wait: bool,
+
+        #[arg(
+            long,
+            help = "Delegator agent identifier (defaults to STRATA_AGENT_ID)"
+        )]
+        agent: Option<String>,
+
+        #[arg(long)]
+        json: bool,
+    },
+
+    /// Accept a pending A2A task delegation
+    Accept {
+        #[arg(help = "Delegation ID to accept")]
+        delegation_id: String,
+
+        #[arg(
+            long,
+            help = "Delegatee agent identifier (defaults to STRATA_AGENT_ID)"
+        )]
+        agent: Option<String>,
+
+        #[arg(long)]
+        json: bool,
+    },
+
+    /// Mark an A2A task delegation completed with verified summary and artifacts
+    CompleteDelegation {
+        #[arg(help = "Delegation ID to complete")]
+        delegation_id: String,
+
+        #[arg(long, help = "Summary of delivered work")]
+        summary: String,
+
+        #[arg(long, help = "Produced artifact path (can specify multiple)")]
+        artifact: Vec<String>,
+
+        #[arg(long, default_value_t = true, help = "Whether execution succeeded")]
+        success: bool,
+
+        #[arg(
+            long,
+            help = "Delegatee agent identifier (defaults to STRATA_AGENT_ID)"
+        )]
+        agent: Option<String>,
+
+        #[arg(long)]
+        json: bool,
+    },
+
+    /// Reject an A2A task delegation with an explicit failure reason
+    RejectDelegation {
+        #[arg(help = "Delegation ID to reject")]
+        delegation_id: String,
+
+        #[arg(long, help = "Reason for rejection")]
+        reason: String,
+
+        #[arg(
+            long,
+            help = "Delegatee agent identifier (defaults to STRATA_AGENT_ID)"
+        )]
+        agent: Option<String>,
+
+        #[arg(long)]
+        json: bool,
+    },
+
+    /// List active or historical task delegations
+    Delegations {
+        #[arg(long, help = "Filter by delegator agent")]
+        delegator: Option<String>,
+
+        #[arg(long, help = "Filter by delegatee agent")]
+        delegatee: Option<String>,
+
+        #[arg(
+            long,
+            help = "Filter by status: pending, accepted, completed, rejected, timed_out"
+        )]
+        status: Option<String>,
 
         #[arg(long)]
         json: bool,
@@ -503,6 +623,19 @@ pub async fn run_a2a(args: A2aArgs, coordinator: StigmergyCoordinator) -> Result
                                         }
                                         strata_core::a2a::IpcEvent::TransactiveResponseReturned { response, .. } => {
                                             println!("💡 [TRANSACTIVE RESPONSE] responder='{}' conf={:.2}: {}", response.responder_agent, response.confidence_score, response.answer);
+                                        }
+                                        strata_core::a2a::IpcEvent::TaskDelegated { contract, .. } => {
+                                            let target_str = contract.delegatee_agent.as_deref().unwrap_or("*");
+                                            println!("🤝 [TASK DELEGATED] id='{}' from='{}' to='{}' obj='{}'", contract.delegation_id, contract.delegator_agent, target_str, contract.objective);
+                                        }
+                                        strata_core::a2a::IpcEvent::DelegationAccepted { delegation_id, delegatee_agent, .. } => {
+                                            println!("✅ [DELEGATION ACCEPTED] id='{}' accepted by '{}'", delegation_id, delegatee_agent);
+                                        }
+                                        strata_core::a2a::IpcEvent::DelegationCompleted { delegation_id, delegatee_agent, success, summary, .. } => {
+                                            println!("🏁 [DELEGATION COMPLETED] id='{}' by '{}' success={}: {}", delegation_id, delegatee_agent, success, summary);
+                                        }
+                                        strata_core::a2a::IpcEvent::DelegationRejected { delegation_id, delegatee_agent, reason, .. } => {
+                                            println!("❌ [DELEGATION REJECTED] id='{}' by '{}': {}", delegation_id, delegatee_agent, reason);
                                         }
                                     }
                                 }
@@ -1014,6 +1147,458 @@ pub async fn run_a2a(args: A2aArgs, coordinator: StigmergyCoordinator) -> Result
                     );
                 } else {
                     println!("  Status       : Routed asynchronously. Target agent notified.");
+                }
+                println!();
+            }
+        }
+
+        Some(A2aAction::Delegate {
+            objective,
+            domain,
+            to,
+            task,
+            context,
+            artifact,
+            verify,
+            timeout,
+            wait,
+            agent,
+            json,
+        }) => {
+            let json_mode = is_json_mode(json);
+            let delegator_agent = resolve_agent_id(agent.as_deref());
+            let task_id =
+                task.unwrap_or_else(|| format!("task-{}", &Uuid::new_v4().to_string()[..8]));
+            let delegation_id = format!("del-{}", &Uuid::new_v4().to_string()[..8]);
+
+            // If target agent is not explicitly passed, query transactive directory for best specialist
+            let delegatee_agent = if let Some(target) = to {
+                Some(target)
+            } else if let Some(ref d) = domain {
+                coordinator
+                    .resolve_domain_specialist(d)?
+                    .map(|auth| auth.authoritative_agent)
+            } else {
+                None
+            };
+
+            let mut contract =
+                DelegationContract::new(&delegation_id, &delegator_agent, &task_id, &objective)
+                    .with_artifacts(artifact.clone())
+                    .with_timeout(timeout);
+
+            if let Some(target) = delegatee_agent {
+                contract = contract.with_delegatee(target);
+            }
+            if let Some(d) = domain {
+                contract = contract.with_domain_scope(d);
+            }
+            if let Some(ctx) = context {
+                contract = contract.with_context(ctx);
+            }
+            if let Some(cmd) = verify {
+                contract = contract.with_verification(cmd);
+            }
+
+            // Save to SQLite
+            coordinator.save_delegation(&contract)?;
+
+            // Also ensure corresponding task exists on blackboard
+            let mut task_record = strata_core::blackboard::TaskRecord::new(&task_id, &objective);
+            if let Some(ref d) = contract.domain_scope {
+                task_record = task_record.with_required_resources(vec![d.clone()]);
+            }
+            if let Some(ref cmd) = contract.verification_command {
+                task_record =
+                    task_record.with_payload(strata_core::blackboard::TaskPayload::ShellCommand {
+                        command: cmd.clone(),
+                        cwd: None,
+                        timeout_secs: Some(timeout),
+                    });
+            } else {
+                task_record =
+                    task_record.with_payload(strata_core::blackboard::TaskPayload::AgentPrompt {
+                        prompt: objective.clone(),
+                        context_files: Vec::new(),
+                        expected_artifacts: contract.expected_artifacts.clone(),
+                    });
+            }
+            if let Some(ref target) = contract.delegatee_agent {
+                task_record.assigned_agent = Some(target.clone());
+            }
+            let _ = coordinator.create_task(&task_record);
+
+            // Publish IPC event TaskDelegated
+            let cwd = std::env::current_dir().unwrap_or_else(|_| std::path::PathBuf::from("."));
+            let (client_opt, _server) =
+                strata_memory::IpcBrokerManager::start_or_connect(&cwd).await;
+            if let Some(ref client) = client_opt {
+                let _ = client
+                    .publish(IpcEvent::TaskDelegated {
+                        contract: contract.clone(),
+                        timestamp_us: chrono::Utc::now().timestamp_micros(),
+                    })
+                    .await;
+            }
+
+            if wait {
+                if let Some(ref client) = client_opt {
+                    if !json_mode {
+                        println!(
+                            "⏳ Delegated '{}' (id: {}). Waiting for completion up to {}s...",
+                            contract.objective, contract.delegation_id, timeout
+                        );
+                    }
+                    let del_id = contract.delegation_id.clone();
+                    let completed_event = client
+                        .wait_for_event(
+                            move |ev| match ev {
+                                IpcEvent::DelegationCompleted { delegation_id, .. } => {
+                                    delegation_id == &del_id
+                                }
+                                IpcEvent::DelegationRejected { delegation_id, .. } => {
+                                    delegation_id == &del_id
+                                }
+                                _ => false,
+                            },
+                            Duration::from_secs(timeout),
+                        )
+                        .await?;
+
+                    match completed_event {
+                        Some(IpcEvent::DelegationCompleted {
+                            success,
+                            summary,
+                            artifacts,
+                            delegatee_agent,
+                            ..
+                        }) => {
+                            if json_mode {
+                                println!(
+                                    "{}",
+                                    serde_json::json!({
+                                        "delegation_id": contract.delegation_id,
+                                        "status": "completed",
+                                        "success": success,
+                                        "delegatee": delegatee_agent,
+                                        "summary": summary,
+                                        "artifacts": artifacts
+                                    })
+                                );
+                            } else {
+                                println!(
+                                    "✓ Delegation completed by '{}' (success={})!",
+                                    delegatee_agent, success
+                                );
+                                println!("  Summary: {summary}");
+                                if !artifacts.is_empty() {
+                                    println!("  Artifacts: {:?}", artifacts);
+                                }
+                            }
+                            return Ok(());
+                        }
+                        Some(IpcEvent::DelegationRejected {
+                            reason,
+                            delegatee_agent,
+                            ..
+                        }) => {
+                            if json_mode {
+                                println!(
+                                    "{}",
+                                    serde_json::json!({
+                                        "delegation_id": contract.delegation_id,
+                                        "status": "rejected",
+                                        "delegatee": delegatee_agent,
+                                        "reason": reason
+                                    })
+                                );
+                            } else {
+                                println!(
+                                    "✗ Delegation rejected by '{}': {reason}",
+                                    delegatee_agent
+                                );
+                            }
+                            return Ok(());
+                        }
+                        _ => {
+                            // Timeout
+                            let _ = coordinator.update_delegation_status(
+                                &contract.delegation_id,
+                                DelegationStatus::TimedOut,
+                                None,
+                                None,
+                                Some("Wait timeout exceeded"),
+                            );
+                            if json_mode {
+                                println!(
+                                    "{}",
+                                    serde_json::json!({
+                                        "delegation_id": contract.delegation_id,
+                                        "status": "timed_out",
+                                        "timeout_seconds": timeout
+                                    })
+                                );
+                            } else {
+                                println!(
+                                    "⏱️ Delegation timed out after {}s waiting for peer agent.",
+                                    timeout
+                                );
+                            }
+                            return Ok(());
+                        }
+                    }
+                }
+            }
+
+            if json_mode {
+                println!("{}", serde_json::to_string_pretty(&contract)?);
+            } else {
+                println!("✓ Task delegated successfully!");
+                println!("  Delegation ID : {}", contract.delegation_id);
+                println!("  Task ID       : {}", contract.task_id);
+                println!("  Objective     : {}", contract.objective);
+                if let Some(ref target) = contract.delegatee_agent {
+                    println!("  Delegatee     : {}", target);
+                } else {
+                    println!("  Delegatee     : [Unassigned / Any Specialist]");
+                }
+                if let Some(ref d) = contract.domain_scope {
+                    println!("  Domain Scope  : {}", d);
+                }
+                if !contract.expected_artifacts.is_empty() {
+                    println!("  Artifacts     : {:?}", contract.expected_artifacts);
+                }
+            }
+        }
+
+        Some(A2aAction::Accept {
+            delegation_id,
+            agent,
+            json,
+        }) => {
+            let json_mode = is_json_mode(json);
+            let delegatee = resolve_agent_id(agent.as_deref());
+            let contract_opt = coordinator.get_delegation(&delegation_id)?;
+            let _contract = match contract_opt {
+                Some(c) => c,
+                None => anyhow::bail!("Delegation ID '{}' not found", delegation_id),
+            };
+
+            let updated = coordinator.accept_delegation(&delegation_id, &delegatee)?;
+            if !updated {
+                anyhow::bail!("Could not accept delegation '{}': already accepted by another agent or not found", delegation_id);
+            }
+
+            let cwd = std::env::current_dir().unwrap_or_else(|_| std::path::PathBuf::from("."));
+            let (client_opt, _server) =
+                strata_memory::IpcBrokerManager::start_or_connect(&cwd).await;
+            if let Some(ref client) = client_opt {
+                let _ = client
+                    .publish(IpcEvent::DelegationAccepted {
+                        delegation_id: delegation_id.clone(),
+                        delegatee_agent: delegatee.clone(),
+                        timestamp_us: chrono::Utc::now().timestamp_micros(),
+                    })
+                    .await;
+            }
+
+            if json_mode {
+                println!(
+                    "{}",
+                    serde_json::json!({
+                        "delegation_id": delegation_id,
+                        "status": "accepted",
+                        "delegatee": delegatee,
+                        "updated": updated
+                    })
+                );
+            } else {
+                println!(
+                    "✓ Delegation '{}' accepted by '{}'.",
+                    delegation_id, delegatee
+                );
+            }
+        }
+
+        Some(A2aAction::CompleteDelegation {
+            delegation_id,
+            summary,
+            artifact,
+            success,
+            agent,
+            json,
+        }) => {
+            let json_mode = is_json_mode(json);
+            let delegatee = resolve_agent_id(agent.as_deref());
+            let contract_opt = coordinator.get_delegation(&delegation_id)?;
+            let contract = match contract_opt {
+                Some(c) => c,
+                None => anyhow::bail!("Delegation ID '{}' not found", delegation_id),
+            };
+
+            let status = if success {
+                DelegationStatus::Completed
+            } else {
+                DelegationStatus::Rejected
+            };
+            coordinator.update_delegation_status(
+                &delegation_id,
+                status,
+                Some(&delegatee),
+                Some(&summary),
+                None,
+            )?;
+
+            for art_path in &artifact {
+                let art_id = format!("art-{}", &Uuid::new_v4().simple().to_string()[..12]);
+                let art = strata_core::blackboard::TaskArtifact::new(
+                    art_id,
+                    &contract.task_id,
+                    &delegatee,
+                    "file",
+                    art_path,
+                );
+                let _ = coordinator.save_task_artifact(&art);
+            }
+
+            if success {
+                let _ =
+                    coordinator.complete_task(&contract.task_id, &delegatee, Some(&summary), None);
+            } else {
+                let _ = coordinator.fail_task(&contract.task_id, &delegatee, &summary);
+            }
+
+            let cwd = std::env::current_dir().unwrap_or_else(|_| std::path::PathBuf::from("."));
+            let (client_opt, _server) =
+                strata_memory::IpcBrokerManager::start_or_connect(&cwd).await;
+            if let Some(ref client) = client_opt {
+                let _ = client
+                    .publish(IpcEvent::DelegationCompleted {
+                        delegation_id: delegation_id.clone(),
+                        delegatee_agent: delegatee.clone(),
+                        success,
+                        summary: summary.clone(),
+                        artifacts: artifact.clone(),
+                        timestamp_us: chrono::Utc::now().timestamp_micros(),
+                    })
+                    .await;
+            }
+
+            if json_mode {
+                println!(
+                    "{}",
+                    serde_json::json!({
+                        "delegation_id": delegation_id,
+                        "status": status.as_str(),
+                        "delegatee": delegatee,
+                        "success": success,
+                        "summary": summary,
+                        "artifacts": artifact
+                    })
+                );
+            } else {
+                println!(
+                    "✓ Delegation '{}' marked as completed by '{}'.",
+                    delegation_id, delegatee
+                );
+                println!("  Summary: {summary}");
+            }
+        }
+
+        Some(A2aAction::RejectDelegation {
+            delegation_id,
+            reason,
+            agent,
+            json,
+        }) => {
+            let json_mode = is_json_mode(json);
+            let delegatee = resolve_agent_id(agent.as_deref());
+            let contract_opt = coordinator.get_delegation(&delegation_id)?;
+            let contract = match contract_opt {
+                Some(c) => c,
+                None => anyhow::bail!("Delegation ID '{}' not found", delegation_id),
+            };
+
+            coordinator.update_delegation_status(
+                &delegation_id,
+                DelegationStatus::Rejected,
+                Some(&delegatee),
+                None,
+                Some(&reason),
+            )?;
+            let _ = coordinator.fail_task(&contract.task_id, &delegatee, &reason);
+
+            let cwd = std::env::current_dir().unwrap_or_else(|_| std::path::PathBuf::from("."));
+            let (client_opt, _server) =
+                strata_memory::IpcBrokerManager::start_or_connect(&cwd).await;
+            if let Some(ref client) = client_opt {
+                let _ = client
+                    .publish(IpcEvent::DelegationRejected {
+                        delegation_id: delegation_id.clone(),
+                        delegatee_agent: delegatee.clone(),
+                        reason: reason.clone(),
+                        timestamp_us: chrono::Utc::now().timestamp_micros(),
+                    })
+                    .await;
+            }
+
+            if json_mode {
+                println!(
+                    "{}",
+                    serde_json::json!({
+                        "delegation_id": delegation_id,
+                        "status": "rejected",
+                        "delegatee": delegatee,
+                        "reason": reason
+                    })
+                );
+            } else {
+                println!(
+                    "✗ Delegation '{}' rejected by '{}': {reason}",
+                    delegation_id, delegatee
+                );
+            }
+        }
+
+        Some(A2aAction::Delegations {
+            delegator,
+            delegatee,
+            status,
+            json,
+        }) => {
+            let json_mode = is_json_mode(json);
+            let parsed_status = match status.as_deref() {
+                Some(s) => match s.parse::<DelegationStatus>() {
+                    Ok(parsed) => Some(parsed),
+                    Err(_) => anyhow::bail!(
+                        "Invalid delegation status filter '{}'. Expected one of: pending, accepted, completed, rejected, timed_out",
+                        s
+                    ),
+                },
+                None => None,
+            };
+            let list = coordinator.list_delegations(
+                delegator.as_deref(),
+                delegatee.as_deref(),
+                parsed_status,
+            )?;
+
+            if json_mode {
+                println!("{}", serde_json::to_string_pretty(&list)?);
+            } else {
+                println!("\n📋 [A2A Task Delegations (Total: {})]", list.len());
+                println!("═════════════════════════════════════════════════════════════════════════════════════");
+                if list.is_empty() {
+                    println!("  (No delegations found matching filter)");
+                } else {
+                    for d in &list {
+                        let target_str = d.delegatee_agent.as_deref().unwrap_or("*");
+                        let domain_str = d.domain_scope.as_deref().unwrap_or("-");
+                        println!(
+                            "  • [{:<9}] id={:<14} from={:<12} to={:<12} domain={:<20} objective='{}'",
+                            d.status.as_str().to_uppercase(), d.delegation_id, d.delegator_agent, target_str, domain_str, d.objective
+                        );
+                    }
                 }
                 println!();
             }

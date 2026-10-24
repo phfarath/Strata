@@ -29,6 +29,7 @@ pub async fn run_all_scenarios() -> Result<()> {
     run_a2a_stigmergic_leases_scenario().await?;
     run_a2a_swarm_stress_benchmark_scenario().await?;
     run_a2a_transactive_directory_scenario().await?;
+    run_a2a_heterogeneous_delegation_scenario().await?;
     run_pluggable_reasoning_cascade_scenario().await?;
     run_consolidation_ab_benchmark_scenario().await?;
     run_agent_loop_futility_baseline_scenario().await?;
@@ -36,9 +37,12 @@ pub async fn run_all_scenarios() -> Result<()> {
     run_community_scoped_recall_scenario().await?;
     run_context_rot_scenario().await?;
     run_long_mem_eval_scenario().await?;
+    run_self_supervised_distillation_pipeline_scenario().await?;
+    run_causal_prediction_error_scenario().await?;
+    run_autonomous_procedural_macro_scenario().await?;
 
     println!("\n========================================================");
-    println!("🎉 ALL EVAL SCENARIOS PASSED (26/26)");
+    println!("🎉 ALL EVAL SCENARIOS PASSED (30/30)");
     println!("========================================================\n");
 
     Ok(())
@@ -300,5 +304,33 @@ mod tests {
     async fn test_eval_long_mem_eval_unknown_suite() {
         let err = LongMemEvalSuite::run_suite("unknown-suite").await;
         assert!(err.is_err());
+    }
+
+    #[tokio::test]
+    async fn test_eval_a2a_heterogeneous_delegation() {
+        run_a2a_heterogeneous_delegation_scenario()
+            .await
+            .expect("A2A heterogeneous delegation scenario failed");
+    }
+
+    #[tokio::test]
+    async fn test_eval_self_supervised_distillation_pipeline() {
+        run_self_supervised_distillation_pipeline_scenario()
+            .await
+            .expect("Self-supervised distillation pipeline scenario failed");
+    }
+
+    #[tokio::test]
+    async fn test_eval_causal_prediction_error() {
+        run_causal_prediction_error_scenario()
+            .await
+            .expect("Causal prediction error scenario failed");
+    }
+
+    #[tokio::test]
+    async fn test_eval_autonomous_procedural_macro() {
+        run_autonomous_procedural_macro_scenario()
+            .await
+            .expect("Autonomous procedural macro scenario failed");
     }
 }

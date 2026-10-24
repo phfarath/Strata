@@ -18,9 +18,11 @@ use strata_cli::{
         auth::{run_auth, AuthArgs},
         blast_radius::{run_blast_radius, BlastRadiusArgs},
         callgraph::run_callgraph,
+        causal_cmd::{run_causal, CausalArgs},
         config::{run_config, ConfigArgs},
         consolidate::{run_consolidate, ConsolidateOptions},
         daemon::{run_daemon, DaemonArgs},
+        distill::{run_distill, DistillArgs},
         doctor::run_doctor,
         episode::{run_episode, EpisodeArgs},
         export::{run_export, ExportArgs},
@@ -29,6 +31,7 @@ use strata_cli::{
         init::{run_init, InitOptions},
         key::{run_key, KeyArgs},
         login::{run_login, run_logout, LoginArgs},
+        macro_cmd::{run_macro, MacroArgs},
         mcp_install::{run_mcp_install, run_mcp_uninstall, McpInstallOptions, McpUninstallOptions},
         memory::{run_memory, MemoryArgs},
         observe::{run_observe, ObserveArgs},
@@ -295,9 +298,21 @@ enum Commands {
     /// Log out from Strata Cloud and clear stored credentials
     Logout,
 
+    /// Self-supervised distillation & LoRA curriculum fine-tuning pipeline
+    #[command(name = "distill", alias = "curriculum")]
+    Distill(DistillArgs),
+
     /// One-click local LoRA fine-tuning via Unsloth and Ollama deployment
     #[command(name = "train", alias = "lora", alias = "finetune")]
     Train(TrainArgs),
+
+    /// Manage and execute compiled procedural macros
+    #[command(name = "macro", alias = "macros")]
+    Macro(MacroArgs),
+
+    /// Causal reasoning, explanation, and counterfactual diagnosis
+    #[command(name = "causal", alias = "why")]
+    Causal(CausalArgs),
 
     /// Deterministic native call graph and import dependency analyzer
     #[command(name = "callgraph", alias = "calls", alias = "hierarchy")]
@@ -852,9 +867,24 @@ async fn main() -> Result<()> {
             run_blast_radius(args, store.as_ref()).await?;
         }
 
+        Commands::Distill(args) => {
+            let store = engine.store_arc();
+            run_distill(args, store).await?;
+        }
+
         Commands::Train(args) => {
             let store = engine.store_arc();
             run_train(args, store).await?;
+        }
+
+        Commands::Macro(args) => {
+            let store = engine.store_arc();
+            run_macro(args, store).await?;
+        }
+
+        Commands::Causal(args) => {
+            let store = engine.store_arc();
+            run_causal(args, store).await?;
         }
 
         Commands::Promote(args) => {

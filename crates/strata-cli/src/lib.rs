@@ -54,12 +54,82 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn test_cli_distill_mine_and_auto_dry_run() {
+        use strata_core::a2a::{DelegationContract, DelegationStatus};
+        use strata_core::state::{
+            HumanApprovalRecord, MemoryRecord, MemoryTier, MemoryType, Scope,
+        };
+
+        let temp_dir =
+            std::env::temp_dir().join(format!("strata_cli_distill_test_{}", uuid::Uuid::new_v4()));
+        let store = Arc::new(SqliteStore::open_in_memory().unwrap());
+
+        // Setup 1 delegation and 1 HITL core memory
+        let mut del =
+            DelegationContract::new("del-1", "agent-a", "task-1", "Refactor authentication");
+        del.domain_scope = Some("security".to_string());
+        del.status = DelegationStatus::Completed;
+        del.verification_command = Some("cargo test".to_string());
+        del.result_summary = Some("Verified auth fix".to_string());
+        store.save_delegation(&del).unwrap();
+
+        let mut mem = MemoryRecord::new(MemoryType::Semantic, "Core invariant rule", Scope::Global);
+        mem.tier = MemoryTier::Core;
+        mem.approved_by_human = true;
+        mem.human_approval = Some(HumanApprovalRecord::new(
+            "council",
+            "ui",
+            &mem.content,
+            None,
+        ));
+        store.insert_memory(&mem).unwrap();
+
+        // 1. Test Mine (JSON output report)
+        let mine_args = DistillArgs {
+            command: DistillCommands::Mine(MineArgs {
+                format: "dpo".to_string(),
+                oracle_only: true,
+                report: true,
+                session: None,
+                scope: None,
+                output: None,
+                json: true,
+            }),
+        };
+        assert!(run_distill(mine_args, store.clone()).await.is_ok());
+
+        // 2. Test Auto (dry-run with curriculum train/eval split)
+        let auto_args = DistillArgs {
+            command: DistillCommands::Auto(AutoArgs {
+                base_model: "unsloth/Llama-3.2-3B-Instruct".to_string(),
+                method: "dpo".to_string(),
+                eval_ratio: 0.5,
+                oracle_only: true,
+                out_dir: temp_dir.clone(),
+                deploy_ollama: Some("strata-distilled-coder".to_string()),
+                dry_run: true,
+                json: true,
+            }),
+        };
+        assert!(run_distill(auto_args, store).await.is_ok());
+
+        assert!(temp_dir.join("train.jsonl").exists());
+        assert!(temp_dir.join("eval.jsonl").exists());
+        assert!(temp_dir.join("train_lora.py").exists());
+        assert!(temp_dir.join("Modelfile").exists());
+        assert!(temp_dir.join("run_training.sh").exists());
+        assert!(temp_dir.join("manifest.json").exists());
+
+        let _ = std::fs::remove_dir_all(&temp_dir);
+    }
+
+    #[tokio::test]
     async fn test_cli_hook_wrap_and_user_prompt_guardrails() {
         use strata_core::state::Scope;
         use strata_core::traits::MemoryEngine;
         use strata_memory::SqliteMemoryEngine;
 
-        let engine = Arc::new(SqliteMemoryEngine::open_in_memory(None).unwrap());
+        let engine = Arc::new(strata_memory::SqliteMemoryEngine::open_in_memory(None).unwrap());
 
         // 1. Test PostTool with compilation error
         let post_tool = HookCommand::PostTool {
@@ -183,7 +253,7 @@ export function login(username: string): boolean {
         )
         .unwrap();
 
-        let engine = Arc::new(SqliteMemoryEngine::open_in_memory(None).unwrap());
+        let engine = Arc::new(strata_memory::SqliteMemoryEngine::open_in_memory(None).unwrap());
         let store = engine.store_arc();
 
         // 1. Test CLI run_callgraph with --index
@@ -267,7 +337,7 @@ export function login(username: string): boolean {
         use strata_core::traits::MemoryEngine;
         use strata_memory::SqliteMemoryEngine;
 
-        let engine = Arc::new(SqliteMemoryEngine::open_in_memory(None).unwrap());
+        let engine = Arc::new(strata_memory::SqliteMemoryEngine::open_in_memory(None).unwrap());
 
         // 1. Write working memory record
         let mem = MemoryRecord::new(
@@ -614,10 +684,187 @@ export function login(username: string): boolean {
     }
 
     #[tokio::test]
+    async fn test_cli_a2a_delegation_lifecycle() {
+        use strata_core::a2a::{DelegationStatus, DomainAuthority};
+        use strata_memory::SqliteStore;
+        use strata_memory::StigmergyCoordinator;
+
+        let store = Arc::new(SqliteStore::open_in_memory().unwrap());
+        let coordinator = StigmergyCoordinator::new(store);
+
+        // 1. Register domain authority for specialist agent
+        let auth = DomainAuthority::new("crates/strata-memory", "specialist-memory", 0.95);
+        coordinator.set_domain_authority(&auth).unwrap();
+
+        // 2. Delegate a task without specifying --to (should route to specialist-memory via transactive directory)
+        let delegate_args = A2aArgs {
+            action: Some(A2aAction::Delegate {
+                objective: "Optimize SQLite index scans".to_string(),
+                domain: Some("crates/strata-memory".to_string()),
+                to: None,
+                task: Some("task-del-01".to_string()),
+                context: Some("Use WAL checkpoints".to_string()),
+                artifact: vec!["crates/strata-memory/src/store.rs".to_string()],
+                verify: Some("cargo test -p strata-memory".to_string()),
+                timeout: 30,
+                wait: false,
+                agent: Some("agent-planner".to_string()),
+                json: true,
+            }),
+            ttl: 60,
+            json: true,
+        };
+        let res_del = run_a2a(delegate_args, coordinator.clone()).await;
+        assert!(res_del.is_ok());
+
+        // 3. Inspect delegations
+        let list = coordinator.list_delegations(None, None, None).unwrap();
+        assert_eq!(list.len(), 1);
+        let del = &list[0];
+        assert_eq!(del.delegator_agent, "agent-planner");
+        assert_eq!(del.delegatee_agent.as_deref(), Some("specialist-memory"));
+        assert_eq!(del.status, DelegationStatus::Pending);
+        assert_eq!(del.objective, "Optimize SQLite index scans");
+
+        // 4. Accept delegation
+        let accept_args = A2aArgs {
+            action: Some(A2aAction::Accept {
+                delegation_id: del.delegation_id.clone(),
+                agent: Some("specialist-memory".to_string()),
+                json: true,
+            }),
+            ttl: 60,
+            json: true,
+        };
+        let res_acc = run_a2a(accept_args, coordinator.clone()).await;
+        assert!(res_acc.is_ok());
+
+        let accepted = coordinator
+            .get_delegation(&del.delegation_id)
+            .unwrap()
+            .unwrap();
+        assert_eq!(accepted.status, DelegationStatus::Accepted);
+
+        // 5. Complete delegation
+        let complete_args = A2aArgs {
+            action: Some(A2aAction::CompleteDelegation {
+                delegation_id: del.delegation_id.clone(),
+                summary: "Added index idx_a2a_delegations_domain and verified tests".to_string(),
+                artifact: vec!["crates/strata-memory/src/store.rs".to_string()],
+                success: true,
+                agent: Some("specialist-memory".to_string()),
+                json: true,
+            }),
+            ttl: 60,
+            json: true,
+        };
+        let res_comp = run_a2a(complete_args, coordinator.clone()).await;
+        assert!(res_comp.is_ok());
+
+        let completed = coordinator
+            .get_delegation(&del.delegation_id)
+            .unwrap()
+            .unwrap();
+        assert_eq!(completed.status, DelegationStatus::Completed);
+        assert_eq!(
+            completed.result_summary.as_deref(),
+            Some("Added index idx_a2a_delegations_domain and verified tests")
+        );
+
+        // 6. Delegations command filter
+        let list_args = A2aArgs {
+            action: Some(A2aAction::Delegations {
+                delegator: Some("agent-planner".to_string()),
+                delegatee: None,
+                status: Some("completed".to_string()),
+                json: true,
+            }),
+            ttl: 60,
+            json: true,
+        };
+        let res_list = run_a2a(list_args, coordinator.clone()).await;
+        assert!(res_list.is_ok());
+    }
+
+    #[tokio::test]
+    async fn test_mcp_a2a_delegation_tools() {
+        use strata_memory::SqliteMemoryEngine;
+
+        let engine = Arc::new(strata_memory::SqliteMemoryEngine::open_in_memory(None).unwrap());
+        let server = McpServer::new_with_engine(Arc::clone(&engine));
+
+        // 1. Call a2a_delegate via MCP
+        let del_res = server
+            .execute_tool(
+                "a2a_delegate",
+                serde_json::json!({
+                    "objective": "Refactor token bucket in strata-tools",
+                    "domain": "crates/strata-tools",
+                    "to": "agent-worker-02",
+                    "timeout": 45,
+                    "verify": "cargo test -p strata-tools",
+                    "agent_id": "agent-supervisor"
+                }),
+            )
+            .await;
+        assert!(
+            del_res.is_error != Some(true),
+            "a2a_delegate failed: {:?}",
+            del_res
+        );
+        let del_text = &del_res.content[0].text;
+        assert!(del_text.contains("\"status\": \"delegated\""));
+
+        let parsed: serde_json::Value = serde_json::from_str(del_text).unwrap();
+        let delegation_id = parsed["contract"]["delegation_id"].as_str().unwrap();
+
+        // 2. Call a2a_accept via MCP
+        let acc_res = server
+            .execute_tool(
+                "a2a_accept",
+                serde_json::json!({
+                    "delegation_id": delegation_id,
+                    "agent_id": "agent-worker-02"
+                }),
+            )
+            .await;
+        assert!(acc_res.is_error != Some(true));
+        assert!(acc_res.content[0].text.contains("\"status\": \"accepted\""));
+
+        // 3. Call a2a_delegations
+        let list_res = server
+            .execute_tool(
+                "a2a_delegations",
+                serde_json::json!({ "status": "accepted" }),
+            )
+            .await;
+        assert!(list_res.is_error != Some(true));
+        assert!(list_res.content[0].text.contains(delegation_id));
+
+        // 3. Call a2a_complete_delegation
+        let comp_res = server
+            .execute_tool(
+                "a2a_complete_delegation",
+                serde_json::json!({
+                    "delegation_id": delegation_id,
+                    "summary": "Completed token bucket refactor with 100% tests passing",
+                    "artifact": "crates/strata-tools/src/token_bucket.rs",
+                    "success": true,
+                    "agent_id": "agent-worker-02"
+                }),
+            )
+            .await;
+        assert!(comp_res.is_error != Some(true));
+        assert!(comp_res.content[0]
+            .text
+            .contains("\"status\": \"completed\""));
+    }
+
+    #[tokio::test]
     async fn test_mcp_stigmergy_tools_execution() {
         use strata_memory::SqliteMemoryEngine;
 
-        let engine = Arc::new(SqliteMemoryEngine::open_in_memory(None).unwrap());
+        let engine = Arc::new(strata_memory::SqliteMemoryEngine::open_in_memory(None).unwrap());
 
         let test_id = uuid::Uuid::new_v4();
         #[cfg(windows)]
@@ -863,7 +1110,7 @@ export function login(username: string): boolean {
         use strata_core::events::{Event, EventPayload, ObservationReceived};
         use strata_memory::SqliteMemoryEngine;
 
-        let engine = Arc::new(SqliteMemoryEngine::open_in_memory(None).unwrap());
+        let engine = Arc::new(strata_memory::SqliteMemoryEngine::open_in_memory(None).unwrap());
         let store = engine.store_arc();
         let session_id = "test-mcp-consolidate";
 
@@ -912,7 +1159,7 @@ export function login(username: string): boolean {
         use strata_core::traits::MemoryEngine;
         use strata_memory::SqliteMemoryEngine;
 
-        let engine = Arc::new(SqliteMemoryEngine::open_in_memory(None).unwrap());
+        let engine = Arc::new(strata_memory::SqliteMemoryEngine::open_in_memory(None).unwrap());
 
         // Insert connected memories in Knowledge Graph
         let mut mem1 = MemoryRecord::new(
@@ -983,7 +1230,7 @@ export function login(username: string): boolean {
         use strata_core::schemas::FactStatus;
         use strata_memory::SqliteMemoryEngine;
 
-        let engine = Arc::new(SqliteMemoryEngine::open_in_memory(None).unwrap());
+        let engine = Arc::new(strata_memory::SqliteMemoryEngine::open_in_memory(None).unwrap());
         let store = engine.store_arc();
         let session_id = "test-hook-session-end";
 
@@ -1026,7 +1273,7 @@ export function login(username: string): boolean {
         use crate::commands::task::{run_task, TaskAction, TaskArgs};
         use strata_memory::SqliteMemoryEngine;
 
-        let engine = Arc::new(SqliteMemoryEngine::open_in_memory(None).unwrap());
+        let engine = Arc::new(strata_memory::SqliteMemoryEngine::open_in_memory(None).unwrap());
         let coordinator = engine.stigmergy();
 
         // 1. Create a persistent plan with --persist
@@ -1181,7 +1428,7 @@ export function login(username: string): boolean {
         use strata_core::blackboard::{TaskRecord, TaskStatus};
         use strata_memory::SqliteMemoryEngine;
 
-        let engine = Arc::new(SqliteMemoryEngine::open_in_memory(None).unwrap());
+        let engine = Arc::new(strata_memory::SqliteMemoryEngine::open_in_memory(None).unwrap());
         let coordinator = engine.stigmergy();
         let server = McpServer::new_with_engine(Arc::clone(&engine));
 
@@ -1354,7 +1601,7 @@ export function login(username: string): boolean {
         use crate::mcp::server::McpServer;
         use strata_memory::SqliteMemoryEngine;
 
-        let engine = Arc::new(SqliteMemoryEngine::open_in_memory(None).unwrap());
+        let engine = Arc::new(strata_memory::SqliteMemoryEngine::open_in_memory(None).unwrap());
         let store = engine.store_arc();
         let server = McpServer::new_with_engine(Arc::clone(&engine));
 
@@ -1493,7 +1740,7 @@ export function login(username: string): boolean {
         use strata_core::schemas::{EpisodeRecord, EpisodeStep};
         use strata_memory::SqliteMemoryEngine;
 
-        let engine = Arc::new(SqliteMemoryEngine::open_in_memory(None).unwrap());
+        let engine = Arc::new(strata_memory::SqliteMemoryEngine::open_in_memory(None).unwrap());
         let store = engine.store_arc();
         let server = McpServer::new_with_engine(Arc::clone(&engine));
 
@@ -1718,7 +1965,7 @@ export function login(username: string): boolean {
         use strata_core::blackboard::{TaskRecord, TaskStatus};
         use strata_memory::SqliteMemoryEngine;
 
-        let engine = Arc::new(SqliteMemoryEngine::open_in_memory(None).unwrap());
+        let engine = Arc::new(strata_memory::SqliteMemoryEngine::open_in_memory(None).unwrap());
         let coordinator = engine.stigmergy();
 
         // 1. Setup a DAG on the blackboard: task1 -> task2 (depends on task1)
@@ -1840,7 +2087,7 @@ export function login(username: string): boolean {
         use strata_core::blackboard::{TaskRecord, TaskStatus};
         use strata_memory::SqliteMemoryEngine;
 
-        let engine = Arc::new(SqliteMemoryEngine::open_in_memory(None).unwrap());
+        let engine = Arc::new(strata_memory::SqliteMemoryEngine::open_in_memory(None).unwrap());
         let coordinator = engine.stigmergy();
 
         #[cfg(target_os = "windows")]
@@ -2462,5 +2709,120 @@ pub fn verify_token(token: &str) -> bool {
         assert_eq!(stats.distinct_models_count, 1);
 
         let _ = std::fs::remove_dir_all(&temp_dir);
+    }
+
+    #[tokio::test]
+    async fn test_mcp_macro_and_causal_tools() {
+        let engine = Arc::new(strata_memory::SqliteMemoryEngine::open_in_memory(None).unwrap());
+
+        // 1. Seed a compiled macro into the store
+        let skill = strata_core::schemas::ProceduralSkill::new(
+            "automated_file_patch",
+            "Read a target file, apply updates, and check compilation",
+        )
+        .with_parameters(vec![strata_core::schemas::ParameterDef {
+            name: "path".to_string(),
+            param_type: "string".to_string(),
+            description: "Path to file".to_string(),
+            example: None,
+        }])
+        .with_preconditions(vec!["workspace_clean".to_string()])
+        .with_postconditions(vec!["code_compiles".to_string()]);
+
+        let mut skill_with_tag = skill;
+        skill_with_tag.tags = vec!["compiled_macro".to_string(), "refactor".to_string()];
+        skill_with_tag.steps = vec![strata_core::schemas::ProceduralStep::new(
+            1,
+            "read_file",
+            "Read file",
+            serde_json::json!({ "path": "{{path}}" }),
+        )];
+        engine
+            .store()
+            .insert_or_update_procedural_skill(&skill_with_tag)
+            .unwrap();
+
+        // 2. Seed a semantic fact and failure pattern for causal explanation
+        let mut fact = strata_core::schemas::SemanticFact::new(
+            "cargo test requires all-targets flag for integration tests",
+            "toolchain",
+            strata_core::state::Scope::Global,
+        );
+        fact.tags = vec!["cargo_test".to_string()];
+        engine
+            .store()
+            .insert_or_update_semantic_fact(&fact)
+            .unwrap();
+
+        let pattern = strata_core::state::FailurePattern::new(
+            "cargo_test:missing_flag",
+            "Missing --all-targets flag",
+            "Integration test binaries fail to compile when flag omitted",
+            "Always include --all-targets when running integration tests",
+        );
+        engine.store().upsert_failure_pattern(&pattern).unwrap();
+
+        // 3. Test McpServer macro_list
+        let server = McpServer::new_with_engine(Arc::clone(&engine));
+        let list_res = server
+            .execute_tool("macro_list", serde_json::json!({}))
+            .await;
+        assert_ne!(list_res.is_error, Some(true));
+        assert!(list_res.content[0].text.contains("automated_file_patch"));
+
+        // 3b. Test McpServer macro_execute
+        let test_file = std::env::temp_dir().join("strata_macro_test.txt");
+        std::fs::write(&test_file, "hello macro world").unwrap();
+
+        let exec_res = server
+            .execute_tool(
+                "macro_execute",
+                serde_json::json!({
+                    "macro_name": "automated_file_patch",
+                    "parameters": {
+                        "path": test_file.to_str().unwrap()
+                    }
+                }),
+            )
+            .await;
+        assert_ne!(exec_res.is_error, Some(true));
+        assert!(exec_res.content[0]
+            .text
+            .contains("Macro 'automated_file_patch' executed"));
+        let _ = std::fs::remove_file(&test_file);
+
+        // 4. Test McpServer causal_explain
+        let causal_res = server
+            .execute_tool(
+                "causal_explain",
+                serde_json::json!({
+                    "action": "cargo_test",
+                    "error": "failed to link integration test"
+                }),
+            )
+            .await;
+        assert_ne!(causal_res.is_error, Some(true));
+        assert!(causal_res.content[0].text.contains("cargo_test"));
+
+        // 5. Test CLI macro list and causal explain commands
+        let list_args = MacroArgs {
+            command: MacroCommand::List {
+                tag: None,
+                limit: 10,
+                json: true,
+            },
+        };
+        let cli_macro_res = run_macro(list_args, engine.store_arc()).await;
+        assert!(cli_macro_res.is_ok());
+
+        let causal_args = CausalArgs {
+            command: CausalCommand::Explain {
+                action: "cargo_test".to_string(),
+                error: Some("missing flag".to_string()),
+                json: true,
+            },
+        };
+        let cli_causal_res = run_causal(causal_args, engine.store_arc()).await;
+        assert!(cli_causal_res.is_ok());
     }
 }

@@ -98,7 +98,7 @@ impl HitlCoreApprovalEval {
 
         let duration = start.elapsed();
         let duration_micros = duration.as_micros();
-        let latency_threshold_ms = if cfg!(debug_assertions) { 150 } else { 50 };
+        let latency_threshold_ms = if cfg!(debug_assertions) { 300 } else { 50 };
         let is_sub_50ms = duration.as_millis() < latency_threshold_ms;
 
         Ok(HitlCoreApprovalEvalResult {

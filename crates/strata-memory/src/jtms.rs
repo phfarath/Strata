@@ -6,6 +6,8 @@ use strata_core::schemas::{FactStatus, JtmsAuditRow, SemanticFact};
 use strata_core::state::MemoryTier;
 use uuid::Uuid;
 
+use strata_reasoning::CausalBeliefUpdate;
+
 use crate::embedding::cosine_similarity;
 use crate::store::SqliteStore;
 
@@ -950,5 +952,114 @@ impl TruthMaintenanceSystem {
         }
 
         Ok(true)
+    }
+
+    /// Recomputes truth maintenance justifications across all semantic facts in SQLite.
+    /// Traverses the dependency graph and marks any fact Stale if its prerequisites are no longer Active.
+    pub fn recompute_justifications(&self, store: &SqliteStore) -> Result<usize, StrataError> {
+        let all_active = store.get_all_semantic_facts(None, Some(FactStatus::Active), 10000)?;
+        let mut invalidated_count = 0;
+
+        for fact in all_active {
+            let is_valid = self.is_belief_valid(store, &fact.id)?;
+            if !is_valid {
+                let mut invalidated_fact = fact.clone();
+                invalidated_fact.mark_stale();
+                store.insert_or_update_semantic_fact(&invalidated_fact)?;
+
+                let audit = JtmsAuditRow::new(
+                    fact.id,
+                    fact.id,
+                    "invalidation",
+                    "Periodic justification recomputation detected invalid/inactive prerequisites",
+                );
+                store.insert_jtms_audit(&audit)?;
+
+                self.propagate_downstream_invalidation(
+                    store,
+                    &fact.id,
+                    "Prerequisites invalidated during global justification sweep",
+                )?;
+                invalidated_count += 1;
+            }
+        }
+
+        Ok(invalidated_count)
+    }
+
+    /// Dynamically applies a causal belief update from prediction-error learning,
+    /// invalidating false assumptions in SQLite and cascading invalidations downstream to dependent beliefs.
+    pub fn apply_causal_invalidation_cascade(
+        &self,
+        store: &SqliteStore,
+        update: &CausalBeliefUpdate,
+        reason_prefix: &str,
+    ) -> Result<Vec<Uuid>, StrataError> {
+        let mut all_invalidated = Vec::new();
+
+        // Fetch all active semantic facts
+        let active_facts = store.get_all_semantic_facts(None, Some(FactStatus::Active), 10000)?;
+
+        for invalid_pattern in &update.invalidated_assumptions {
+            let pattern_lower = invalid_pattern.to_lowercase();
+            let needle = if let Some(stripped) = pattern_lower.strip_prefix("assumption:") {
+                stripped
+            } else {
+                &pattern_lower
+            };
+
+            let parts: Vec<&str> = needle.split(':').collect();
+
+            for fact in &active_facts {
+                let stmt_lower = fact.statement.to_lowercase();
+                let stmt_normalized = stmt_lower.replace(['_', '-'], " ");
+
+                let matches_tag = fact.tags.iter().any(|t| {
+                    let t_lower = t.to_lowercase();
+                    needle.contains(&t_lower)
+                        || t_lower.contains(needle)
+                        || parts.iter().any(|p| *p == t_lower)
+                });
+
+                let matches_stmt = stmt_lower.contains(needle)
+                    || stmt_normalized.contains(&needle.replace(['_', '-'], " "))
+                    || parts.iter().all(|part| {
+                        let p_norm = part.replace(['_', '-'], " ");
+                        stmt_normalized.contains(&p_norm)
+                            || part.split('_').all(|sub| stmt_lower.contains(sub))
+                    });
+
+                if matches_tag || matches_stmt {
+                    if !all_invalidated.contains(&fact.id) {
+                        let mut invalidated_fact = fact.clone();
+                        invalidated_fact.mark_stale();
+                        store.insert_or_update_semantic_fact(&invalidated_fact)?;
+
+                        let audit = JtmsAuditRow::new(
+                            fact.id,
+                            fact.id,
+                            "causal_invalidation",
+                            format!(
+                                "{reason_prefix}: Assumption '{invalid_pattern}' refuted by causal prediction error"
+                            ),
+                        );
+                        store.insert_jtms_audit(&audit)?;
+                        all_invalidated.push(fact.id);
+
+                        // Propagate downstream invalidation to all dependent beliefs
+                        let downstream = self.propagate_downstream_invalidation(
+                            store,
+                            &fact.id,
+                            &format!(
+                                "Causal invalidation cascade: prerequisite assumption '{invalid_pattern}' was refuted"
+                            ),
+                        )?;
+                        all_invalidated.extend(downstream);
+                    }
+                }
+            }
+        }
+
+        Ok(all_invalidated)
     }
 }

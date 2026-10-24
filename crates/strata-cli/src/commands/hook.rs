@@ -423,6 +423,19 @@ pub async fn handle_hook(command: HookCommand, engine: Arc<SqliteMemoryEngine>) 
                             eprintln!("⚠️ [Strata Lease Warning]: Failed to acquire lease for '{resource_id}': {err}");
                         }
                     }
+
+                    // Transactive Domain Authority Advisory Check (<2ms, Non-blocking Advisory)
+                    if let Ok(Some(authority)) = coordinator.resolve_domain_specialist(&resource_id)
+                    {
+                        if authority.authoritative_agent != agent
+                            && authority.confidence_score >= 0.8
+                        {
+                            eprintln!(
+                                "🏛️ [Strata A2A Transactive Advisory]: Domain '{}' is maintained by peer specialist '{}' (confidence: {:.0}%). Consider delegating via `strata a2a delegate`.",
+                                authority.domain, authority.authoritative_agent, authority.confidence_score * 100.0
+                            );
+                        }
+                    }
                 }
 
                 // Deterministic Symbol-Level Anti-Pattern Guard (<10ms, Advisory Default - never aborts)
@@ -506,6 +519,28 @@ pub async fn handle_hook(command: HookCommand, engine: Arc<SqliteMemoryEngine>) 
                     if let Err(e) = engine.record_failure(&failure).await {
                         error!("Failed to silently record tool failure: {e}");
                     }
+
+                    // Causal Prediction-Error & Counterfactual Invalidation
+                    let world_model = strata_reasoning::WorldModel::new();
+                    let expectation =
+                        strata_reasoning::ActionExpectation::new(&tool).with_expected_success(true);
+                    let outcome = strata_reasoning::ObservedOutcome::failure(&err_msg, Some(1));
+                    if let Ok((Some(_pe), Some(attr), Some(update))) = world_model
+                        .process_action_feedback(&expectation, &outcome)
+                        .await
+                    {
+                        debug!(
+                            "Causal prediction error learned: pivot='{}' (confidence={:.2})",
+                            attr.pivot_variable, attr.attribution_confidence
+                        );
+                        let jtms =
+                            strata_memory::jtms::TruthMaintenanceSystem::with_default_threshold();
+                        let _ = jtms.apply_causal_invalidation_cascade(
+                            engine.store(),
+                            &update,
+                            "Silent PostTool Failure",
+                        );
+                    }
                 }
             }
         }
@@ -565,6 +600,28 @@ pub async fn handle_hook(command: HookCommand, engine: Arc<SqliteMemoryEngine>) 
                         tail
                     };
                     shadow_failure(&shadow_store, &agent_id, &task_key, &command_ident, &error);
+
+                    // Causal Prediction-Error & Counterfactual Invalidation
+                    let world_model = strata_reasoning::WorldModel::new();
+                    let expectation = strata_reasoning::ActionExpectation::new(&command_ident)
+                        .with_expected_success(true);
+                    let outcome = strata_reasoning::ObservedOutcome::failure(&error, Some(code));
+                    if let Ok((Some(_pe), Some(attr), Some(update))) = world_model
+                        .process_action_feedback(&expectation, &outcome)
+                        .await
+                    {
+                        debug!(
+                            "Causal prediction error learned from shell command: pivot='{}' (confidence={:.2})",
+                            attr.pivot_variable, attr.attribution_confidence
+                        );
+                        let jtms =
+                            strata_memory::jtms::TruthMaintenanceSystem::with_default_threshold();
+                        let _ = jtms.apply_causal_invalidation_cascade(
+                            engine.store(),
+                            &update,
+                            "Command Interceptor Wrap",
+                        );
+                    }
                 }
             }
 

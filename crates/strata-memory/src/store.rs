@@ -16,7 +16,8 @@ use strata_core::schemas::{
 };
 
 use strata_core::a2a::{
-    A2aMessage, AgentCard, AgentPresence, DomainAuthority, LeaseAcquireResult, ResourceLease,
+    A2aMessage, AgentCard, AgentPresence, DelegationContract, DelegationStatus, DomainAuthority,
+    LeaseAcquireResult, ResourceLease,
 };
 use strata_core::blackboard::{TaskArtifact, TaskFilter, TaskPayload, TaskRecord, TaskStatus};
 use strata_core::state::{
@@ -908,6 +909,30 @@ impl SqliteStore {
             CREATE INDEX IF NOT EXISTS idx_a2a_messages_to ON a2a_messages(to_agent);
             CREATE INDEX IF NOT EXISTS idx_a2a_messages_task ON a2a_messages(task_id);
             CREATE INDEX IF NOT EXISTS idx_a2a_messages_read ON a2a_messages(read_at);
+
+            -- A2A Heterogeneous Task Delegations Table
+            CREATE TABLE IF NOT EXISTS a2a_delegations (
+                delegation_id TEXT PRIMARY KEY,
+                delegator_agent TEXT NOT NULL,
+                delegatee_agent TEXT,
+                domain_scope TEXT,
+                task_id TEXT NOT NULL,
+                objective TEXT NOT NULL,
+                context TEXT,
+                expected_artifacts_json TEXT NOT NULL DEFAULT '[]',
+                verification_command TEXT,
+                timeout_seconds INTEGER NOT NULL DEFAULT 60,
+                status TEXT NOT NULL DEFAULT 'pending',
+                result_summary TEXT,
+                error TEXT,
+                created_at INTEGER NOT NULL,
+                completed_at INTEGER
+            );
+
+            CREATE INDEX IF NOT EXISTS idx_a2a_delegations_task ON a2a_delegations(task_id);
+            CREATE INDEX IF NOT EXISTS idx_a2a_delegations_delegatee ON a2a_delegations(delegatee_agent, status);
+            CREATE INDEX IF NOT EXISTS idx_a2a_delegations_delegator ON a2a_delegations(delegator_agent, status);
+            CREATE INDEX IF NOT EXISTS idx_a2a_delegations_domain ON a2a_delegations(domain_scope);
 
             -- Transactive Memory Directory: Agent Capability Cards
             CREATE TABLE IF NOT EXISTS agent_cards (
@@ -7917,6 +7942,276 @@ impl SqliteStore {
             .map_err(|e| StrataError::Database(e.to_string()))?;
 
         Ok(hierarchical)
+    }
+
+    // ==========================================
+    // A2A Task Delegations (Frontier 2 Heterogeneous Swarm)
+    // ==========================================
+
+    /// Persists or updates an A2A task delegation contract.
+    pub fn save_delegation(&self, contract: &DelegationContract) -> Result<(), StrataError> {
+        let conn = self
+            .conn
+            .lock()
+            .map_err(|_| StrataError::Database("Lock poisoned on SQLite connection".to_string()))?;
+
+        let artifacts_json = serde_json::to_string(&contract.expected_artifacts)
+            .map_err(|e| StrataError::Serialization(e.to_string()))?;
+
+        conn.execute(
+            "INSERT INTO a2a_delegations (
+                delegation_id, delegator_agent, delegatee_agent, domain_scope,
+                task_id, objective, context, expected_artifacts_json,
+                verification_command, timeout_seconds, status, result_summary,
+                error, created_at, completed_at
+            ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15)
+            ON CONFLICT(delegation_id) DO UPDATE SET
+                delegatee_agent = excluded.delegatee_agent,
+                domain_scope = excluded.domain_scope,
+                objective = excluded.objective,
+                context = excluded.context,
+                expected_artifacts_json = excluded.expected_artifacts_json,
+                verification_command = excluded.verification_command,
+                timeout_seconds = excluded.timeout_seconds,
+                status = excluded.status,
+                result_summary = excluded.result_summary,
+                error = excluded.error,
+                completed_at = excluded.completed_at",
+            params![
+                contract.delegation_id,
+                contract.delegator_agent,
+                contract.delegatee_agent,
+                contract.domain_scope,
+                contract.task_id,
+                contract.objective,
+                contract.context,
+                artifacts_json,
+                contract.verification_command,
+                contract.timeout_seconds as i64,
+                contract.status.as_str(),
+                contract.result_summary,
+                contract.error,
+                contract.created_at,
+                contract.completed_at
+            ],
+        )
+        .map_err(|e| StrataError::Database(format!("Failed to save delegation: {e}")))?;
+
+        Ok(())
+    }
+
+    /// Fetches an A2A delegation contract by delegation ID.
+    pub fn get_delegation(
+        &self,
+        delegation_id: &str,
+    ) -> Result<Option<DelegationContract>, StrataError> {
+        let conn = self
+            .conn
+            .lock()
+            .map_err(|_| StrataError::Database("Lock poisoned on SQLite connection".to_string()))?;
+
+        let mut stmt = conn
+            .prepare(
+                "SELECT delegation_id, delegator_agent, delegatee_agent, domain_scope,
+                        task_id, objective, context, expected_artifacts_json,
+                        verification_command, timeout_seconds, status, result_summary,
+                        error, created_at, completed_at
+                 FROM a2a_delegations
+                 WHERE delegation_id = ?1",
+            )
+            .map_err(|e| StrataError::Database(e.to_string()))?;
+
+        let res = stmt
+            .query_row(params![delegation_id], |row| {
+                let artifacts_str: String = row.get(7)?;
+                let expected_artifacts: Vec<String> =
+                    serde_json::from_str(&artifacts_str).unwrap_or_default();
+                let status_str: String = row.get(10)?;
+                let status = status_str
+                    .parse::<DelegationStatus>()
+                    .unwrap_or(DelegationStatus::Pending);
+
+                Ok(DelegationContract {
+                    delegation_id: row.get(0)?,
+                    delegator_agent: row.get(1)?,
+                    delegatee_agent: row.get(2)?,
+                    domain_scope: row.get(3)?,
+                    task_id: row.get(4)?,
+                    objective: row.get(5)?,
+                    context: row.get(6)?,
+                    expected_artifacts,
+                    verification_command: row.get(8)?,
+                    timeout_seconds: row.get::<_, i64>(9)? as u64,
+                    status,
+                    result_summary: row.get(11)?,
+                    error: row.get(12)?,
+                    created_at: row.get(13)?,
+                    completed_at: row.get(14)?,
+                })
+            })
+            .optional()
+            .map_err(|e| StrataError::Database(e.to_string()))?;
+
+        Ok(res)
+    }
+
+    /// Updates the status and outcome of an A2A task delegation.
+    pub fn update_delegation_status(
+        &self,
+        delegation_id: &str,
+        status: DelegationStatus,
+        delegatee_agent: Option<&str>,
+        result_summary: Option<&str>,
+        error: Option<&str>,
+    ) -> Result<bool, StrataError> {
+        let conn = self
+            .conn
+            .lock()
+            .map_err(|_| StrataError::Database("Lock poisoned on SQLite connection".to_string()))?;
+
+        let now = Utc::now().timestamp();
+        let completed_at = match status {
+            DelegationStatus::Completed
+            | DelegationStatus::Rejected
+            | DelegationStatus::TimedOut => Some(now),
+            _ => None,
+        };
+
+        let rows = conn
+            .execute(
+                "UPDATE a2a_delegations
+                 SET status = ?1,
+                     delegatee_agent = COALESCE(?2, delegatee_agent),
+                     result_summary = COALESCE(?3, result_summary),
+                     error = COALESCE(?4, error),
+                     completed_at = COALESCE(?5, completed_at)
+                 WHERE delegation_id = ?6",
+                params![
+                    status.as_str(),
+                    delegatee_agent,
+                    result_summary,
+                    error,
+                    completed_at,
+                    delegation_id
+                ],
+            )
+            .map_err(|e| {
+                StrataError::Database(format!("Failed to update delegation status: {e}"))
+            })?;
+
+        Ok(rows > 0)
+    }
+
+    /// Atomically accepts a pending delegation for the given delegatee agent.
+    /// Fails (returns false) if the delegation does not exist or is already accepted by another agent.
+    pub fn accept_delegation(
+        &self,
+        delegation_id: &str,
+        delegatee: &str,
+    ) -> Result<bool, StrataError> {
+        let conn = self
+            .conn
+            .lock()
+            .map_err(|_| StrataError::Database("Lock poisoned on SQLite connection".to_string()))?;
+
+        let rows = conn
+            .execute(
+                "UPDATE a2a_delegations
+                 SET status = 'accepted',
+                     delegatee_agent = ?1
+                 WHERE delegation_id = ?2
+                   AND (status = 'pending' OR (status = 'accepted' AND delegatee_agent = ?1))",
+                params![delegatee, delegation_id],
+            )
+            .map_err(|e| StrataError::Database(format!("Failed to accept delegation: {e}")))?;
+
+        Ok(rows > 0)
+    }
+
+    /// Lists delegation contracts filtered by delegator, delegatee, or status.
+    pub fn list_delegations(
+        &self,
+        delegator: Option<&str>,
+        delegatee: Option<&str>,
+        status: Option<DelegationStatus>,
+    ) -> Result<Vec<DelegationContract>, StrataError> {
+        let conn = self
+            .conn
+            .lock()
+            .map_err(|_| StrataError::Database("Lock poisoned on SQLite connection".to_string()))?;
+
+        let mut query = String::from(
+            "SELECT delegation_id, delegator_agent, delegatee_agent, domain_scope,
+                    task_id, objective, context, expected_artifacts_json,
+                    verification_command, timeout_seconds, status, result_summary,
+                    error, created_at, completed_at
+             FROM a2a_delegations WHERE 1=1",
+        );
+
+        let mut params_vec: Vec<rusqlite::types::Value> = Vec::new();
+
+        if let Some(d) = delegator {
+            query.push_str(" AND delegator_agent = ?");
+            params_vec.push(rusqlite::types::Value::Text(d.to_string()));
+        }
+
+        if let Some(d) = delegatee {
+            query.push_str(" AND delegatee_agent = ?");
+            params_vec.push(rusqlite::types::Value::Text(d.to_string()));
+        }
+
+        if let Some(s) = status {
+            query.push_str(" AND status = ?");
+            params_vec.push(rusqlite::types::Value::Text(s.as_str().to_string()));
+        }
+
+        query.push_str(" ORDER BY created_at DESC");
+
+        let mut stmt = conn
+            .prepare(&query)
+            .map_err(|e| StrataError::Database(e.to_string()))?;
+
+        let params_slice: Vec<&dyn rusqlite::ToSql> = params_vec
+            .iter()
+            .map(|v| v as &dyn rusqlite::ToSql)
+            .collect();
+
+        let rows = stmt
+            .query_map(&params_slice[..], |row| {
+                let artifacts_str: String = row.get(7)?;
+                let expected_artifacts: Vec<String> =
+                    serde_json::from_str(&artifacts_str).unwrap_or_default();
+                let status_str: String = row.get(10)?;
+                let status = status_str
+                    .parse::<DelegationStatus>()
+                    .unwrap_or(DelegationStatus::Pending);
+
+                Ok(DelegationContract {
+                    delegation_id: row.get(0)?,
+                    delegator_agent: row.get(1)?,
+                    delegatee_agent: row.get(2)?,
+                    domain_scope: row.get(3)?,
+                    task_id: row.get(4)?,
+                    objective: row.get(5)?,
+                    context: row.get(6)?,
+                    expected_artifacts,
+                    verification_command: row.get(8)?,
+                    timeout_seconds: row.get::<_, i64>(9)? as u64,
+                    status,
+                    result_summary: row.get(11)?,
+                    error: row.get(12)?,
+                    created_at: row.get(13)?,
+                    completed_at: row.get(14)?,
+                })
+            })
+            .map_err(|e| StrataError::Database(e.to_string()))?;
+
+        let mut list = Vec::new();
+        for r in rows {
+            list.push(r.map_err(|e| StrataError::Database(e.to_string()))?);
+        }
+
+        Ok(list)
     }
 
     // ==========================================

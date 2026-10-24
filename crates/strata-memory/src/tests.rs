@@ -29,7 +29,10 @@ use crate::pipeline::ConsolidationPipeline;
 use crate::store::SqliteStore;
 use crate::sync::{compute_version_hash, SyncEngine};
 use crate::workspace::{MonorepoPackage, PackageType, WorkspaceBoundary};
-use crate::{ProceduralRule, ProceduralRuleVersion, SqliteMemoryEngine, TextGradientFeedback};
+use crate::{
+    ProceduralRule, ProceduralRuleVersion, SqliteMemoryEngine, TextGradientFeedback,
+    TrajectoryMiner,
+};
 use std::sync::Arc;
 
 #[tokio::test]
@@ -2419,6 +2422,180 @@ async fn test_jtms_v2_downstream_invalidation_propagation() {
     let audits_c = store.get_jtms_audits_for_fact(&fact_c.id).unwrap();
     assert!(!audits_c.is_empty());
     assert_eq!(audits_c[0].resolution_type, "invalidation");
+}
+
+#[tokio::test]
+async fn test_jtms_causal_prediction_error_cascade() {
+    let store = SqliteStore::open_in_memory().unwrap();
+    let jtms = TruthMaintenanceSystem::with_default_threshold();
+
+    // 1. Fact 1: "cargo test runs successfully without --all-targets flag"
+    let mut fact_1 = SemanticFact::new(
+        "cargo test runs without all-targets flag",
+        "toolchain",
+        Scope::Global,
+    );
+    fact_1.tags = vec!["cargo_test".to_string(), "flag_all_targets".to_string()];
+    store.insert_or_update_semantic_fact(&fact_1).unwrap();
+
+    // 2. Fact 2: "CI pipeline executes cargo test in bare mode" (depends on fact 1)
+    let fact_2 = SemanticFact::new(
+        "CI pipeline executes cargo test in bare mode",
+        "ci",
+        Scope::Global,
+    )
+    .with_dependency(fact_1.id);
+    store.insert_or_update_semantic_fact(&fact_2).unwrap();
+
+    assert_eq!(
+        store.get_semantic_fact(&fact_1.id).unwrap().unwrap().status,
+        FactStatus::Active
+    );
+    assert_eq!(
+        store.get_semantic_fact(&fact_2.id).unwrap().unwrap().status,
+        FactStatus::Active
+    );
+
+    // 3. Simulate causal belief update from prediction error
+    let update = strata_reasoning::CausalBeliefUpdate {
+        action_id: "cargo_test".to_string(),
+        invalidated_assumptions: vec!["assumption:cargo_test:flag_all_targets".to_string()],
+        new_causal_edges: vec![],
+        node_confidence_penalties: std::collections::HashMap::new(),
+        learned_invariants: vec!["cargo_test requires flag_all_targets".to_string()],
+    };
+
+    // 4. Apply causal invalidation cascade
+    let invalidated = jtms
+        .apply_causal_invalidation_cascade(&store, &update, "Prediction Error")
+        .unwrap();
+    assert!(
+        invalidated.contains(&fact_1.id),
+        "Fact 1 matching assumption must be invalidated"
+    );
+    assert!(
+        invalidated.contains(&fact_2.id),
+        "Dependent Fact 2 must cascade to Stale"
+    );
+
+    assert_eq!(
+        store.get_semantic_fact(&fact_1.id).unwrap().unwrap().status,
+        FactStatus::Stale
+    );
+    assert_eq!(
+        store.get_semantic_fact(&fact_2.id).unwrap().unwrap().status,
+        FactStatus::Stale
+    );
+
+    // 5. Verify JTMS audit trail was recorded
+    let audits = store.get_all_jtms_audits(10).unwrap();
+    assert!(audits
+        .iter()
+        .any(|a| a.resolution_type == "causal_invalidation"));
+}
+
+#[tokio::test]
+async fn test_autonomous_procedural_skill_mining_and_macro_synthesis() {
+    let store = SqliteStore::open_in_memory().unwrap();
+    let miner = TrajectoryMiner::new();
+
+    // 1. Construct 3 high-salience episodes (0.96, 0.98, 0.99) with recurrent [read_file -> edit_file -> cargo_check]
+    let mut ep1 = EpisodeRecord::new("sess-1", "agent-1", "Refactor user auth");
+    ep1.salience_score = 0.98;
+    ep1.event_trace = vec![
+        EpisodeStep::new(1, "Read auth.rs")
+            .with_tool("read_file")
+            .with_input(serde_json::json!({ "path": "src/auth.rs" })),
+        EpisodeStep::new(2, "Update auth token")
+            .with_tool("edit_file")
+            .with_input(serde_json::json!({ "path": "src/auth.rs", "content": "// v2" })),
+        EpisodeStep::new(3, "Check syntax")
+            .with_tool("cargo_check")
+            .with_input(serde_json::json!({ "package": "strata-core" })),
+    ];
+
+    let mut ep2 = EpisodeRecord::new("sess-2", "agent-1", "Refactor session store");
+    ep2.salience_score = 0.96;
+    ep2.event_trace = vec![
+        EpisodeStep::new(1, "Read session.rs")
+            .with_tool("read_file")
+            .with_input(serde_json::json!({ "path": "src/session.rs" })),
+        EpisodeStep::new(2, "Update session expiry")
+            .with_tool("edit_file")
+            .with_input(serde_json::json!({ "path": "src/session.rs", "content": "// v2" })),
+        EpisodeStep::new(3, "Check syntax")
+            .with_tool("cargo_check")
+            .with_input(serde_json::json!({ "package": "strata-core" })),
+    ];
+
+    let mut ep3 = EpisodeRecord::new("sess-3", "agent-2", "Refactor config loader");
+    ep3.salience_score = 0.99;
+    ep3.event_trace = vec![
+        EpisodeStep::new(1, "Read config.rs")
+            .with_tool("read_file")
+            .with_input(serde_json::json!({ "path": "src/config.rs" })),
+        EpisodeStep::new(2, "Update config parser")
+            .with_tool("edit_file")
+            .with_input(serde_json::json!({ "path": "src/config.rs", "content": "// v2" })),
+        EpisodeStep::new(3, "Check syntax")
+            .with_tool("cargo_check")
+            .with_input(serde_json::json!({ "package": "strata-core" })),
+    ];
+
+    // Distractor low-salience episode (0.45)
+    let mut ep_distractor = EpisodeRecord::new("sess-4", "agent-1", "Failed exploratory pass");
+    ep_distractor.salience_score = 0.45;
+    ep_distractor.event_trace = vec![EpisodeStep::new(1, "Random search")
+        .with_tool("grep")
+        .with_input(serde_json::json!({ "query": "todo" }))];
+
+    let episodes = vec![ep1, ep2, ep3, ep_distractor];
+
+    // 2. Mine frequent tool sequences (min_support: 2, min_salience: 0.95)
+    let frequent = miner.mine_frequent_tool_sequences(&episodes, 2, 0.95);
+    assert!(
+        !frequent.is_empty(),
+        "Frequent tool sequences must be discovered"
+    );
+
+    // Top sequence should be [read_file, edit_file, cargo_check]
+    let top_seq = frequent
+        .iter()
+        .find(|s| s.tools == vec!["read_file", "edit_file", "cargo_check"]);
+    assert!(
+        top_seq.is_some(),
+        "3-step pattern [read_file, edit_file, cargo_check] must be mined"
+    );
+    let seq = top_seq.unwrap();
+    assert_eq!(seq.occurrence_count, 3);
+    assert!(seq.average_salience >= 0.96);
+
+    // 3. Synthesize compiled macro
+    let macros = miner.mine_and_compile_macros(&episodes, 2, 0.95);
+    assert!(
+        !macros.is_empty(),
+        "Parameterized macros must be synthesized"
+    );
+
+    let compiled_macro = macros
+        .iter()
+        .find(|m| m.tool_sequence == vec!["read_file", "edit_file", "cargo_check"])
+        .unwrap();
+    assert_eq!(compiled_macro.steps.len(), 3);
+    assert!(
+        !compiled_macro.parameters.is_empty(),
+        "Dynamic parameters must be induced"
+    );
+    assert!(compiled_macro.estimated_tokens_saved >= 3 * 450);
+
+    // 4. Convert to ProceduralSkill and persist to SqliteStore
+    let skill = compiled_macro.to_procedural_skill();
+    store.insert_or_update_procedural_skill(&skill).unwrap();
+
+    let loaded = store.get_procedural_skill(&skill.id).unwrap().unwrap();
+    assert_eq!(loaded.name, skill.name);
+    assert_eq!(loaded.steps.len(), 3);
+    assert!(loaded.tags.contains(&"compiled_macro".to_string()));
 }
 
 #[tokio::test]
@@ -5561,4 +5738,140 @@ async fn test_audn_pipeline_rejects_incompatible_embedding_spaces() {
         fact_decision.cosine_similarity, 0.0,
         "Fact ingestion must reject cosine similarity across different models"
     );
+}
+
+#[tokio::test]
+async fn test_preference_miner_delegation_and_hitl_mining() {
+    use crate::alignment::PreferenceMiner;
+    use strata_core::a2a::{DelegationContract, DelegationStatus};
+    use strata_core::schemas::SemanticFact;
+    use strata_core::state::{HumanApprovalRecord, MemoryRecord, MemoryTier, MemoryType, Scope};
+
+    let store = Arc::new(SqliteStore::open_in_memory().expect("open memory store"));
+    let miner = PreferenceMiner::new(Arc::clone(&store));
+
+    // 1. Setup A2A Delegations
+    let mut contract_comp = DelegationContract::new(
+        "del-comp-1",
+        "planner-1",
+        "task-auth-impl",
+        "Implement JWT token validation logic",
+    );
+    contract_comp.delegatee_agent = Some("coder-1".to_string());
+    contract_comp.domain_scope = Some("security_auth".to_string());
+    contract_comp.context = Some("Use jsonwebtoken crate with RS256".to_string());
+    contract_comp.expected_artifacts = vec!["src/auth/jwt.rs".to_string()];
+    contract_comp.verification_command = Some("cargo test --lib auth::jwt".to_string());
+    contract_comp.status = DelegationStatus::Completed;
+    contract_comp.result_summary = Some("JWT RS256 validator implemented and verified".to_string());
+    store
+        .save_delegation(&contract_comp)
+        .expect("save comp delegation");
+
+    let mut contract_fail = DelegationContract::new(
+        "del-fail-1",
+        "planner-1",
+        "task-auth-insecure",
+        "Implement JWT token validation logic",
+    );
+    contract_fail.delegatee_agent = Some("junior-coder".to_string());
+    contract_fail.domain_scope = Some("security_auth".to_string());
+    contract_fail.context = Some("Allow none algorithm for speed".to_string());
+    contract_fail.status = DelegationStatus::Rejected;
+    contract_fail.error = Some("Rejected: None algorithm violates security invariants".to_string());
+    store
+        .save_delegation(&contract_fail)
+        .expect("save fail delegation");
+
+    // 2. Setup HITL & Council Approved Core Memory & Semantic Fact
+    let mut core_mem = MemoryRecord::new(
+        MemoryType::Semantic,
+        "System Invariant: All auth tokens must be signed with RS256 or Ed25519; never allow 'none'.",
+        Scope::Global,
+    );
+    core_mem.summary = Some("Auth Token Security Invariant".to_string());
+    core_mem.tier = MemoryTier::Core;
+    core_mem.approved_by_human = true;
+    core_mem.human_approval = Some(HumanApprovalRecord::new(
+        "security-council",
+        "web-ui",
+        &core_mem.content,
+        None,
+    ));
+    store.insert_memory(&core_mem).expect("insert core_mem");
+
+    let mut core_fact = SemanticFact::new(
+        "Ed25519 signatures are immutable and mandated across all agent IPC channels",
+        "security_policy",
+        Scope::Global,
+    );
+    core_fact.tier = MemoryTier::Core;
+    core_fact.approved_by_human = true;
+    core_fact.human_approval = Some(HumanApprovalRecord::new(
+        "human-admin",
+        "cli",
+        &core_fact.statement,
+        None,
+    ));
+    store
+        .insert_or_update_semantic_fact(&core_fact)
+        .expect("insert core_fact");
+
+    // 3. Test Delegation Mining
+    let del_dpo = miner
+        .mine_delegation_dpo_pairs(None)
+        .expect("mine delegation dpo");
+    assert_eq!(del_dpo.len(), 1, "Must mine 1 delegation DPO pair");
+    let pair = &del_dpo[0];
+    assert!(pair.prompt.contains("Implement JWT token validation logic"));
+    assert!(pair.chosen.contains("JWT RS256 validator implemented"));
+    assert!(pair
+        .rejected
+        .contains("Rejected: None algorithm violates security invariants"));
+    assert!(pair.oracle_verified);
+    assert_eq!(
+        pair.verification_source,
+        Some("delegation_contract_oracle:cargo test --lib auth::jwt".to_string())
+    );
+
+    let del_kto = miner
+        .mine_delegation_kto_samples(None)
+        .expect("mine delegation kto");
+    assert_eq!(
+        del_kto.len(),
+        2,
+        "Must mine 1 positive and 1 negative KTO sample"
+    );
+    assert!(del_kto
+        .iter()
+        .any(|s| s.label && s.completion.contains("JWT RS256 validator")));
+    assert!(del_kto
+        .iter()
+        .any(|s| !s.label && s.completion.contains("None algorithm violates")));
+
+    // 4. Test HITL Mining
+    let hitl_dpo = miner.mine_hitl_approval_pairs(None).expect("mine hitl dpo");
+    assert_eq!(hitl_dpo.len(), 2, "Must mine 1 memory pair + 1 fact pair");
+    assert!(hitl_dpo.iter().all(|p| p.oracle_verified));
+    assert!(hitl_dpo
+        .iter()
+        .any(|p| p.prompt.contains("Auth Token Security Invariant")));
+    assert!(hitl_dpo
+        .iter()
+        .any(|p| p.prompt.contains("security_policy")));
+
+    let hitl_kto = miner
+        .mine_hitl_approval_kto_samples(None)
+        .expect("mine hitl kto");
+    assert_eq!(hitl_kto.len(), 2);
+    assert!(hitl_kto.iter().all(|s| s.label && s.oracle_verified));
+
+    // 5. Test Alignment Report
+    let report = miner.get_alignment_report().expect("alignment report");
+    assert_eq!(report.delegation_dpo_pairs, 1);
+    assert_eq!(report.hitl_approval_dpo_pairs, 2);
+    assert_eq!(report.delegation_kto_samples, 2);
+    assert_eq!(report.hitl_approval_kto_samples, 2);
+    assert!(report.total_dpo_pairs >= 3);
+    assert!(report.oracle_verified_dpo_pairs >= 3);
 }
