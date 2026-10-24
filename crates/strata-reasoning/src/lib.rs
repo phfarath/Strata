@@ -1,5 +1,6 @@
 pub mod adapters;
 pub mod causal;
+pub mod embodiment;
 pub mod engine;
 pub mod mock;
 pub mod planning;
@@ -16,6 +17,7 @@ pub use causal::{
     CounterfactualHypothesis, CounterfactualSimulationResult, ImpactedNode, ObservedOutcome,
     PatchSimulationResult, PredictionError, PredictionMismatchType, WorldModel,
 };
+pub use embodiment::*;
 pub use engine::*;
 pub use mock::*;
 pub use planning::{
