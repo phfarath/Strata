@@ -41,25 +41,8 @@ impl OpenAiAdapter {
         self
     }
 
-    pub fn with_client(mut self, client: reqwest::Client) -> Self {
-        self.client = client;
-        self
-    }
-
     pub fn new_openrouter(api_key: impl Into<String>, model_slug: impl Into<String>) -> Self {
         Self::new(api_key, model_slug).with_base_url("https://openrouter.ai/api/v1")
-    }
-
-    pub fn from_env(model_slug: Option<String>) -> Result<Self, StrataError> {
-        let api_key = std::env::var("OPENAI_API_KEY")
-            .or_else(|_| std::env::var("STRATA_OPENAI_API_KEY"))
-            .map_err(|_| {
-                StrataError::Configuration(
-                    "OpenAI API key not found in OPENAI_API_KEY or STRATA_OPENAI_API_KEY environment variables".to_string(),
-                )
-            })?;
-        let model = model_slug.unwrap_or_else(|| "gpt-4o-mini".to_string());
-        Ok(Self::new(api_key, model))
     }
 
     pub fn model(&self) -> &str {
@@ -272,26 +255,8 @@ impl OpenRouterAdapter {
         }
     }
 
-    pub fn from_env(model_slug: Option<String>) -> Result<Self, StrataError> {
-        let api_key = std::env::var("OPENROUTER_API_KEY")
-            .or_else(|_| std::env::var("STRATA_OPENROUTER_API_KEY"))
-            .map_err(|_| {
-                StrataError::Configuration(
-                    "OpenRouter API key not found in OPENROUTER_API_KEY or STRATA_OPENROUTER_API_KEY environment variables".to_string(),
-                )
-            })?;
-
-        let model = model_slug.unwrap_or_else(|| DEFAULT_OPENROUTER_MODEL.to_string());
-        Ok(Self::new(api_key, model))
-    }
-
     pub fn with_base_url(mut self, base_url: impl Into<String>) -> Self {
         self.base_url = base_url.into();
-        self
-    }
-
-    pub fn with_client(mut self, client: reqwest::Client) -> Self {
-        self.client = client;
         self
     }
 
@@ -516,18 +481,6 @@ impl AnthropicAdapter {
         self
     }
 
-    pub fn from_env(model_slug: Option<String>) -> Result<Self, StrataError> {
-        let api_key = std::env::var("ANTHROPIC_API_KEY")
-            .or_else(|_| std::env::var("STRATA_ANTHROPIC_API_KEY"))
-            .map_err(|_| {
-                StrataError::Configuration(
-                    "Anthropic API key not found in ANTHROPIC_API_KEY or STRATA_ANTHROPIC_API_KEY environment variables".to_string(),
-                )
-            })?;
-        let model = model_slug.unwrap_or_else(|| "claude-3-5-sonnet-20241022".to_string());
-        Ok(Self::new(api_key, model))
-    }
-
     pub fn model(&self) -> &str {
         &self.model
     }
@@ -742,19 +695,6 @@ impl GeminiAdapter {
     pub fn with_base_url(mut self, base_url: impl Into<String>) -> Self {
         self.base_url = base_url.into();
         self
-    }
-
-    pub fn from_env(model_slug: Option<String>) -> Result<Self, StrataError> {
-        let api_key = std::env::var("GEMINI_API_KEY")
-            .or_else(|_| std::env::var("GOOGLE_API_KEY"))
-            .or_else(|_| std::env::var("STRATA_GEMINI_API_KEY"))
-            .map_err(|_| {
-                StrataError::Configuration(
-                    "Gemini API key not found in GEMINI_API_KEY, GOOGLE_API_KEY, or STRATA_GEMINI_API_KEY environment variables".to_string(),
-                )
-            })?;
-        let model = model_slug.unwrap_or_else(|| "gemini-2.0-flash".to_string());
-        Ok(Self::new(api_key, model))
     }
 
     pub fn model(&self) -> &str {
@@ -1015,34 +955,6 @@ impl OllamaAdapter {
     /// Lists all model tags currently installed locally in Ollama.
     pub async fn list_installed_models(base_url: &str) -> Vec<String> {
         Self::probe_models(base_url).await.unwrap_or_default()
-    }
-
-    /// Attempts to auto-detect a running local Ollama instance and pick the best installed model.
-    pub async fn auto_detect() -> Option<Self> {
-        let base_url = std::env::var("OLLAMA_HOST")
-            .or_else(|_| std::env::var("STRATA_OLLAMA_URL"))
-            .unwrap_or_else(|_| DEFAULT_OLLAMA_URL.to_string());
-
-        if let Some(models) = Self::probe_models(&base_url).await {
-            if models.is_empty() {
-                return None;
-            }
-            let chosen_model = models
-                .iter()
-                .find(|m| m.contains("coder") || m.contains("code"))
-                .or_else(|| {
-                    models.iter().find(|m| {
-                        m.contains("qwen") || m.contains("llama") || m.contains("deepseek")
-                    })
-                })
-                .or_else(|| models.first())
-                .cloned()
-                .unwrap_or_else(|| DEFAULT_OLLAMA_MODEL.to_string());
-
-            Some(Self::new(chosen_model).with_base_url(base_url))
-        } else {
-            None
-        }
     }
 }
 

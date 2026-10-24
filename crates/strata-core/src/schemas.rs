@@ -294,11 +294,6 @@ impl EpisodeRecord {
         self
     }
 
-    pub fn with_snapshot(mut self, snapshot: serde_json::Value) -> Self {
-        self.state_snapshot = Some(snapshot);
-        self
-    }
-
     pub fn with_provenance(mut self, prov: impl Into<String>) -> Self {
         self.causal_provenance = Some(prov.into());
         self
@@ -432,11 +427,6 @@ impl EvidenceRef {
         self.session_id = Some(session_id.into());
         self
     }
-
-    pub fn with_event_ids(mut self, event_ids: Vec<i64>) -> Self {
-        self.event_ids = event_ids;
-        self
-    }
 }
 
 /// Atomic semantic fact distilled from experience, under justification-based truth maintenance.
@@ -502,11 +492,6 @@ impl SemanticFact {
         }
     }
 
-    pub fn with_depends_on(mut self, depends_on: Vec<Uuid>) -> Self {
-        self.depends_on = depends_on;
-        self
-    }
-
     pub fn with_dependency(mut self, prerequisite_id: Uuid) -> Self {
         if !self.depends_on.contains(&prerequisite_id) {
             self.depends_on.push(prerequisite_id);
@@ -527,12 +512,6 @@ impl SemanticFact {
 
     pub fn with_human_approval(mut self, approved: bool) -> Self {
         self.approved_by_human = approved;
-        self
-    }
-
-    pub fn with_human_approval_record(mut self, record: crate::state::HumanApprovalRecord) -> Self {
-        self.approved_by_human = true;
-        self.human_approval = Some(record);
         self
     }
 
@@ -559,10 +538,6 @@ impl SemanticFact {
             validation_evidence: evidence,
             human_approval: self.human_approval.clone(),
         }
-    }
-
-    pub fn is_approved_by_human(&self) -> bool {
-        self.approved_by_human
     }
 
     pub fn is_core(&self) -> bool {
@@ -724,11 +699,6 @@ impl ParameterDef {
             example: None,
         }
     }
-
-    pub fn with_example(mut self, example: impl Into<String>) -> Self {
-        self.example = Some(example.into());
-        self
-    }
 }
 
 /// Individual step within a procedural skill workflow.
@@ -764,11 +734,6 @@ impl ProceduralStep {
 
     pub fn with_expected_result(mut self, expected: impl Into<String>) -> Self {
         self.expected_result = Some(expected.into());
-        self
-    }
-
-    pub fn with_notes(mut self, notes: impl Into<String>) -> Self {
-        self.notes = Some(notes.into());
         self
     }
 }
@@ -946,14 +911,6 @@ fn default_batch_size() -> usize {
     100
 }
 
-fn default_max_retries() -> u32 {
-    5
-}
-
-fn default_base_backoff_ms() -> u64 {
-    500
-}
-
 /// Represents a change data capture (CDC) delta for offline-first synchronization.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct SyncDelta {
@@ -990,16 +947,6 @@ impl SyncDelta {
 
     pub fn with_id(mut self, id: Uuid) -> Self {
         self.id = id;
-        self
-    }
-
-    pub fn with_ts(mut self, ts: DateTime<Utc>) -> Self {
-        self.ts = ts;
-        self
-    }
-
-    pub fn with_synced(mut self, synced: bool) -> Self {
-        self.synced = synced;
         self
     }
 }
@@ -1073,10 +1020,6 @@ pub struct SyncConfig {
     pub workspace_id: String,
     #[serde(default = "default_batch_size")]
     pub batch_size: usize,
-    #[serde(default = "default_max_retries")]
-    pub max_retries: u32,
-    #[serde(default = "default_base_backoff_ms")]
-    pub base_backoff_ms: u64,
 }
 
 impl SyncConfig {
@@ -1086,8 +1029,6 @@ impl SyncConfig {
             token: None,
             workspace_id: workspace_id.into(),
             batch_size: 100,
-            max_retries: 5,
-            base_backoff_ms: 500,
         }
     }
 
@@ -1105,16 +1046,6 @@ impl SyncConfig {
         self.batch_size = batch_size;
         self
     }
-
-    pub fn with_max_retries(mut self, max_retries: u32) -> Self {
-        self.max_retries = max_retries;
-        self
-    }
-
-    pub fn with_base_backoff_ms(mut self, base_backoff_ms: u64) -> Self {
-        self.base_backoff_ms = base_backoff_ms;
-        self
-    }
 }
 
 impl Default for SyncConfig {
@@ -1124,8 +1055,6 @@ impl Default for SyncConfig {
             token: None,
             workspace_id: "default".to_string(),
             batch_size: 100,
-            max_retries: 5,
-            base_backoff_ms: 500,
         }
     }
 }
@@ -1226,11 +1155,6 @@ impl ImplicitSignal {
         self
     }
 
-    pub fn with_timestamp(mut self, timestamp: DateTime<Utc>) -> Self {
-        self.timestamp = timestamp;
-        self
-    }
-
     pub fn with_tool_name(mut self, tool_name: impl Into<String>) -> Self {
         self.tool_name = Some(tool_name.into());
         self
@@ -1323,11 +1247,6 @@ impl FeedbackEvent {
         self.comment = Some(comment.into());
         self
     }
-
-    pub fn with_timestamp(mut self, timestamp: DateTime<Utc>) -> Self {
-        self.timestamp = timestamp;
-        self
-    }
 }
 
 /// DPO preference pair for alignment tuning.
@@ -1371,16 +1290,6 @@ impl PreferencePair {
 
     pub fn with_created_at(mut self, created_at: DateTime<Utc>) -> Self {
         self.created_at = created_at;
-        self
-    }
-
-    pub fn with_oracle_verified(mut self, verified: bool) -> Self {
-        self.oracle_verified = verified;
-        self
-    }
-
-    pub fn with_verification_source(mut self, source: impl Into<String>) -> Self {
-        self.verification_source = Some(source.into());
         self
     }
 
@@ -1435,16 +1344,6 @@ impl KtoSample {
         self
     }
 
-    pub fn with_oracle_verified(mut self, verified: bool) -> Self {
-        self.oracle_verified = verified;
-        self
-    }
-
-    pub fn with_verification_source(mut self, source: impl Into<String>) -> Self {
-        self.verification_source = Some(source.into());
-        self
-    }
-
     pub fn with_verification(mut self, verified: bool, source: Option<String>) -> Self {
         self.oracle_verified = verified;
         self.verification_source = source;
@@ -1493,16 +1392,6 @@ impl SftSample {
 
     pub fn with_created_at(mut self, created_at: DateTime<Utc>) -> Self {
         self.created_at = created_at;
-        self
-    }
-
-    pub fn with_oracle_verified(mut self, verified: bool) -> Self {
-        self.oracle_verified = verified;
-        self
-    }
-
-    pub fn with_verification_source(mut self, source: impl Into<String>) -> Self {
-        self.verification_source = Some(source.into());
         self
     }
 
@@ -1735,11 +1624,6 @@ impl CodeAnchor {
             valid_until: None,
             is_valid: true,
         }
-    }
-
-    pub fn with_content_hash(mut self, hash: impl Into<String>) -> Self {
-        self.content_hash = Some(hash.into());
-        self
     }
 
     pub fn with_git_commit(mut self, commit_hash: impl Into<String>) -> Self {

@@ -210,11 +210,6 @@ impl TrainingConfig {
         self
     }
 
-    pub fn with_dataset_path(mut self, path: impl Into<String>) -> Self {
-        self.dataset_path = Some(path.into());
-        self
-    }
-
     pub fn with_ollama_model(mut self, model_name: impl Into<String>) -> Self {
         self.ollama_model_name = Some(model_name.into());
         self

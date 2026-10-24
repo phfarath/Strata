@@ -1098,10 +1098,10 @@ fn cursor_rules_file(
             fs::read_to_string(&target_file).map_err(|e| StrataError::Io(e.to_string()))?;
         if existing.contains(STRATA_MARKER_START) {
             inject_or_write_file(&target_file, marked_block, None)?;
-        } else if existing.starts_with("---") {
+        } else if let Some(after_fm_start) = existing.strip_prefix("---") {
             // Frontmatter exists, insert markers after frontmatter
-            if let Some(second_dash) = existing[3..].find("---") {
-                let end_fm = 3 + second_dash + 3;
+            if let Some(second_dash) = after_fm_start.find("---") {
+                let end_fm = second_dash + 6;
                 let fm = &existing[..end_fm];
                 let rest = &existing[end_fm..];
                 let new_content = format!("{fm}\n{marked_block}\n{rest}");
@@ -1153,7 +1153,7 @@ fn inject_or_write_file(
 
 /// Estimate tokens from character count (~3.5 to 4 characters per token).
 pub fn estimate_tokens(text: &str) -> usize {
-    (text.chars().count() + 3) / 4
+    text.chars().count().div_ceil(4)
 }
 
 #[cfg(test)]

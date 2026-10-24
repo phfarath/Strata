@@ -453,8 +453,10 @@ impl ConsolidationPipeline {
         events: &[Event],
         reasoning_engine: Option<&dyn ReasoningEngine>,
     ) -> Result<ConsolidationResult, StrataError> {
-        let mut result = ConsolidationResult::default();
-        result.events_processed = events.len();
+        let mut result = ConsolidationResult {
+            events_processed: events.len(),
+            ..Default::default()
+        };
 
         if events.is_empty() {
             return Ok(result);
@@ -562,19 +564,6 @@ impl ConsolidationPipeline {
 
         Ok(total)
     }
-
-    /// Reconciles code-anchored semantic facts in the store against a workspace on disk.
-    pub async fn reconcile_code_anchors(
-        &self,
-        store: &SqliteStore,
-        workspace_root: &std::path::Path,
-        git_commit_hash: Option<&str>,
-        world_model: Option<&strata_reasoning::WorldModel>,
-    ) -> Result<crate::ast::ReconciliationReport, StrataError> {
-        self.anchor_engine
-            .reconcile_workspace_dir(store, workspace_root, git_commit_hash, world_model)
-            .await
-    }
 }
 
 // ============================================================================
@@ -632,21 +621,6 @@ impl AudnConfig {
             minhash_noop_threshold: minhash_noop_threshold.clamp(0.0, 1.0),
             num_hashes: num_hashes.max(1),
         }
-    }
-
-    pub fn with_cosine_threshold(mut self, threshold: f32) -> Self {
-        self.cosine_noop_threshold = threshold.clamp(0.0, 1.0);
-        self
-    }
-
-    pub fn with_minhash_threshold(mut self, threshold: f32) -> Self {
-        self.minhash_noop_threshold = threshold.clamp(0.0, 1.0);
-        self
-    }
-
-    pub fn with_num_hashes(mut self, num_hashes: usize) -> Self {
-        self.num_hashes = num_hashes.max(1);
-        self
     }
 }
 
@@ -1001,9 +975,7 @@ fn is_audn_memory_deprecated(record: &strata_core::state::MemoryRecord) -> bool 
         .metadata
         .get("status")
         .and_then(|v| v.as_str())
-        .map_or(false, |s| {
-            s.eq_ignore_ascii_case("deprecated") || s.eq_ignore_ascii_case("archived")
-        })
+        .is_some_and(|s| s.eq_ignore_ascii_case("deprecated") || s.eq_ignore_ascii_case("archived"))
 }
 
 fn audn_scopes_compatible(a: &Scope, b: &Scope) -> bool {
@@ -1290,7 +1262,7 @@ impl AudnPipeline {
                 );
                 let lex_sim = audn_lexical_jaccard(&existing.content, &cleaned_candidate_text);
                 let combined_score = mh_sim.max(cos_sim).max(lex_sim);
-                if best_target.map_or(true, |(_, _, _, best)| combined_score > best) {
+                if best_target.is_none_or(|(_, _, _, best)| combined_score > best) {
                     best_target = Some((existing, cos_sim, mh_sim, combined_score));
                 }
             }
@@ -1354,7 +1326,7 @@ impl AudnPipeline {
                     let score = mh_sim.max(cos_sim).max(lex_sim);
                     if best_update
                         .as_ref()
-                        .map_or(true, |(_, _, _, _, b)| score > *b)
+                        .is_none_or(|(_, _, _, _, b)| score > *b)
                     {
                         best_update = Some((existing, update_reason, cos_sim, mh_sim, score));
                     }
@@ -1621,7 +1593,7 @@ impl AudnPipeline {
                 );
                 let lex_sim = audn_lexical_jaccard(&existing.statement, &cleaned_stmt);
                 let score = mh_sim.max(cos_sim).max(lex_sim);
-                if best_target.map_or(true, |(_, _, _, b)| score > b) {
+                if best_target.is_none_or(|(_, _, _, b)| score > b) {
                     best_target = Some((existing, cos_sim, mh_sim, score));
                 }
             }
@@ -1689,7 +1661,7 @@ impl AudnPipeline {
                     let score = mh_sim.max(cos_sim).max(lex_sim);
                     if best_update
                         .as_ref()
-                        .map_or(true, |(_, _, _, _, b)| score > *b)
+                        .is_none_or(|(_, _, _, _, b)| score > *b)
                     {
                         best_update = Some((existing, update_reason, cos_sim, mh_sim, score));
                     }

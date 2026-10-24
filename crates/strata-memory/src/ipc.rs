@@ -553,12 +553,10 @@ impl IpcClient {
         self.event_tx.subscribe()
     }
 
-    /// Returns whether the client is currently connected.
     pub fn is_connected(&self) -> bool {
         self.is_connected.load(Ordering::SeqCst)
     }
 
-    /// Endpoint string of this client.
     pub fn endpoint(&self) -> &str {
         &self.endpoint
     }

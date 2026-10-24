@@ -306,7 +306,7 @@ impl ContextRotDetector {
                     .metadata
                     .get("status")
                     .and_then(|v| v.as_str())
-                    .map_or(false, |s| {
+                    .is_some_and(|s| {
                         s.eq_ignore_ascii_case("quarantined")
                             || s.eq_ignore_ascii_case("suppressed")
                     });

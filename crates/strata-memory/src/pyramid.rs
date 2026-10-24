@@ -54,11 +54,6 @@ impl PyramidConfig {
         self.cluster_similarity_threshold = threshold;
         self
     }
-
-    pub fn with_target_tier(mut self, tier: u8) -> Self {
-        self.target_tier = tier;
-        self
-    }
 }
 
 /// Hierarchical Drill-down tree representation of a milestone rollup and its leaf episodes.
@@ -91,15 +86,6 @@ impl DrillDownTree {
     /// Total steps across all leaf episodes.
     pub fn total_steps(&self) -> usize {
         self.total_steps
-    }
-
-    /// Average salience score across leaf episodes.
-    pub fn average_salience(&self) -> f32 {
-        if self.leaves.is_empty() {
-            self.root.salience_score
-        } else {
-            self.leaves.iter().map(|l| l.salience_score).sum::<f32>() / (self.leaves.len() as f32)
-        }
     }
 
     /// Unique file paths touched across all leaf episodes.
@@ -1257,12 +1243,10 @@ fn extract_files_from_json(
                 extract_files_from_json(item, files, seen);
             }
         }
-        serde_json::Value::String(s) => {
-            if is_valid_file_path(s) {
-                let normalized = normalize_file_path(s);
-                if !normalized.is_empty() && seen.insert(normalized.clone()) {
-                    files.push(normalized);
-                }
+        serde_json::Value::String(s) if is_valid_file_path(s) => {
+            let normalized = normalize_file_path(s);
+            if !normalized.is_empty() && seen.insert(normalized.clone()) {
+                files.push(normalized);
             }
         }
         _ => {}
@@ -1777,9 +1761,10 @@ mod tests {
 
     #[test]
     fn test_slm_pyramid_bridge_local_fallback() {
-        let mut config = SlmBridgeConfig::default();
-        config.python_binary = "non_existent_python_binary_xyz123".to_string();
-        let bridge = SlmPyramidBridge::new(config);
+        let bridge = SlmPyramidBridge::new(SlmBridgeConfig {
+            python_binary: "non_existent_python_binary_xyz123".to_string(),
+            ..Default::default()
+        });
 
         let ep1 = EpisodeRecord::new("sess-1", "agent-1", "Milestone Auth").with_tier(2);
         let res = bridge.generate_narrative(&[ep1]).expect("inference");

@@ -36,7 +36,6 @@ pub fn calculate_exponential_backoff(
 }
 
 /// Offline-first CDC Synchronization Engine for Strata memory spaces.
-
 pub struct SyncEngine {
     store: Arc<SqliteStore>,
     config: SyncConfig,
@@ -68,11 +67,6 @@ impl SyncEngine {
     /// Access the current sync configuration.
     pub fn config(&self) -> &SyncConfig {
         &self.config
-    }
-
-    /// Update the sync configuration.
-    pub fn set_config(&mut self, config: SyncConfig) {
-        self.config = config;
     }
 
     /// Push pending deltas from the outbox to remote endpoint or mark synced in offline mode.

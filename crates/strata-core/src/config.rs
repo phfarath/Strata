@@ -57,7 +57,6 @@ impl StrataConfig {
     pub fn load() -> Self {
         let mut config = Self::default();
 
-        // 1. Layer global config
         if let Some(global_path) = Self::global_config_path() {
             if global_path.exists() {
                 match Self::load_from_file(&global_path) {
@@ -71,7 +70,6 @@ impl StrataConfig {
             }
         }
 
-        // 2. Layer workspace config
         let workspace_path = Self::workspace_config_path(None);
         if workspace_path.exists() {
             match Self::load_from_file(&workspace_path) {
@@ -282,16 +280,6 @@ impl StrataConfig {
         self.save_to_file(&path)
     }
 
-    /// Alias for load_from_file for backward compatibility.
-    pub fn load_from_path(path: &Path) -> Result<Self, StrataError> {
-        Self::load_from_file(path)
-    }
-
-    /// Alias for save_to_file for backward compatibility.
-    pub fn save_to_path(&self, path: &Path) -> Result<(), StrataError> {
-        self.save_to_file(path)
-    }
-
     /// Clear saved authentication credentials and persist
     pub fn clear() -> Result<(), StrataError> {
         let mut config = Self::load();
@@ -319,7 +307,7 @@ impl StrataConfig {
                 return ep;
             }
         }
-        "https://strata.pedrofarath.me".to_string()
+        DEFAULT_STRATA_ENDPOINT.to_string()
     }
 
     /// Resolve the sync token: CLI arg > ENV `STRATA_SYNC_TOKEN` / `STRATA_AUTH_TOKEN` > Config file

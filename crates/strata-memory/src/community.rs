@@ -5,7 +5,7 @@ use std::path::{Path, PathBuf};
 use uuid::Uuid;
 
 use crate::ast::LanguageKind;
-use crate::call_graph::{CallEdge, CallGraph, CallGraphAnalyzer, CallType};
+use crate::call_graph::{CallEdge, CallGraphAnalyzer, CallType};
 use crate::store::SqliteStore;
 use strata_core::errors::StrataError;
 use strata_core::state::{MemoryRecord, Scope};
@@ -68,24 +68,6 @@ pub struct ArchitectureCluster {
     pub summary: Option<String>,
 }
 
-impl ArchitectureCluster {
-    /// Returns members that have outgoing connections to other clusters (bridge nodes).
-    pub fn bridge_members(&self) -> Vec<&ClusterMember> {
-        self.members
-            .iter()
-            .filter(|m| m.external_degree > 0)
-            .collect()
-    }
-
-    /// Returns list of target cluster IDs this cluster depends on.
-    pub fn target_cluster_ids(&self) -> Vec<&str> {
-        self.dependencies
-            .iter()
-            .map(|d| d.target_cluster_id.as_str())
-            .collect()
-    }
-}
-
 /// Comprehensive high-level summary of the codebase architecture graph.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct ArchitectureGraphSummary {
@@ -138,12 +120,10 @@ impl ArchitectureGraphSummary {
             }
         }
 
-        for cluster in &self.clusters {
-            if cluster.members.iter().any(|m| m.file_path == file_path) {
-                return Some(cluster);
-            }
-        }
-        None
+        self.clusters
+            .iter()
+            .find(|&cluster| cluster.members.iter().any(|m| m.file_path == file_path))
+            .map(|v| v as _)
     }
 }
 
@@ -206,15 +186,6 @@ impl Default for CommunityDetector {
 impl CommunityDetector {
     pub fn new(config: ClusteringConfig) -> Self {
         Self { config }
-    }
-
-    /// Clusters an existing `CallGraph` into architectural communities.
-    pub fn detect_communities(
-        &self,
-        call_graph: &CallGraph,
-        workspace_id: &str,
-    ) -> ArchitectureGraphSummary {
-        self.detect_from_edges(&call_graph.edges, workspace_id)
     }
 
     /// Clusters a slice of `CallEdge` records into architectural communities.
@@ -564,7 +535,7 @@ impl CommunityDetector {
         for (c_idx, c_members) in cluster_list.iter().enumerate() {
             let mut dep_map: BTreeMap<usize, (usize, Vec<String>)> = BTreeMap::new();
             for &u in c_members {
-                for (&v, _) in &adj[u] {
+                for &v in adj[u].keys() {
                     let target_cluster = node_to_cluster_idx[v];
                     if target_cluster != c_idx {
                         let entry = dep_map
@@ -949,10 +920,8 @@ impl CommunityDetector {
 
                 if union > 0 {
                     let jaccard = (intersection as f64) / (union as f64);
-                    if jaccard > 0.0 {
-                        if best_match.map_or(true, |(_, best_j)| jaccard > best_j) {
-                            best_match = Some((&new_c.id, jaccard));
-                        }
+                    if jaccard > 0.0 && best_match.is_none_or(|(_, best_j)| jaccard > best_j) {
+                        best_match = Some((&new_c.id, jaccard));
                     }
                 }
             }
@@ -1081,18 +1050,6 @@ impl CommunityMemoryRouter {
             min_memories_for_isolation,
             include_cross_cluster_bridges,
         }
-    }
-
-    /// Resolves the architectural community Scope for an active file and optional symbol.
-    pub fn resolve_community_scope(
-        &self,
-        summary: &ArchitectureGraphSummary,
-        file_path: &str,
-        symbol: Option<&str>,
-    ) -> Option<Scope> {
-        summary
-            .find_cluster_for_file_or_symbol(file_path, symbol)
-            .map(|c| Scope::Community(c.id.clone()))
     }
 
     /// Performs community-scoped retrieval with transparent global fallback and candidate pool reduction.
@@ -1224,27 +1181,28 @@ impl CommunityMemoryRouter {
         }
 
         // If candidates are empty and query is blank, fetch recent in allowed scopes
-        if fts_results.is_empty() && vector_results.is_empty() && graph_results.is_empty() {
-            if query.trim().is_empty() {
-                let recs = store.get_memories_by_scopes(&allowed_scopes, memory_types, limit)?;
-                let count = recs.len();
-                let reduction = if total_store_memories > 0 {
-                    ((total_store_memories.saturating_sub(count)) as f64
-                        / total_store_memories as f64)
-                        * 100.0
-                } else {
-                    0.0
-                };
-                return Ok(CommunityScopedRecallResult {
-                    memories: recs,
-                    target_community_id: community_id.to_string(),
-                    candidates_evaluated: count,
-                    total_store_memories,
-                    candidate_reduction_pct: (reduction * 10.0).round() / 10.0,
-                    fallback_to_global: false,
-                    allowed_scopes,
-                });
-            }
+        if fts_results.is_empty()
+            && vector_results.is_empty()
+            && graph_results.is_empty()
+            && query.trim().is_empty()
+        {
+            let recs = store.get_memories_by_scopes(&allowed_scopes, memory_types, limit)?;
+            let count = recs.len();
+            let reduction = if total_store_memories > 0 {
+                ((total_store_memories.saturating_sub(count)) as f64 / total_store_memories as f64)
+                    * 100.0
+            } else {
+                0.0
+            };
+            return Ok(CommunityScopedRecallResult {
+                memories: recs,
+                target_community_id: community_id.to_string(),
+                candidates_evaluated: count,
+                total_store_memories,
+                candidate_reduction_pct: (reduction * 10.0).round() / 10.0,
+                fallback_to_global: false,
+                allowed_scopes,
+            });
         }
 
         // Calculate unique candidate count evaluated
@@ -1297,69 +1255,67 @@ mod tests {
     #[test]
     fn test_community_detection_and_metrics_calculation() {
         // Build synthetic call edges representing 2 distinct clusters: Auth and Database
-        let mut edges = Vec::new();
-
-        // Auth cluster
-        edges.push(CallEdge::new(
-            "src/auth/login.rs",
-            "handle_login",
-            "verify_password",
-            10,
-            CallType::FunctionCall,
-        ));
-        edges.push(CallEdge::new(
-            "src/auth/login.rs",
-            "handle_login",
-            "generate_jwt",
-            15,
-            CallType::FunctionCall,
-        ));
-        edges.push(CallEdge::new(
-            "src/auth/token.rs",
-            "generate_jwt",
-            "sign_claims",
-            20,
-            CallType::FunctionCall,
-        ));
-
-        // DB cluster
-        edges.push(CallEdge::new(
-            "src/db/store.rs",
-            "query_record",
-            "execute_sql",
-            50,
-            CallType::FunctionCall,
-        ));
-        edges.push(CallEdge::new(
-            "src/db/store.rs",
-            "insert_record",
-            "execute_sql",
-            55,
-            CallType::FunctionCall,
-        ));
-        edges.push(CallEdge::new(
-            "src/db/pool.rs",
-            "connect_db",
-            "create_pool",
-            30,
-            CallType::FunctionCall,
-        ));
-        edges.push(CallEdge::new(
-            "src/db/store.rs",
-            "query_record",
-            "connect_db",
-            60,
-            CallType::FunctionCall,
-        ));
-
-        // Inter-cluster bridge edge: Login calls query_record to find user
-        edges.push(CallEdge::new(
-            "src/auth/login.rs",
-            "handle_login",
-            "query_record",
-            12,
-            CallType::FunctionCall,
-        ));
+        let edges = vec![
+            // Auth cluster
+            CallEdge::new(
+                "src/auth/login.rs",
+                "handle_login",
+                "verify_password",
+                10,
+                CallType::FunctionCall,
+            ),
+            CallEdge::new(
+                "src/auth/login.rs",
+                "handle_login",
+                "generate_jwt",
+                15,
+                CallType::FunctionCall,
+            ),
+            CallEdge::new(
+                "src/auth/token.rs",
+                "generate_jwt",
+                "sign_claims",
+                20,
+                CallType::FunctionCall,
+            ),
+            // DB cluster
+            CallEdge::new(
+                "src/db/store.rs",
+                "query_record",
+                "execute_sql",
+                50,
+                CallType::FunctionCall,
+            ),
+            CallEdge::new(
+                "src/db/store.rs",
+                "insert_record",
+                "execute_sql",
+                55,
+                CallType::FunctionCall,
+            ),
+            CallEdge::new(
+                "src/db/pool.rs",
+                "connect_db",
+                "create_pool",
+                30,
+                CallType::FunctionCall,
+            ),
+            CallEdge::new(
+                "src/db/store.rs",
+                "query_record",
+                "connect_db",
+                60,
+                CallType::FunctionCall,
+            ),
+            // Inter-cluster bridge edge: Login calls query_record to find user
+            CallEdge::new(
+                "src/auth/login.rs",
+                "handle_login",
+                "query_record",
+                12,
+                CallType::FunctionCall,
+            ),
+        ];
 
         let detector = CommunityDetector::default();
         let summary = detector.detect_from_edges(&edges, "test-workspace");

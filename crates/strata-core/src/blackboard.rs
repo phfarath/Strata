@@ -144,11 +144,6 @@ impl TaskRecord {
         }
     }
 
-    pub fn with_claim_generation(mut self, generation: i64) -> Self {
-        self.claim_generation = generation;
-        self
-    }
-
     pub fn with_payload(mut self, payload: TaskPayload) -> Self {
         self.payload = Some(payload);
         self

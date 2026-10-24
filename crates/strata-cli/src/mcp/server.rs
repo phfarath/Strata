@@ -53,16 +53,6 @@ impl McpServer {
         }
     }
 
-    pub fn with_sqlite_engine(mut self, engine: Arc<SqliteMemoryEngine>) -> Self {
-        self.sqlite_engine = Some(engine);
-        self
-    }
-
-    pub fn with_stigmergy(mut self, coordinator: StigmergyCoordinator) -> Self {
-        self.stigmergy = Some(coordinator);
-        self
-    }
-
     pub fn with_ipc(
         mut self,
         client: Option<Arc<strata_memory::IpcClient>>,
@@ -851,7 +841,7 @@ impl McpServer {
                             remedy,
                             ..
                         } => {
-                            tracing::warn!("⚡ [A2A Instant Alert] Peer agent discovered anti-pattern ({category}): {pattern} -> Remedy: {remedy}");
+                            tracing::warn!("[A2A Instant Alert] Peer agent discovered anti-pattern ({category}): {pattern} -> Remedy: {remedy}");
                         }
                         strata_core::a2a::IpcEvent::LeaseAcquired {
                             resource_id,
@@ -859,14 +849,16 @@ impl McpServer {
                             expires_at,
                             ..
                         } => {
-                            tracing::info!("🔒 [A2A Stigmergy] Resource '{resource_id}' leased by '{agent_id}' until {expires_at}");
+                            tracing::info!("[A2A Stigmergy] Resource '{resource_id}' leased by '{agent_id}' until {expires_at}");
                         }
                         strata_core::a2a::IpcEvent::LeaseReleased {
                             resource_id,
                             agent_id,
                             ..
                         } => {
-                            tracing::info!("🔓 [A2A Stigmergy] Resource '{resource_id}' released by '{agent_id}'");
+                            tracing::info!(
+                                "[A2A Stigmergy] Resource '{resource_id}' released by '{agent_id}'"
+                            );
                         }
                         _ => {}
                     }
@@ -1416,7 +1408,7 @@ impl McpServer {
                         let is_negative = rating.eq_ignore_ascii_case("negative")
                             || rating.eq_ignore_ascii_case("fail")
                             || rating.eq_ignore_ascii_case("failure")
-                            || score.map_or(false, |s| s < 0.4);
+                            || score.is_some_and(|s| s < 0.4);
 
                         let new_confidence = if let Some(s) = score {
                             s.clamp(0.0, 1.0)

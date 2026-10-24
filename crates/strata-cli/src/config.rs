@@ -20,10 +20,10 @@ mod tests {
         };
 
         config
-            .save_to_path(&config_file)
+            .save_to_file(&config_file)
             .expect("Failed to save config");
 
-        let loaded = StrataConfig::load_from_path(&config_file).expect("Failed to load config");
+        let loaded = StrataConfig::load_from_file(&config_file).expect("Failed to load config");
         assert_eq!(
             loaded.endpoint.as_deref(),
             Some("https://custom.strata.dev")

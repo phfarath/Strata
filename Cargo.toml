@@ -35,11 +35,9 @@ strata-cli = { path = "crates/strata-cli" }
 # Async & Runtime
 tokio = { version = "1.43", features = ["full"] }
 async-trait = "0.1.86"
-futures = "0.3.31"
 
 # Web & HTTP
 axum = { version = "0.8", features = ["ws"] }
-tower-http = { version = "0.6", features = ["cors", "trace"] }
 
 # Serialization & Data
 serde = { version = "1.0.218", features = ["derive"] }
