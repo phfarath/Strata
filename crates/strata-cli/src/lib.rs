@@ -127,7 +127,6 @@ mod tests {
     async fn test_cli_hook_wrap_and_user_prompt_guardrails() {
         use strata_core::state::Scope;
         use strata_core::traits::MemoryEngine;
-        use strata_memory::SqliteMemoryEngine;
 
         let engine = Arc::new(strata_memory::SqliteMemoryEngine::open_in_memory(None).unwrap());
 
@@ -219,7 +218,6 @@ pub fn process_data(msg: &str) {
     #[tokio::test]
     async fn test_cli_heuristic_index_workspace_and_mcp_tool() {
         use crate::mcp::server::McpServer;
-        use strata_memory::SqliteMemoryEngine;
 
         let temp_dir = std::env::temp_dir().join(format!(
             "strata_cli_heuristic_index_test_{}",
@@ -335,7 +333,6 @@ export function login(username: string): boolean {
         use strata_core::schemas::SemanticFact;
         use strata_core::state::{MemoryRecord, MemoryTier, MemoryType, Scope};
         use strata_core::traits::MemoryEngine;
-        use strata_memory::SqliteMemoryEngine;
 
         let engine = Arc::new(strata_memory::SqliteMemoryEngine::open_in_memory(None).unwrap());
 
@@ -788,8 +785,6 @@ export function login(username: string): boolean {
 
     #[tokio::test]
     async fn test_mcp_a2a_delegation_tools() {
-        use strata_memory::SqliteMemoryEngine;
-
         let engine = Arc::new(strata_memory::SqliteMemoryEngine::open_in_memory(None).unwrap());
         let server = McpServer::new_with_engine(Arc::clone(&engine));
 
@@ -862,8 +857,6 @@ export function login(username: string): boolean {
 
     #[tokio::test]
     async fn test_mcp_stigmergy_tools_execution() {
-        use strata_memory::SqliteMemoryEngine;
-
         let engine = Arc::new(strata_memory::SqliteMemoryEngine::open_in_memory(None).unwrap());
 
         let test_id = uuid::Uuid::new_v4();
@@ -1108,7 +1101,6 @@ export function login(username: string): boolean {
         use crate::mcp::server::McpServer;
         use chrono::Utc;
         use strata_core::events::{Event, EventPayload, ObservationReceived};
-        use strata_memory::SqliteMemoryEngine;
 
         let engine = Arc::new(strata_memory::SqliteMemoryEngine::open_in_memory(None).unwrap());
         let store = engine.store_arc();
@@ -1157,7 +1149,6 @@ export function login(username: string): boolean {
         use crate::mcp::server::McpServer;
         use strata_core::state::{MemoryRecord, MemoryType, Scope};
         use strata_core::traits::MemoryEngine;
-        use strata_memory::SqliteMemoryEngine;
 
         let engine = Arc::new(strata_memory::SqliteMemoryEngine::open_in_memory(None).unwrap());
 
@@ -1228,7 +1219,6 @@ export function login(username: string): boolean {
         use chrono::Utc;
         use strata_core::events::{Event, EventPayload, ObservationReceived};
         use strata_core::schemas::FactStatus;
-        use strata_memory::SqliteMemoryEngine;
 
         let engine = Arc::new(strata_memory::SqliteMemoryEngine::open_in_memory(None).unwrap());
         let store = engine.store_arc();
@@ -1271,7 +1261,6 @@ export function login(username: string): boolean {
         use crate::commands::a2a::{run_a2a, A2aAction, A2aArgs};
         use crate::commands::plan::{run_plan, PlanArgs};
         use crate::commands::task::{run_task, TaskAction, TaskArgs};
-        use strata_memory::SqliteMemoryEngine;
 
         let engine = Arc::new(strata_memory::SqliteMemoryEngine::open_in_memory(None).unwrap());
         let coordinator = engine.stigmergy();
@@ -1426,7 +1415,6 @@ export function login(username: string): boolean {
     #[tokio::test]
     async fn test_mcp_blackboard_tools_end_to_end() {
         use strata_core::blackboard::{TaskRecord, TaskStatus};
-        use strata_memory::SqliteMemoryEngine;
 
         let engine = Arc::new(strata_memory::SqliteMemoryEngine::open_in_memory(None).unwrap());
         let coordinator = engine.stigmergy();
@@ -1599,7 +1587,6 @@ export function login(username: string): boolean {
     async fn test_mcp_and_cli_episode_tools_and_consolidation() {
         use crate::commands::episode::{run_episode, EpisodeArgs, EpisodeCommand};
         use crate::mcp::server::McpServer;
-        use strata_memory::SqliteMemoryEngine;
 
         let engine = Arc::new(strata_memory::SqliteMemoryEngine::open_in_memory(None).unwrap());
         let store = engine.store_arc();
@@ -1738,7 +1725,6 @@ export function login(username: string): boolean {
         use crate::commands::episode::{run_episode, EpisodeArgs, EpisodeCommand};
         use crate::mcp::server::McpServer;
         use strata_core::schemas::{EpisodeRecord, EpisodeStep};
-        use strata_memory::SqliteMemoryEngine;
 
         let engine = Arc::new(strata_memory::SqliteMemoryEngine::open_in_memory(None).unwrap());
         let store = engine.store_arc();
@@ -1963,7 +1949,6 @@ export function login(username: string): boolean {
     async fn test_autonomous_blackboard_worker_daemon_lifecycle() {
         use crate::commands::worker::{run_worker, WorkerArgs};
         use strata_core::blackboard::{TaskRecord, TaskStatus};
-        use strata_memory::SqliteMemoryEngine;
 
         let engine = Arc::new(strata_memory::SqliteMemoryEngine::open_in_memory(None).unwrap());
         let coordinator = engine.stigmergy();
@@ -2085,7 +2070,6 @@ export function login(username: string): boolean {
     async fn test_worker_heartbeat_lease_renewal_and_abort_on_revocation() {
         use crate::commands::worker::{run_worker, WorkerArgs};
         use strata_core::blackboard::{TaskRecord, TaskStatus};
-        use strata_memory::SqliteMemoryEngine;
 
         let engine = Arc::new(strata_memory::SqliteMemoryEngine::open_in_memory(None).unwrap());
         let coordinator = engine.stigmergy();

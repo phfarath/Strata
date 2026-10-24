@@ -5,7 +5,7 @@
 ### The Local-First Persistent Memory Engine & Cognitive Runtime for AI Coding Agents
 
 [![Rust 2021](https://img.shields.io/badge/rust-2021_edition-DEA584.svg?style=flat-square&logo=rust)](https://www.rust-lang.org/)
-[![Tests](https://img.shields.io/badge/tests-136%2B%20passing%20(100%25)-34D399.svg?style=flat-square)]()
+[![Tests](https://img.shields.io/badge/tests-350%2B%20unit%20%7C%2031%20evals%20passing%20(100%25)-34D399.svg?style=flat-square)]()
 [![MCP Universal](https://img.shields.io/badge/MCP-2024--11--05%20%7C%202025--11--25%20%7C%202026--07--28-60A5FA.svg?style=flat-square&logo=anthropic)](https://modelcontextprotocol.io/)
 [![Storage](https://img.shields.io/badge/storage-SQLite%20Offline--First%20%2B%20FTS5-A78BFA.svg?style=flat-square&logo=sqlite)](https://www.sqlite.org/)
 [![License](https://img.shields.io/badge/license-MIT%20%2F%20Apache--2.0-FBBF24.svg?style=flat-square)]()
@@ -215,17 +215,29 @@ When an agent learns a new rule that contradicts an older premise (e.g. *"Migrat
 - **Zero Hallucination Arbitration**: Instead of asking an LLM to "decide", JTMS checks premise justifications.
 - **Cascading Invalidation**: Deprecating node $A$ automatically transitions all downstream dependent facts to `OUT` state without leaving orphaned beliefs.
 
-### 3. Mathematical Cognitive Dynamics (ACT-R + Ebbinghaus)
-Memory activation follows the ACT-R cognitive architecture equation:
+### 3. Mathematical Cognitive Dynamics (ACT-R + Ebbinghaus — STRATA-T-34)
+Memory activation follows the ACT-R cognitive architecture equation (implemented in `crates/strata-memory/src/decay.rs`):
 
-$$A_m = \alpha \ln\left(\sum_{k=1}^n t_k^{-d}\right) + \beta I_m + \gamma C_m + \lambda F_m$$
+$$A_m = \alpha \ln\left(\sum_{k=1}^n t_k^{-d}\right) + \beta I_m + \gamma C_m$$
 
-And stability follows the spaced-repetition retention curve:
+where:
+- $t_k$ is the elapsed time in hours since the $k$-th access event ($k \in \{1, \dots, n\}$).
+- $d$ is the power-law decay exponent (default $0.5$).
+- $I_m \in [0.0, 1.0]$ is the memory importance score.
+- $C_m \in [0.0, 1.0]$ is the memory confidence score.
+
+Memory stability $S_m$ (in hours) scales with cumulative retrieval frequency and intrinsic importance:
+
+$$S_m = S_0 \cdot \left(1 + \lambda \ln(u + 1) + \mu I_m\right)$$
+
+where $S_0$ is base decay stability, $u$ is the access count, $\lambda$ is the access reinforcement factor, and $\mu$ is the importance weighting factor. Spaced-repetition retention probability follows the Ebbinghaus forgetting curve:
 
 $$R_m(t) = \exp\left(-\frac{t}{S_m}\right)$$
 
-- Memories accessed repeatedly become durable long-term facts.
-- Transient conversational context naturally decays and is pruned via `strata prune --threshold 0.2`.
+where $t$ is the elapsed time in hours since the most recent access.
+
+- **Direct Feedback & Metaplasticity Dynamics**: Direct human or automated feedback (`strata feedback` or `record_memory_feedback`) adjusts importance $I_m$ and confidence $C_m$ by $\pm 0.1 \times \text{score}$ and records an access event ($u \leftarrow u + 1$), dynamically stabilizing desired knowledge and accelerating the decay of erroneous assumptions without phantom parameters. Environmental volatility further modulates $S_0$ and pruning thresholds via homeostatic metaplasticity.
+- **Tri-Tier Modulation**: Core Tier invariants have frozen retention ($R_m = 1.0$, $A_m = 10.0$); Working Tier memories maintain high operational retention ($R_m = 0.95$); Peripheral memories naturally decay and are pruned via `strata prune --threshold 0.2`.
 
 ### 4. Tri-Tier Memory Model
 - **Core Tier**: Foundational project invariants and security rules. Protected by **Human-in-the-Loop (HITL)** approval before promotion or deletion.
@@ -264,6 +276,12 @@ Sub-millisecond local-first multi-agent synchronization without polling or netwo
 - **Autonomous Broker with Local Leader Election**: When starting `strata mcp`, `strata daemon`, or `strata a2a listen`, the process attempts to bind the pipe as the workspace leader; if another instance is active, it seamlessly connects as a pub/sub follower.
 - **Stigmergic Leases & Anti-Pattern Push**: `lease_acquire` and `lease_release` broadcast events instantly to active peers, invalidating local caches and preventing concurrent write collisions.
 
+### 9. Phase 4 Continual Learning: Causal Prediction-Error Belief Graph, Autonomous Procedural Macro Synthesis & Stratified Experience Replay
+Closed-loop lifelong adaptation across coding sessions without catastrophic forgetting:
+- **Causal Prediction-Error Diagnosis**: When an agent's planned action produces an unexpected failure, Strata counterfactually isolates the pivot precondition, marks the flawed premise in the JTMS belief graph, and cascades invalidation to all dependent beliefs.
+- **Autonomous Procedural Macro Synthesis**: High-salience episodic trajectories are mined across developer sessions, abstracting concrete paths and arguments into parameterized executable macros (`strata macro run`) that bypass LLM deliberation for routine workflows.
+- **Stratified Experience Replay & Curriculum Transfer**: Rehearsal buffer maintains balanced ratios across failure classes with priority eviction, feeding self-supervised distillation and curriculum-gated transfer without distribution collapse.
+
 ---
 
 ## 💻 CLI Command Matrix
@@ -290,6 +308,12 @@ Sub-millisecond local-first multi-agent synchronization without polling or netwo
 | `strata export` | Export trajectory pairs for LLM fine-tuning (DPO, KTO, SFT) | `strata export --format dpo` |
 | `strata blast-radius` | Causal blast radius analysis and ripple effect assessment | `strata blast-radius --file src/auth.rs` |
 | `strata plan` | Hierarchical goal DAG decomposition and wave execution | `strata plan "Implement oauth"` |
+| `strata task` | Atomic work-stealing blackboard task claiming and progress tracking | `strata task claim --next` |
+| `strata worker` | Autonomous background task worker claiming blackboard DAG tasks | `strata worker --max-tasks 5` |
+| `strata hook` | Out-of-band compiler and test failure interceptor wrapper | `strata hook wrap -- cargo test` |
+| `strata macro` | 1-step native execution and management of mined procedural macros | `strata macro run Macro_build --params '{"pkg":"core"}'` |
+| `strata causal` | Causal prediction-error diagnosis and counterfactual mitigation | `strata causal explain "deploy" --error "timeout"` |
+| `strata distill` | Self-supervised DPO/KTO preference mining & curriculum split | `strata distill --curriculum` |
 | `strata train` | One-click local LoRA fine-tuning via Unsloth and Ollama | `strata train --dataset dpo.jsonl` |
 | `strata callgraph` | Native deterministic call graph & import dependency analyzer | `strata callgraph --path crates/` |
 | `strata workspace` | Multi-package monorepo workspace boundary isolator | `strata workspace detect` |
@@ -316,12 +340,18 @@ Sub-millisecond local-first multi-agent synchronization without polling or netwo
 │ Phase 6 — Graph Recall│ ✅ Complete (v0.1.1)      │ Spreading Activation HippoRAG │
 │ Phase 7 — Federation  │ ✅ Complete (v0.1.1)      │ Dual-Tier Global & Transfer   │
 │ Phase 8 — Local IPC   │ ✅ Complete (v0.1.2)      │ Realtime UDS / Named Pipe Bus │
+│ Phase 9 — Delegation  │ ✅ Complete (v0.1.2)      │ Transactive Directory Routing │
+│ Phase 10 — Distill    │ ✅ Complete (v0.1.2)      │ DPO/KTO Replay & Curriculum   │
+│ Phase 11 — Continual  │ ✅ Complete (v0.1.2)      │ Causal Graph, Macros, Hooks   │
 └───────────────────────┴──────────────────────────┴───────────────────────────────┘
 ```
 
 - **Phase 6: Spreading Activation Knowledge Graph (HippoRAG / ACT-R)**: Associative multi-hop recall diffusing energy across semantic facts, AST anchors, and call graph edges with zero token cost.
 - **Phase 7: Two-Tier Memory Federation & Global Knowledge Transfer**: Local workspace isolation (`<workspace>/.strata/strata.db`) federated with developer-global rules and anti-patterns (`~/.strata/global.db`).
 - **Phase 8: Realtime Local IPC & Stigmergic Event Bus**: Sub-millisecond local Unix Domain Socket / Named Pipe IPC allowing Cursor, Claude Code, OpenCode, and Antigravity to coordinate leases and anti-patterns in real time on the same machine.
+- **Phase 9: A2A Delegation & Transactive Directory Routing**: Heterogeneous peer delegation contracts, competency discovery, and collaborative problem-solving across independent coding agents.
+- **Phase 10: Self-Supervised Distillation & Stratified Experience Replay**: Automated extraction of preference pairs (DPO/KTO/SFT), continual replay buffers with capacity priority eviction, and curriculum-guided transfer gating.
+- **Phase 11: Causal Prediction-Error & Procedural Skill Macros**: Closed-loop causal failure attribution, counterfactual belief revision in JTMS, autonomous compilation of high-salience event traces into executable macros, and out-of-band compiler error interception.
 
 ---
 

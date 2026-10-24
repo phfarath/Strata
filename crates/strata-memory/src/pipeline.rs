@@ -14,7 +14,7 @@ use crate::ast::CodeAnchorEngine;
 use crate::decay::DecayCalculator;
 use crate::embedding::EmbeddingProvider;
 use crate::jtms::TruthMaintenanceSystem;
-use crate::store::SqliteStore;
+use crate::store::{FactWithEmbeddingAndModel, SqliteStore};
 
 /// Configuration for multi-stage consolidation pipeline.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -1564,7 +1564,7 @@ impl AudnPipeline {
         let cand_sig = compute_minhash_signature(&cleaned_stmt, self.config.num_hashes);
         let cand_norm = canonical_audn_words(&cleaned_stmt).join(" ");
 
-        let eligible: Vec<&(SemanticFact, Option<Vec<f32>>, Option<String>)> = existing_with_embs
+        let eligible: Vec<&FactWithEmbeddingAndModel> = existing_with_embs
             .iter()
             .filter(|(f, _, _)| {
                 f.id != candidate.id && audn_scopes_compatible(&f.scope, &candidate.scope)

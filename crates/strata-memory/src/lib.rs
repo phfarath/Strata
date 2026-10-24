@@ -110,7 +110,8 @@ pub use spreading_activation::{
     SpreadingActivationEngine,
 };
 pub use store::{
-    MemoryEdgeRecord, ModelVectorCount, ReindexReport, SqliteStore, VectorConsistencyStats,
+    FactWithEmbedding, FactWithEmbeddingAndModel, MemoryEdgeRecord, ModelVectorCount,
+    ReindexReport, SqliteStore, VectorConsistencyStats,
 };
 pub use strata_core::schemas::{
     CodeAnchor, ContextBudgetConfig, ExportFormat, FeedbackEvent, FeedbackRating, HostTargetConfig,
