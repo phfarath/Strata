@@ -349,7 +349,7 @@ Bridging deliberative cognitive planning with high-frequency physical and simula
 │ Phase 9 — Delegation  │ ✅ Complete (v0.1.2)      │ Transactive Directory Routing │
 │ Phase 10 — Distill    │ ✅ Complete (v0.1.2)      │ DPO/KTO Replay & Curriculum   │
 │ Phase 11 — Continual  │ ✅ Complete (v0.1.2)      │ Causal Graph, Macros, Hooks   │
-│ Phase 12 — Embodiment │ ✅ Complete (v0.2.0)      │ 100Hz Control, Safety Envel.  │
+│ Phase 12 — Embodiment │ ✅ Complete (v0.2.1)      │ 100Hz Control, Safety Envel.  │
 └───────────────────────┴──────────────────────────┴───────────────────────────────┘
 ```
 
@@ -359,7 +359,7 @@ Bridging deliberative cognitive planning with high-frequency physical and simula
 - **Phase 9: A2A Delegation & Transactive Directory Routing**: Heterogeneous peer delegation contracts, competency discovery, and collaborative problem-solving across independent coding agents.
 - **Phase 10: Self-Supervised Distillation & Stratified Experience Replay**: Automated extraction of preference pairs (DPO/KTO/SFT), continual replay buffers with capacity priority eviction, and curriculum-guided transfer gating.
 - **Phase 11: Causal Prediction-Error & Procedural Skill Macros**: Closed-loop causal failure attribution, counterfactual belief revision in JTMS, autonomous compilation of high-salience event traces into executable macros, and out-of-band compiler error interception.
-- **Phase 12: Simulation & Embodied Physical Control (v0.2.0)**: Decoupled 100 Hz reactive control loop, 3D keep-out geofencing with tangential deflection, dynamic torque limiters, reflexive prediction-error e-stop, and sim-to-real disturbance rejection benchmarks (Scenario 32).
+- **Phase 12: Simulation & Embodied Physical Control (v0.2.1)**: Decoupled 100 Hz reactive control loop, 3D keep-out geofencing with tangential deflection, dynamic torque limiters, reflexive prediction-error e-stop, and sim-to-real disturbance rejection benchmarks (Scenario 32).
 
 ---
 
