@@ -5,7 +5,7 @@
 ### The Local-First Persistent Memory Engine & Cognitive Runtime for AI Coding Agents
 
 [![Rust 2021](https://img.shields.io/badge/rust-2021_edition-DEA584.svg?style=flat-square&logo=rust)](https://www.rust-lang.org/)
-[![Tests](https://img.shields.io/badge/tests-350%2B%20unit%20%7C%2031%20evals%20passing%20(100%25)-34D399.svg?style=flat-square)]()
+[![Tests](https://img.shields.io/badge/tests-350%2B%20unit%20%7C%2032%20evals%20passing%20(100%25)-34D399.svg?style=flat-square)]()
 [![MCP Universal](https://img.shields.io/badge/MCP-2024--11--05%20%7C%202025--11--25%20%7C%202026--07--28-60A5FA.svg?style=flat-square&logo=anthropic)](https://modelcontextprotocol.io/)
 [![Storage](https://img.shields.io/badge/storage-SQLite%20Offline--First%20%2B%20FTS5-A78BFA.svg?style=flat-square&logo=sqlite)](https://www.sqlite.org/)
 [![License](https://img.shields.io/badge/license-MIT%20%2F%20Apache--2.0-FBBF24.svg?style=flat-square)]()
@@ -282,6 +282,11 @@ Closed-loop lifelong adaptation across coding sessions without catastrophic forg
 - **Autonomous Procedural Macro Synthesis**: High-salience episodic trajectories are mined across developer sessions, abstracting concrete paths and arguments into parameterized executable macros (`strata macro run`) that bypass LLM deliberation for routine workflows.
 - **Stratified Experience Replay & Curriculum Transfer**: Rehearsal buffer maintains balanced ratios across failure classes with priority eviction, feeding self-supervised distillation and curriculum-gated transfer without distribution collapse.
 
+### 10. Phase 5 Embodied Reactive Control & Safety Envelopes
+Bridging deliberative cognitive planning with high-frequency physical and simulated execution:
+- **Decoupled Deliberative-Reactive Loop**: Separates low-frequency cognitive goal planning from a deterministic 100 Hz `ReactiveController` with PD tracking and disturbance rejection.
+- **Real-Time Safety Supervisor**: Enforces hard physical invariants via 3D `SphereGeofence` (with tangential surface deflection) and `AxisAlignedBoxGeofence` keep-out zones, dynamic velocity-scaled torque clamping, and reflexive emergency stops (`EmergencyStop`) when prediction errors exceed safety thresholds.
+
 ---
 
 ## 💻 CLI Command Matrix
@@ -343,6 +348,7 @@ Closed-loop lifelong adaptation across coding sessions without catastrophic forg
 │ Phase 9 — Delegation  │ ✅ Complete (v0.1.2)      │ Transactive Directory Routing │
 │ Phase 10 — Distill    │ ✅ Complete (v0.1.2)      │ DPO/KTO Replay & Curriculum   │
 │ Phase 11 — Continual  │ ✅ Complete (v0.1.2)      │ Causal Graph, Macros, Hooks   │
+│ Phase 12 — Embodiment │ ✅ Complete (v0.2.0)      │ 100Hz Control, Safety Envel.  │
 └───────────────────────┴──────────────────────────┴───────────────────────────────┘
 ```
 
@@ -352,6 +358,7 @@ Closed-loop lifelong adaptation across coding sessions without catastrophic forg
 - **Phase 9: A2A Delegation & Transactive Directory Routing**: Heterogeneous peer delegation contracts, competency discovery, and collaborative problem-solving across independent coding agents.
 - **Phase 10: Self-Supervised Distillation & Stratified Experience Replay**: Automated extraction of preference pairs (DPO/KTO/SFT), continual replay buffers with capacity priority eviction, and curriculum-guided transfer gating.
 - **Phase 11: Causal Prediction-Error & Procedural Skill Macros**: Closed-loop causal failure attribution, counterfactual belief revision in JTMS, autonomous compilation of high-salience event traces into executable macros, and out-of-band compiler error interception.
+- **Phase 12: Simulation & Embodied Physical Control (v0.2.0)**: Decoupled 100 Hz reactive control loop, 3D keep-out geofencing with tangential deflection, dynamic torque limiters, reflexive prediction-error e-stop, and sim-to-real disturbance rejection benchmarks (Scenario 32).
 
 ---
 
