@@ -276,7 +276,7 @@ enum Commands {
     /// Analyze architectural causal blast radius, ripple effects, and breaking risk before editing code
     #[command(
         name = "blast-radius",
-        alias = "causal",
+        alias = "blast_radius",
         alias = "impact",
         alias = "world-model"
     )]
@@ -365,7 +365,7 @@ enum Commands {
         name = "architecture",
         alias = "cluster",
         alias = "communities",
-        alias = "macro"
+        alias = "arch_macro"
     )]
     Architecture(ArchitectureArgs),
 
@@ -1014,6 +1014,12 @@ mod tests {
     use strata_cli::mcp::server::McpServer;
     use strata_core::state::{MemoryRecord, MemoryTier, MemoryType, Scope};
     use strata_memory::SqliteMemoryEngine;
+
+    #[test]
+    fn test_cli_command_debug_assert() {
+        use clap::CommandFactory;
+        Cli::command().debug_assert();
+    }
 
     #[tokio::test]
     async fn test_cli_promote_rejection_without_token_mcp() {
