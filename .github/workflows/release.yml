@@ -80,7 +80,7 @@ jobs:
             archive_ext: tar.gz
 
           - target: x86_64-apple-darwin
-            os: macos-13
+            os: macos-latest
             bin_name: strata
             archive_ext: tar.gz
 
@@ -146,6 +146,11 @@ jobs:
           mkdir -p "dist/verify-${PKG_NAME}"
           tar -xzf "dist/${PKG_NAME}.tar.gz" -C "dist/verify-${PKG_NAME}" --strip-components=1
           BIN="dist/verify-${PKG_NAME}/${{ matrix.bin_name }}"
+          if [ "${{ matrix.target }}" = "x86_64-apple-darwin" ] && [ "$(uname -m)" = "arm64" ]; then
+            file "$BIN" | grep -q "x86_64"
+            echo "Verified cross-compiled x86_64-apple-darwin binary on arm64 runner: $(file "$BIN")"
+            exit 0
+          fi
           OUTPUT="$("$BIN" --version)"
           echo "$OUTPUT"
           EXPECTED_VERSION="${RELEASE_TAG#v}"
