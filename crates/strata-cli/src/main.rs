@@ -24,6 +24,7 @@ use strata_cli::{
         daemon::{run_daemon, DaemonArgs},
         distill::{run_distill, DistillArgs},
         doctor::run_doctor,
+        embody::{run_embody, EmbodyArgs},
         episode::{run_episode, EpisodeArgs},
         export::{run_export, ExportArgs},
         feedback::{run_feedback, FeedbackArgs},
@@ -314,6 +315,10 @@ enum Commands {
     #[command(name = "causal", alias = "why")]
     Causal(CausalArgs),
 
+    /// Embodied reactive control (100 Hz), keep-out geofencing, and safety envelope supervisor
+    #[command(name = "embody", alias = "safety", alias = "robotics")]
+    Embody(EmbodyArgs),
+
     /// Deterministic native call graph and import dependency analyzer
     #[command(name = "callgraph", alias = "calls", alias = "hierarchy")]
     CallGraph {
@@ -565,6 +570,10 @@ async fn main() -> Result<()> {
         return run_workspace(args).await.map_err(Into::into);
     }
 
+    if let Commands::Embody(args) = cli.command {
+        return run_embody(args).await;
+    }
+
     // Fast-path for Architecture (clusters graph communities directly on-the-fly)
     if let Commands::Architecture(args) = cli.command {
         return run_architecture(args).await.map_err(Into::into);
@@ -604,7 +613,8 @@ async fn main() -> Result<()> {
         | Commands::Login(_)
         | Commands::Logout
         | Commands::Workspace(_)
-        | Commands::Architecture(_) => unreachable!(),
+        | Commands::Architecture(_)
+        | Commands::Embody(_) => unreachable!(),
 
         Commands::CallGraph {
             path,
