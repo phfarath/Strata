@@ -823,6 +823,56 @@ impl McpServer {
                 }),
             },
         ];
+        defs.push(ToolDefinition {
+            name: "embodied_safety_simulate".to_string(),
+            description: "Simulate 100 Hz decoupled reactive control with real-time SafetySupervisor (keep-out geofencing, dynamic torque clamping, disturbance rejection, and reflexive prediction-error e-stop).".to_string(),
+            input_schema: serde_json::json!({
+                "type": "object",
+                "properties": {
+                    "mode": {
+                        "type": "string",
+                        "enum": ["move", "pick-and-place"],
+                        "description": "Action mode: 'move' (MoveToPose) or 'pick-and-place' (PickAndPlace) (default: 'move')"
+                    },
+                    "target": {
+                        "type": "string",
+                        "description": "Target Cartesian coordinates 'x,y,z' (default: '1.0,1.0,0.0')"
+                    },
+                    "pick": {
+                        "type": "string",
+                        "description": "Pick Cartesian coordinates 'x,y,z' for pick-and-place mode (default: '0.3,0.3,0.0')"
+                    },
+                    "obstacle": {
+                        "type": "string",
+                        "description": "Optional spherical keep-out geofence 'x,y,z,radius,margin' (e.g. '0.5,0.5,0.0,0.15,0.05')"
+                    },
+                    "max_torque": {
+                        "type": "number",
+                        "description": "Maximum allowable joint torque in Nm (default: 50.0)"
+                    },
+                    "max_prediction_error": {
+                        "type": "number",
+                        "description": "Maximum prediction error threshold before reflexive e-stop (default: 0.25)"
+                    },
+                    "disturbance": {
+                        "type": "string",
+                        "description": "Optional external perturbation force 'fx,fy,fz' applied during steps 20..60"
+                    },
+                    "inject_anomaly": {
+                        "type": "number",
+                        "description": "Optional injected prediction error anomaly at step 10"
+                    },
+                    "steps": {
+                        "type": "integer",
+                        "description": "Number of 100 Hz simulation steps to execute (default: 250)"
+                    },
+                    "unsupervised": {
+                        "type": "boolean",
+                        "description": "Disable SafetySupervisor for baseline comparison (default: false)"
+                    }
+                }
+            }),
+        });
         defs.extend(super::blackboard::definitions());
         defs
     }
@@ -2855,6 +2905,122 @@ impl McpServer {
                 super::blackboard::execute(coordinator, self.ipc_client.as_ref(), name, &args)
                     .await
                     .unwrap_or_else(|| CallToolResult::error(format!("Unknown tool: '{name}'")))
+            }
+            "embodied_safety_simulate" => {
+                use crate::commands::embody::{parse_sphere_geofence, parse_vec3};
+                use strata_reasoning::embodiment::{
+                    DeliberativeActionProposal, ReactiveController, SafetyEnvelopeConfig,
+                    SafetySupervisor, SimEnvironment, Vec3,
+                };
+
+                let mode = args.get("mode").and_then(|v| v.as_str()).unwrap_or("move");
+                let target_str = args
+                    .get("target")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("1.0,1.0,0.0");
+                let pick_str = args
+                    .get("pick")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("0.3,0.3,0.0");
+                let max_torque = args
+                    .get("max_torque")
+                    .and_then(|v| v.as_f64())
+                    .unwrap_or(50.0);
+                let max_prediction_error = args
+                    .get("max_prediction_error")
+                    .and_then(|v| v.as_f64())
+                    .unwrap_or(0.25);
+                let steps = args.get("steps").and_then(|v| v.as_u64()).unwrap_or(250) as usize;
+                let unsupervised = args
+                    .get("unsupervised")
+                    .and_then(|v| v.as_bool())
+                    .unwrap_or(false);
+                let inject_anomaly = args.get("inject_anomaly").and_then(|v| v.as_f64());
+
+                let target_vec = match parse_vec3(target_str) {
+                    Ok(v) => v,
+                    Err(e) => return CallToolResult::error(e.to_string()),
+                };
+                let pick_vec = match parse_vec3(pick_str) {
+                    Ok(v) => v,
+                    Err(e) => return CallToolResult::error(e.to_string()),
+                };
+                let dist_vec = match args.get("disturbance").and_then(|v| v.as_str()) {
+                    Some(d) => match parse_vec3(d) {
+                        Ok(v) => Some(v),
+                        Err(e) => return CallToolResult::error(e.to_string()),
+                    },
+                    None => None,
+                };
+
+                let mut zones = Vec::new();
+                if let Some(obs_str) = args.get("obstacle").and_then(|v| v.as_str()) {
+                    match parse_sphere_geofence(obs_str) {
+                        Ok(z) => zones.push(z),
+                        Err(e) => return CallToolResult::error(e.to_string()),
+                    }
+                }
+
+                let config = SafetyEnvelopeConfig {
+                    max_joint_torque: max_torque,
+                    max_prediction_error_threshold: max_prediction_error,
+                    keep_out_zones: zones.clone(),
+                    ..Default::default()
+                };
+                let supervisor = if unsupervised {
+                    None
+                } else {
+                    Some(SafetySupervisor::new(config))
+                };
+
+                let mut sim = SimEnvironment::new(Vec3::zero())
+                    .with_geofences(zones)
+                    .with_torque_limit(max_torque);
+                let mut controller = ReactiveController::new(supervisor).with_gains(160.0, 25.0);
+
+                let proposal = if mode.eq_ignore_ascii_case("pick-and-place")
+                    || mode.eq_ignore_ascii_case("pick_and_place")
+                {
+                    DeliberativeActionProposal::PickAndPlace {
+                        pick_pos: pick_vec,
+                        place_pos: target_vec,
+                        grip_force: 15.0,
+                    }
+                } else {
+                    DeliberativeActionProposal::MoveToPose {
+                        target: target_vec,
+                        max_speed: 1.0,
+                    }
+                };
+                controller.set_action_proposal(proposal);
+
+                for step in 0..steps {
+                    if let Some(d) = dist_vec {
+                        if (20..60).contains(&step) {
+                            sim.apply_disturbance(d);
+                        } else {
+                            sim.apply_disturbance(Vec3::zero());
+                        }
+                    }
+                    if let Some(anom) = inject_anomaly {
+                        if step == 10 {
+                            sim.inject_anomaly(anom);
+                        }
+                    }
+                    controller.step(&mut sim);
+                }
+
+                let report = controller.generate_telemetry_report(&sim, None);
+                let payload = serde_json::json!({
+                    "mode": mode,
+                    "supervised": !unsupervised,
+                    "steps_executed": sim.step_count,
+                    "final_position": sim.current_state.end_effector_pos,
+                    "emergency_stop_latched": sim.current_state.emergency_stop_latched,
+                    "telemetry": report,
+                });
+
+                CallToolResult::structured(report.format_ascii_report(), payload)
             }
             unknown_tool => CallToolResult::error(format!("Unknown tool: '{unknown_tool}'")),
         }

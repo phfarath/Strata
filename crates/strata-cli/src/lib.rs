@@ -2809,4 +2809,64 @@ pub fn verify_token(token: &str) -> bool {
         let cli_causal_res = run_causal(causal_args, engine.store_arc()).await;
         assert!(cli_causal_res.is_ok());
     }
+
+    #[tokio::test]
+    async fn test_mcp_and_cli_embody_tools() {
+        use crate::mcp::server::McpServer;
+
+        let engine = Arc::new(strata_memory::SqliteMemoryEngine::open_in_memory(None).unwrap());
+        let server = McpServer::new_with_engine(Arc::clone(&engine));
+
+        let defs = McpServer::tool_definitions();
+        assert!(defs.iter().any(|t| t.name == "embodied_safety_simulate"));
+
+        let sim_res = server
+            .execute_tool(
+                "embodied_safety_simulate",
+                serde_json::json!({
+                    "mode": "move",
+                    "target": "1.0,1.0,0.0",
+                    "obstacle": "0.5,0.5,0.0,0.15,0.05",
+                    "max_torque": 45.0,
+                    "steps": 250
+                }),
+            )
+            .await;
+        assert_ne!(sim_res.is_error, Some(true));
+        let sim_text = &sim_res.content[0].text;
+        assert!(sim_text.contains("STRATA EMBODIED TELEMETRY REPORT"));
+        assert!(sim_text.contains("100.0%"));
+
+        let sim_args = EmbodyArgs {
+            command: EmbodyCommand::Simulate {
+                mode: "pick-and-place".to_string(),
+                target: "0.8,0.8,0.0".to_string(),
+                pick: "0.3,0.3,0.0".to_string(),
+                obstacle: Some("0.5,0.5,0.0,0.10,0.05".to_string()),
+                max_torque: 50.0,
+                max_prediction_error: 0.25,
+                disturbance: Some("4.0,-2.0,1.0".to_string()),
+                inject_anomaly: None,
+                steps: 250,
+                unsupervised: false,
+                json: true,
+            },
+        };
+        assert!(run_embody(sim_args).await.is_ok());
+
+        let check_args = EmbodyArgs {
+            command: EmbodyCommand::Check {
+                current_pos: "0.4,0.4,0.0".to_string(),
+                target_pos: "0.5,0.5,0.0".to_string(),
+                torques: "80.0,-70.0,10.0".to_string(),
+                obstacle: Some("0.5,0.5,0.0,0.15,0.05".to_string()),
+                max_torque: 40.0,
+                prediction_error: 0.05,
+                max_prediction_error: 0.25,
+                json: true,
+            },
+        };
+        let check_res = run_embody(check_args).await;
+        assert!(check_res.is_ok());
+    }
 }

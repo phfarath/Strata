@@ -318,6 +318,7 @@ Bridging deliberative cognitive planning with high-frequency physical and simula
 | `strata hook` | Out-of-band compiler and test failure interceptor wrapper | `strata hook wrap -- cargo test` |
 | `strata macro` | 1-step native execution and management of mined procedural macros | `strata macro run Macro_build --params '{"pkg":"core"}'` |
 | `strata causal` | Causal prediction-error diagnosis and counterfactual mitigation | `strata causal explain "deploy" --error "timeout"` |
+| `strata embody` | 100 Hz reactive control simulation and safety envelope verification | `strata embody simulate --obstacle "0.5,0.5,0.0,0.15,0.05"` |
 | `strata distill` | Self-supervised DPO/KTO preference mining & curriculum split | `strata distill --curriculum` |
 | `strata train` | One-click local LoRA fine-tuning via Unsloth and Ollama | `strata train --dataset dpo.jsonl` |
 | `strata callgraph` | Native deterministic call graph & import dependency analyzer | `strata callgraph --path crates/` |
