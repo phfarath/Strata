@@ -10,7 +10,7 @@ members = [
 ]
 
 [workspace.package]
-version = "0.2.0"
+version = "0.2.1"
 edition = "2021"
 authors = ["Strata Contributors"]
 license = "MIT OR Apache-2.0"
@@ -25,11 +25,11 @@ categories = ["command-line-utilities", "development-tools"]
 
 [workspace.dependencies]
 # Internal crates
-strata-core = { path = "crates/strata-core" }
-strata-memory = { path = "crates/strata-memory" }
-strata-tools = { path = "crates/strata-tools" }
-strata-reasoning = { path = "crates/strata-reasoning" }
-strata-cli = { path = "crates/strata-cli" }
+strata-core = { path = "crates/strata-core", version = "0.2.1" }
+strata-memory = { path = "crates/strata-memory", version = "0.2.1" }
+strata-tools = { path = "crates/strata-tools", version = "0.2.1" }
+strata-reasoning = { path = "crates/strata-reasoning", version = "0.2.1" }
+strata-cli = { path = "crates/strata-cli", version = "0.2.1" }
 
 
 # Async & Runtime
